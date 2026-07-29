@@ -113,6 +113,7 @@ def create_app() -> FastAPI:
 
     # Routers
     app.include_router(ws_router)      # WebSocket: /ws/render/{job_id}
+    app.include_router(oauth_router)   # OAuth2:    /oauth/...
     app.include_router(api_router)     # REST API:  /api/v1/...
     app.include_router(web_router)     # Web UI:    /
 
