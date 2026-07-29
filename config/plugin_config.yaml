@@ -1,7 +1,10 @@
 plugins:
   voice:
-    default: silent
+    default: edge_tts
     enabled:
+      - name: edge_tts
+        module: plugins.voice.edge_tts_voice
+        class: EdgeTTSVoicePlugin
       - name: silent
         module: plugins.voice.silent_voice
         class: SilentVoicePlugin
