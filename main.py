@@ -14,6 +14,7 @@ from config.settings import settings, ensure_dirs
 from infrastructure.database.session import create_all_tables
 from plugins.registry import PluginRegistry, PluginLoader
 from interfaces.api.router import api_router
+from interfaces.api.oauth import router as oauth_router
 from interfaces.web.routes import router as web_router
 from interfaces.websocket.render_ws import router as ws_router
 
