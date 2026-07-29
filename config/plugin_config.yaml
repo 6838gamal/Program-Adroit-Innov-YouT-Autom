@@ -1,0 +1,27 @@
+plugins:
+  voice:
+    default: silent
+    enabled:
+      - name: silent
+        module: plugins.voice.silent_voice
+        class: SilentVoicePlugin
+
+  renderer:
+    default: ffmpeg
+    enabled:
+      - name: ffmpeg
+        module: plugins.renderer.ffmpeg_renderer
+        class: FFmpegRendererPlugin
+
+  exporter:
+    default: ffmpeg
+    enabled:
+      - name: ffmpeg
+        module: plugins.exporter.ffmpeg_exporter
+        class: FFmpegExporterPlugin
+
+  publisher:
+    enabled:
+      - name: youtube
+        module: plugins.publishers.youtube.youtube_plugin
+        class: YouTubePublisherPlugin

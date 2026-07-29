@@ -1,0 +1,136 @@
+{% extends "base.html" %}
+{% block title %}{{ project.title }}{% endblock %}
+{% block page_title %}{{ project.title }}{% endblock %}
+
+{% block header_actions %}
+{% if project.status.value in ['draft', 'rendered', 'failed'] %}
+<button onclick="startRender('{{ project.id }}')" class="btn-primary">▶ بدء الرندر</button>
+{% endif %}
+{% if project.status.value == 'rendered' %}
+<button onclick="openPublishModal()" class="btn-secondary">📤 نشر</button>
+{% endif %}
+{% endblock %}
+
+{% block content %}
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+    <!-- Project info -->
+    <div class="lg:col-span-2 space-y-5">
+        <div class="card">
+            <div class="flex items-center gap-3 mb-4">
+                <span class="status-{{ project.status.value }} text-sm">{{ project.status.value }}</span>
+                <span class="text-slate-500 text-sm">{{ project.created_at.strftime('%Y-%m-%d %H:%M') }}</span>
+            </div>
+            {% if project.description %}
+            <p class="text-slate-300 mb-4">{{ project.description }}</p>
+            {% endif %}
+            {% if project.script %}
+            <div>
+                <h3 class="text-slate-400 text-sm mb-2">النص</h3>
+                <div class="bg-slate-900 rounded-lg p-4 text-sm text-slate-300 font-mono max-h-48 overflow-y-auto whitespace-pre-wrap">{{ project.script }}</div>
+            </div>
+            {% endif %}
+            {% if project.tags %}
+            <div class="flex flex-wrap gap-2 mt-4">
+                {% for tag in project.tags %}
+                <span class="text-xs bg-slate-700 text-slate-300 px-2 py-1 rounded">{{ tag }}</span>
+                {% endfor %}
+            </div>
+            {% endif %}
+        </div>
+
+        <!-- Render Jobs -->
+        <div class="card">
+            <h3 class="text-white font-semibold mb-4">مهام الرندر</h3>
+            {% if render_jobs %}
+            <div class="space-y-3" id="render-jobs">
+                {% for job in render_jobs %}
+                <div class="bg-slate-700/50 rounded-lg p-3" id="job-{{ job.id }}">
+                    <div class="flex items-center justify-between mb-2">
+                        <span class="text-white text-sm font-mono">{{ job.id | string | truncate(20, True, '…') }}</span>
+                        <span class="status-{{ job.status.value }}">{{ job.status.value }}</span>
+                    </div>
+                    {% if job.status.value == 'processing' %}
+                    <div class="w-full bg-slate-600 rounded-full h-2 mb-1"
+                         hx-get="/api/v1/production/jobs/{{ job.id }}"
+                         hx-trigger="every 2s"
+                         hx-swap="none"
+                         hx-on="htmx:afterRequest: updateJobProgress(event, '{{ job.id }}')">
+                        <div id="progress-{{ job.id }}" class="bg-blue-500 h-2 rounded-full progress-bar" style="width: {{ job.progress }}%"></div>
+                    </div>
+                    <div id="stage-{{ job.id }}" class="text-xs text-slate-400">{{ job.progress | round(1) }}% — {{ job.current_stage }}</div>
+                    {% elif job.status.value == 'completed' %}
+                    <div class="text-xs text-green-400">✓ اكتمل — {{ job.completed_at.strftime('%H:%M:%S') if job.completed_at }}</div>
+                    {% elif job.status.value == 'failed' %}
+                    <div class="text-xs text-red-400">✗ {{ job.error_message or 'فشل غير معروف' }}</div>
+                    {% endif %}
+                    <div class="text-xs text-slate-500 mt-1">{{ job.created_at.strftime('%Y-%m-%d %H:%M') }}</div>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <div class="text-center py-6 text-slate-500 text-sm">لم يتم تشغيل أي عملية رندر بعد</div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Side panel -->
+    <div class="space-y-5">
+        <div class="card">
+            <h3 class="text-slate-300 font-medium mb-3 text-sm">الألوان</h3>
+            <div class="flex gap-2">
+                {% for key, color in project.brand_colors.to_dict().items() %}
+                <div title="{{ key }}: {{ color }}" class="w-8 h-8 rounded-lg border border-slate-600 flex-shrink-0" style="background: {{ color }}"></div>
+                {% endfor %}
+            </div>
+        </div>
+        <div class="card">
+            <h3 class="text-slate-300 font-medium mb-3 text-sm">إجراءات</h3>
+            <div class="space-y-2">
+                <a href="/projects/{{ project.id }}/edit" class="btn-secondary w-full text-center block text-sm">✏️ تعديل</a>
+                <button onclick="deleteProject('{{ project.id }}')" class="btn-danger w-full text-sm">🗑 حذف</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function startRender(projectId) {
+    try {
+        const resp = await fetch('/api/v1/production/render', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ project_id: projectId })
+        });
+        if (resp.ok) {
+            showToast('بدأت عملية الرندر', 'success');
+            setTimeout(() => location.reload(), 1500);
+        } else {
+            const err = await resp.json();
+            showToast(err.detail || 'فشل بدء الرندر', 'error');
+        }
+    } catch (e) { showToast('خطأ في الاتصال', 'error'); }
+}
+
+async function deleteProject(id) {
+    if (!confirm('هل أنت متأكد من حذف هذا المشروع؟')) return;
+    const resp = await fetch(`/api/v1/projects/${id}`, { method: 'DELETE' });
+    if (resp.ok) { window.location.href = '/projects'; }
+    else showToast('فشل الحذف', 'error');
+}
+
+function updateJobProgress(event, jobId) {
+    try {
+        const data = JSON.parse(event.detail.xhr.responseText);
+        const prog = document.getElementById(`progress-${jobId}`);
+        const stage = document.getElementById(`stage-${jobId}`);
+        if (prog) prog.style.width = data.progress + '%';
+        if (stage) stage.textContent = `${data.progress.toFixed(1)}% — ${data.current_stage}`;
+        if (['completed', 'failed', 'cancelled'].includes(data.status)) {
+            setTimeout(() => location.reload(), 1000);
+        }
+    } catch(e) {}
+}
+</script>
+{% endblock %}

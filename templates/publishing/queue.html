@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}قائمة النشر{% endblock %}
+{% block page_title %}قائمة النشر{% endblock %}
+
+{% block content %}
+{% if jobs %}
+<div class="space-y-3">
+    {% for job in jobs %}
+    <div class="card">
+        <div class="flex items-center justify-between mb-2">
+            <span class="text-white font-mono text-sm">{{ job.id | string | truncate(24, True, '…') }}</span>
+            <span class="status-{{ job.status.value }}">{{ job.status.value }}</span>
+        </div>
+        {% if job.platform_url %}
+        <a href="{{ job.platform_url }}" target="_blank" class="text-blue-400 text-xs hover:underline">🔗 {{ job.platform_url }}</a>
+        {% endif %}
+        {% if job.error_message %}
+        <div class="text-xs text-red-400 mt-1">✗ {{ job.error_message }}</div>
+        {% endif %}
+        {% if job.retry_count > 0 %}
+        <div class="text-xs text-amber-400 mt-1">محاولة إعادة رقم {{ job.retry_count }}</div>
+        {% endif %}
+        <div class="text-xs text-slate-500 mt-2">{{ job.created_at.strftime('%Y-%m-%d %H:%M') }}</div>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<div class="text-center py-16 text-slate-500">
+    <p>لا توجد مهام نشر</p>
+</div>
+{% endif %}
+{% endblock %}

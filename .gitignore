@@ -1,0 +1,49 @@
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+*.so
+
+# Virtual environments
+venv/
+.venv/
+env/
+.env/
+
+# Env files
+.env
+*.env
+
+# Data directories
+data/
+media/
+temp/
+exports/
+*.db
+*.sqlite
+*.sqlite3
+
+# Alembic
+alembic/versions/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Logs
+*.log
+logs/
+
+# Coverage
+.coverage
+htmlcov/
+.pytest_cache/

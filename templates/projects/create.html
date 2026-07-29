@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}مشروع جديد{% endblock %}
+{% block page_title %}مشروع جديد{% endblock %}
+
+{% block content %}
+<div class="max-w-2xl">
+    <div class="card">
+        <form id="create-form" class="space-y-5">
+            <div>
+                <label class="block text-sm text-slate-300 mb-1.5">عنوان المشروع *</label>
+                <input type="text" id="title" name="title" class="input" placeholder="أدخل عنوان المشروع" required>
+            </div>
+            <div>
+                <label class="block text-sm text-slate-300 mb-1.5">الوصف</label>
+                <textarea id="description" name="description" rows="3" class="input resize-none" placeholder="وصف مختصر للمشروع"></textarea>
+            </div>
+            <div>
+                <label class="block text-sm text-slate-300 mb-1.5">النص / السكريبت</label>
+                <textarea id="script" name="script" rows="6" class="input resize-none font-mono text-xs" placeholder="أدخل النص الكامل للفيديو هنا…"></textarea>
+            </div>
+            <div>
+                <label class="block text-sm text-slate-300 mb-1.5">الوسوم (مفصولة بفاصلة)</label>
+                <input type="text" id="tags" name="tags" class="input" placeholder="تقنية, تعليم, مراجعة">
+            </div>
+            <div class="flex gap-3 pt-2">
+                <button type="submit" class="btn-primary">إنشاء المشروع</button>
+                <a href="/projects" class="btn-secondary">إلغاء</a>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.getElementById('create-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const tagsRaw = document.getElementById('tags').value;
+    const tags = tagsRaw ? tagsRaw.split(',').map(t => t.trim()).filter(Boolean) : [];
+    const payload = {
+        title: document.getElementById('title').value,
+        description: document.getElementById('description').value,
+        script: document.getElementById('script').value,
+        tags,
+    };
+    try {
+        const resp = await fetch('/api/v1/projects', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+        if (resp.ok) {
+            const project = await resp.json();
+            window.location.href = `/projects/${project.id}`;
+        } else {
+            const err = await resp.json();
+            showToast(err.detail || 'فشل إنشاء المشروع', 'error');
+        }
+    } catch (e) {
+        showToast('خطأ في الاتصال', 'error');
+    }
+});
+</script>
+{% endblock %}

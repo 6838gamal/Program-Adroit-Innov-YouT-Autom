@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}قائمة الرندر{% endblock %}
+{% block page_title %}قائمة الرندر{% endblock %}
+
+{% block content %}
+{% if jobs %}
+<div class="space-y-3">
+    {% for job in jobs %}
+    <div class="card" id="job-{{ job.id }}">
+        <div class="flex items-center justify-between mb-2">
+            <div>
+                <span class="text-white font-mono text-sm">{{ job.id }}</span>
+                <span class="text-slate-500 text-xs mr-3">مشروع: {{ job.project_id }}</span>
+            </div>
+            <span class="status-{{ job.status.value }}">{{ job.status.value }}</span>
+        </div>
+        {% if job.status.value == 'processing' %}
+        <div class="w-full bg-slate-700 rounded-full h-2 mb-2">
+            <div class="bg-blue-500 h-2 rounded-full progress-bar" style="width: {{ job.progress }}%"
+                 hx-get="/api/v1/production/jobs/{{ job.id }}"
+                 hx-trigger="every 2s"
+                 hx-swap="none"></div>
+        </div>
+        <div class="text-xs text-slate-400">{{ job.progress | round(1) }}% — {{ job.current_stage }}</div>
+        {% elif job.status.value == 'completed' %}
+        <div class="text-xs text-green-400">✓ اكتمل {{ job.completed_at.strftime('%Y-%m-%d %H:%M') if job.completed_at }}</div>
+        {% elif job.status.value == 'failed' %}
+        <div class="text-xs text-red-400">✗ {{ job.error_message or 'خطأ غير معروف' }}</div>
+        {% endif %}
+        <div class="text-xs text-slate-500 mt-1">{{ job.created_at.strftime('%Y-%m-%d %H:%M:%S') }}</div>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<div class="text-center py-16 text-slate-500">
+    <svg class="w-16 h-16 mx-auto mb-4 opacity-20" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
+    <p>قائمة الرندر فارغة</p>
+    <a href="/projects" class="text-blue-400 text-sm mt-2 inline-block">ابدأ بمشروع</a>
+</div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% block title %}المنصات المتصلة{% endblock %}
+{% block page_title %}المنصات المتصلة{% endblock %}
+
+{% block header_actions %}
+<button onclick="document.getElementById('connect-modal').classList.remove('hidden')" class="btn-primary">+ ربط منصة</button>
+{% endblock %}
+
+{% block content %}
+{% if accounts %}
+<div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+    {% for account in accounts %}
+    <div class="card">
+        <div class="flex items-center gap-3 mb-3">
+            <div class="w-10 h-10 bg-red-600/20 rounded-lg flex items-center justify-center">
+                <svg class="w-5 h-5 text-red-400" fill="currentColor" viewBox="0 0 24 24"><path d="M23.495 6.205a3.007 3.007 0 00-2.088-2.088c-1.87-.501-9.396-.501-9.396-.501s-7.507-.01-9.396.501A3.007 3.007 0 00.527 6.205a31.247 31.247 0 00-.522 5.805 31.247 31.247 0 00.522 5.783 3.007 3.007 0 002.088 2.088c1.868.502 9.396.502 9.396.502s7.506 0 9.396-.502a3.007 3.007 0 002.088-2.088 31.247 31.247 0 00.5-5.783 31.247 31.247 0 00-.5-5.805zM9.609 15.601V8.408l6.264 3.602z"/></svg>
+            </div>
+            <div>
+                <div class="text-white font-medium">{{ account.name }}</div>
+                <div class="text-slate-400 text-xs">{{ account.platform_name }}</div>
+            </div>
+        </div>
+        <div class="flex items-center gap-2">
+            <span class="{% if account.is_active %}text-green-400{% else %}text-red-400{% endif %} text-xs">
+                ● {% if account.is_active %}نشط{% else %}غير نشط{% endif %}
+            </span>
+            {% if account.last_verified %}
+            <span class="text-slate-500 text-xs">آخر تحقق: {{ account.last_verified.strftime('%Y-%m-%d') }}</span>
+            {% endif %}
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<div class="text-center py-16 text-slate-500">
+    <svg class="w-16 h-16 mx-auto mb-4 opacity-20" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/></svg>
+    <p>لا توجد منصات مربوطة</p>
+    <p class="text-sm mt-1">اربط حساب YouTube لبدء النشر</p>
+</div>
+{% endif %}
+
+<!-- Connect Modal -->
+<div id="connect-modal" class="hidden fixed inset-0 bg-black/70 flex items-center justify-center z-50">
+    <div class="card w-full max-w-md">
+        <div class="flex items-center justify-between mb-4">
+            <h3 class="text-white font-semibold">ربط منصة جديدة</h3>
+            <button onclick="document.getElementById('connect-modal').classList.add('hidden')" class="text-slate-400 hover:text-white">✕</button>
+        </div>
+        <form id="connect-form" class="space-y-4">
+            <div>
+                <label class="block text-sm text-slate-300 mb-1">اسم الحساب</label>
+                <input type="text" id="account-name" class="input" placeholder="مثال: قناتي على YouTube" required>
+            </div>
+            <div>
+                <label class="block text-sm text-slate-300 mb-1">المنصة</label>
+                <select id="platform-name" class="input">
+                    <option value="youtube">YouTube</option>
+                </select>
+            </div>
+            <div>
+                <label class="block text-sm text-slate-300 mb-1">Access Token</label>
+                <input type="password" id="access-token" class="input" placeholder="أدخل OAuth2 access token">
+            </div>
+            <div class="flex gap-3">
+                <button type="submit" class="btn-primary flex-1">ربط</button>
+                <button type="button" onclick="document.getElementById('connect-modal').classList.add('hidden')" class="btn-secondary">إلغاء</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.getElementById('connect-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const payload = {
+        name: document.getElementById('account-name').value,
+        platform_name: document.getElementById('platform-name').value,
+        credentials: { access_token: document.getElementById('access-token').value }
+    };
+    const resp = await fetch('/api/v1/publishing/accounts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+    });
+    if (resp.ok) { showToast('تم ربط الحساب بنجاح', 'success'); setTimeout(() => location.reload(), 1000); }
+    else { const e = await resp.json(); showToast(e.detail || 'فشل الربط', 'error'); }
+});
+</script>
+{% endblock %}

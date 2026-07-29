@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block title %}المشاريع{% endblock %}
+{% block page_title %}المشاريع ({{ total }}){% endblock %}
+
+{% block header_actions %}
+<a href="/projects/new" class="btn-primary">+ مشروع جديد</a>
+{% endblock %}
+
+{% block content %}
+<!-- Filters -->
+<div class="flex gap-3 mb-5">
+    <form method="get" class="flex gap-3 flex-1">
+        <input type="text" name="search" value="{{ search }}" placeholder="بحث في المشاريع…" class="input max-w-xs"
+               hx-get="/projects" hx-trigger="keyup changed delay:400ms" hx-target="#projects-grid" hx-include="[name='status']">
+        <select name="status" class="input max-w-xs"
+                hx-get="/projects" hx-trigger="change" hx-target="#projects-grid" hx-include="[name='search']">
+            <option value="">كل الحالات</option>
+            <option value="draft" {% if status_filter == 'draft' %}selected{% endif %}>مسودة</option>
+            <option value="in_production" {% if status_filter == 'in_production' %}selected{% endif %}>قيد الإنتاج</option>
+            <option value="rendered" {% if status_filter == 'rendered' %}selected{% endif %}>تم الرندر</option>
+            <option value="published" {% if status_filter == 'published' %}selected{% endif %}>منشور</option>
+            <option value="failed" {% if status_filter == 'failed' %}selected{% endif %}>فشل</option>
+        </select>
+    </form>
+</div>
+
+<!-- Projects Grid -->
+<div id="projects-grid">
+{% if projects %}
+<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+    {% for project in projects %}
+    <div class="card hover:border-slate-600 transition-colors group">
+        <div class="flex items-start justify-between mb-3">
+            <div class="w-10 h-10 bg-blue-600/20 rounded-lg flex items-center justify-center flex-shrink-0">
+                <svg class="w-5 h-5 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.069A1 1 0 0121 8.87v6.26a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+            </div>
+            <span class="status-{{ project.status.value }}">{{ project.status.value }}</span>
+        </div>
+        <h3 class="text-white font-medium mb-1 truncate">{{ project.title }}</h3>
+        {% if project.description %}
+        <p class="text-slate-400 text-sm mb-3 line-clamp-2">{{ project.description }}</p>
+        {% endif %}
+        {% if project.tags %}
+        <div class="flex flex-wrap gap-1 mb-3">
+            {% for tag in project.tags[:3] %}
+            <span class="text-xs bg-slate-700 text-slate-300 px-2 py-0.5 rounded">{{ tag }}</span>
+            {% endfor %}
+        </div>
+        {% endif %}
+        <div class="flex items-center justify-between text-xs text-slate-500 mb-3">
+            <span>{{ project.created_at.strftime('%Y-%m-%d') }}</span>
+        </div>
+        <div class="flex gap-2">
+            <a href="/projects/{{ project.id }}" class="btn-secondary flex-1 text-center text-xs py-1.5">فتح</a>
+            {% if project.status.value in ['draft', 'rendered', 'failed'] %}
+            <button onclick="startRender('{{ project.id }}')" class="btn-primary text-xs py-1.5 px-3">رندر</button>
+            {% endif %}
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<div class="text-center py-16 text-slate-500">
+    <svg class="w-16 h-16 mx-auto mb-4 opacity-20" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
+    <p>لا توجد مشاريع</p>
+    <a href="/projects/new" class="text-blue-400 text-sm mt-2 inline-block">إنشاء مشروع جديد</a>
+</div>
+{% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function startRender(projectId) {
+    try {
+        const resp = await fetch('/api/v1/production/render', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ project_id: projectId })
+        });
+        if (resp.ok) {
+            const job = await resp.json();
+            showToast('بدأت عملية الرندر', 'success');
+            setTimeout(() => window.location.href = '/render-queue', 1000);
+        } else {
+            const err = await resp.json();
+            showToast(err.detail || 'فشل بدء الرندر', 'error');
+        }
+    } catch (e) {
+        showToast('خطأ في الاتصال', 'error');
+    }
+}
+</script>
+{% endblock %}
