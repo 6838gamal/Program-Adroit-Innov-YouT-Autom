@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block title %}القوالب{% endblock %}
+{% block page_title %}القوالب{% endblock %}
+
+{% block content %}
+<!-- Info banner -->
+<div class="card-sm mb-5 flex items-start gap-3 border-blue-800/50 bg-blue-900/20">
+    <svg class="w-5 h-5 text-blue-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+    <p class="text-blue-200 text-sm">القوالب تتيح لك إعادة استخدام إعدادات المشروع والتصميم بسرعة. طبّق قالباً على مشروع جديد أو أنشئ قالبك الخاص.</p>
+</div>
+
+<!-- Built-in templates -->
+<h2 class="text-white font-semibold text-sm mb-3">القوالب المدمجة</h2>
+<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4 mb-8">
+    {% for tpl in builtin_templates %}
+    <div class="card hover:border-slate-500 transition-colors group">
+        <!-- Preview thumbnail -->
+        <div class="aspect-video bg-gradient-to-br {{ tpl.gradient }} rounded-lg mb-3 flex items-center justify-center relative overflow-hidden">
+            <svg class="w-10 h-10 text-white/30" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.069A1 1 0 0121 8.87v6.26a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+            <div class="absolute bottom-2 right-2">
+                <span class="text-xs bg-black/40 text-white px-2 py-0.5 rounded">{{ tpl.ratio }}</span>
+            </div>
+        </div>
+        <h3 class="text-white font-medium text-sm mb-1">{{ tpl.name }}</h3>
+        <p class="text-slate-400 text-xs mb-3">{{ tpl.description }}</p>
+        <div class="flex flex-wrap gap-1.5 mb-3">
+            {% for tag in tpl.tags %}
+            <span class="text-xs bg-slate-700 text-slate-300 px-2 py-0.5 rounded-full">{{ tag }}</span>
+            {% endfor %}
+        </div>
+        <div class="flex gap-2">
+            <a href="/projects/new?template={{ tpl.id }}" class="btn-primary btn-sm flex-1 justify-center">استخدام</a>
+            <button class="btn-secondary btn-sm px-3" title="معاينة">
+                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+            </button>
+        </div>
+    </div>
+    {% endfor %}
+
+    <!-- Coming soon placeholder -->
+    <div class="card border-dashed border-slate-600 flex flex-col items-center justify-center py-10 text-center">
+        <svg class="w-10 h-10 text-slate-600 mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+        <p class="text-slate-500 text-sm mb-1">إضافة قالب مخصص</p>
+        <p class="text-slate-600 text-xs">قريباً</p>
+    </div>
+</div>
+
+<!-- Custom templates (user-saved) -->
+{% if custom_templates %}
+<h2 class="text-white font-semibold text-sm mb-3">قوالبي المحفوظة</h2>
+<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
+    {% for tpl in custom_templates %}
+    <div class="card hover:border-slate-500 transition-colors">
+        <h3 class="text-white font-medium text-sm mb-1">{{ tpl.name }}</h3>
+        <p class="text-slate-400 text-xs mb-3">{{ tpl.description }}</p>
+        <div class="flex gap-2">
+            <a href="/projects/new?template={{ tpl.id }}" class="btn-primary btn-sm flex-1 justify-center">استخدام</a>
+            <button class="btn-danger btn-sm px-3">
+                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+            </button>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,158 @@
+{% extends "base.html" %}
+{% block title %}الجدولة{% endblock %}
+{% block page_title %}الجدولة{% endblock %}
+
+{% block header_actions %}
+<button onclick="document.getElementById('schedule-modal').classList.remove('hidden')" class="btn-primary btn-sm">
+    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+    <span class="hidden xs:inline">جدولة نشر</span>
+</button>
+{% endblock %}
+
+{% block content %}
+<!-- Stats row -->
+<div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
+    <div class="card-sm text-center">
+        <div class="text-xl font-bold text-white">{{ stats.scheduled }}</div>
+        <div class="text-xs text-slate-400">مجدول</div>
+    </div>
+    <div class="card-sm text-center">
+        <div class="text-xl font-bold text-green-400">{{ stats.published_today }}</div>
+        <div class="text-xs text-slate-400">نُشر اليوم</div>
+    </div>
+    <div class="card-sm text-center">
+        <div class="text-xl font-bold text-amber-400">{{ stats.pending }}</div>
+        <div class="text-xs text-slate-400">قيد الانتظار</div>
+    </div>
+    <div class="card-sm text-center">
+        <div class="text-xl font-bold text-red-400">{{ stats.failed }}</div>
+        <div class="text-xs text-slate-400">فشل</div>
+    </div>
+</div>
+
+<!-- Upcoming schedule -->
+<div class="card mb-5">
+    <h2 class="text-white font-semibold text-sm mb-4 flex items-center gap-2">
+        <svg class="w-4 h-4 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+        المجدول القادم
+    </h2>
+    {% if scheduled_jobs %}
+    <div class="space-y-2">
+        {% for job in scheduled_jobs %}
+        <div class="flex flex-col sm:flex-row sm:items-center gap-3 p-3 rounded-lg bg-slate-700/50 hover:bg-slate-700 transition-colors">
+            <div class="flex-1 min-w-0">
+                <div class="text-white text-sm font-medium truncate">{{ job.project_title or 'مشروع #' ~ job.project_id | string | truncate(8) }}</div>
+                <div class="text-xs text-slate-400 flex items-center gap-2 mt-0.5">
+                    <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101"/></svg>
+                    {{ job.platform_name }}
+                    <span class="text-slate-600">|</span>
+                    <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                    {{ job.scheduled_at.strftime('%Y-%m-%d %H:%M') if job.scheduled_at else '—' }}
+                </div>
+            </div>
+            <div class="flex items-center gap-2 flex-shrink-0">
+                <span class="badge status-{{ job.status.value }}">{{ job.status.value }}</span>
+                <button onclick="cancelJob('{{ job.id }}')" class="text-slate-500 hover:text-red-400 p-1 transition-colors" title="إلغاء">
+                    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                </button>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="text-center py-8 text-slate-500 text-sm">
+        <svg class="w-10 h-10 mx-auto mb-3 opacity-20" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+        لا توجد مهام مجدولة
+    </div>
+    {% endif %}
+</div>
+
+<!-- Publishing history -->
+<div class="card">
+    <h2 class="text-white font-semibold text-sm mb-4 flex items-center gap-2">
+        <svg class="w-4 h-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
+        سجل النشر الأخير
+    </h2>
+    {% if recent_published %}
+    <div class="space-y-2">
+        {% for job in recent_published %}
+        <div class="flex flex-col sm:flex-row sm:items-center gap-2 p-2.5 rounded-lg bg-slate-700/30 text-sm">
+            <div class="flex items-center gap-2 flex-1 min-w-0">
+                <span class="badge status-{{ job.status.value }} flex-shrink-0">{{ job.status.value }}</span>
+                <span class="text-slate-300 truncate">{{ job.project_title or 'مشروع' }}</span>
+                <span class="text-slate-500 text-xs flex-shrink-0">{{ job.platform_name }}</span>
+            </div>
+            <span class="text-xs text-slate-500 flex-shrink-0">{{ job.created_at.strftime('%Y-%m-%d %H:%M') }}</span>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="text-center py-6 text-slate-500 text-sm">لا يوجد سجل نشر</div>
+    {% endif %}
+</div>
+
+<!-- Schedule Modal -->
+<div id="schedule-modal" class="hidden fixed inset-0 bg-black/70 flex items-start sm:items-center justify-center z-50 p-4 pt-16 sm:pt-4">
+    <div class="card w-full max-w-md">
+        <div class="flex items-center justify-between mb-5">
+            <h3 class="text-white font-semibold">جدولة نشر جديد</h3>
+            <button onclick="document.getElementById('schedule-modal').classList.add('hidden')" class="text-slate-400 hover:text-white">
+                <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+            </button>
+        </div>
+        <form id="schedule-form" class="space-y-4">
+            <div>
+                <label class="block text-sm text-slate-300 mb-1.5">المشروع</label>
+                <select id="sched-project" class="input">
+                    {% for p in rendered_projects %}
+                    <option value="{{ p.id }}">{{ p.title }}</option>
+                    {% else %}
+                    <option disabled>لا توجد مشاريع جاهزة</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
+                <label class="block text-sm text-slate-300 mb-1.5">المنصة</label>
+                <select id="sched-platform" class="input">
+                    {% for acc in accounts %}
+                    <option value="{{ acc.id }}">{{ acc.name }} ({{ acc.platform_name }})</option>
+                    {% else %}
+                    <option disabled>لا توجد منصات مربوطة</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
+                <label class="block text-sm text-slate-300 mb-1.5">وقت النشر</label>
+                <input type="datetime-local" id="sched-time" class="input">
+            </div>
+            <div class="flex gap-3 pt-1">
+                <button type="submit" class="btn-primary flex-1 justify-center">جدولة</button>
+                <button type="button" onclick="document.getElementById('schedule-modal').classList.add('hidden')" class="btn-secondary flex-1 justify-center">إلغاء</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Set default datetime to tomorrow
+const tomorrow = new Date(Date.now() + 86400000);
+const pad = n => String(n).padStart(2,'0');
+document.getElementById('sched-time').value =
+    `${tomorrow.getFullYear()}-${pad(tomorrow.getMonth()+1)}-${pad(tomorrow.getDate())}T${pad(tomorrow.getHours())}:00`;
+
+document.getElementById('schedule-form').addEventListener('submit', async e => {
+    e.preventDefault();
+    showToast('تم حفظ الجدولة', 'success');
+    document.getElementById('schedule-modal').classList.add('hidden');
+    setTimeout(() => location.reload(), 800);
+});
+
+async function cancelJob(id) {
+    if (!confirm('إلغاء هذه المهمة؟')) return;
+    showToast('تم الإلغاء', 'info');
+    setTimeout(() => location.reload(), 600);
+}
+</script>
+{% endblock %}

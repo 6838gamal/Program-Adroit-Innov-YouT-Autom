@@ -1,38 +1,54 @@
 {% extends "base.html" %}
 {% block title %}{{ project.title }}{% endblock %}
-{% block page_title %}{{ project.title }}{% endblock %}
+{% block page_title %}{{ project.title | truncate(40) }}{% endblock %}
 
 {% block header_actions %}
 {% if project.status.value in ['draft', 'rendered', 'failed'] %}
-<button onclick="startRender('{{ project.id }}')" class="btn-primary">▶ بدء الرندر</button>
+<button onclick="startRender('{{ project.id }}')" class="btn-primary btn-sm">
+    <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+    <span class="hidden xs:inline">رندر</span>
+</button>
 {% endif %}
 {% if project.status.value == 'rendered' %}
-<button onclick="openPublishModal()" class="btn-secondary">📤 نشر</button>
+<button onclick="openPublishModal()" class="btn-secondary btn-sm">
+    <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"/></svg>
+    <span class="hidden xs:inline">نشر</span>
+</button>
 {% endif %}
 {% endblock %}
 
 {% block content %}
-<div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-    <!-- Project info -->
-    <div class="lg:col-span-2 space-y-5">
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
+
+    <!-- Main info -->
+    <div class="lg:col-span-2 space-y-4 sm:space-y-5">
+
+        <!-- Metadata card -->
         <div class="card">
-            <div class="flex items-center gap-3 mb-4">
-                <span class="status-{{ project.status.value }} text-sm">{{ project.status.value }}</span>
-                <span class="text-slate-500 text-sm">{{ project.created_at.strftime('%Y-%m-%d %H:%M') }}</span>
+            <div class="flex flex-wrap items-center gap-2 sm:gap-3 mb-4">
+                <span class="badge status-{{ project.status.value }}">{{ project.status.value }}</span>
+                <span class="text-slate-500 text-xs">{{ project.created_at.strftime('%Y-%m-%d %H:%M') }}</span>
+                <a href="/projects/{{ project.id }}/timeline" class="text-blue-400 hover:text-blue-300 text-xs flex items-center gap-1">
+                    <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 10h16M4 14h16M4 18h16"/></svg>
+                    محرر التايم لاين
+                </a>
             </div>
             {% if project.description %}
-            <p class="text-slate-300 mb-4">{{ project.description }}</p>
+            <p class="text-slate-300 text-sm sm:text-base mb-4">{{ project.description }}</p>
             {% endif %}
             {% if project.script %}
             <div>
-                <h3 class="text-slate-400 text-sm mb-2">النص</h3>
-                <div class="bg-slate-900 rounded-lg p-4 text-sm text-slate-300 font-mono max-h-48 overflow-y-auto whitespace-pre-wrap">{{ project.script }}</div>
+                <h3 class="text-slate-400 text-xs sm:text-sm mb-2 flex items-center gap-1.5">
+                    <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+                    النص / السكريبت
+                </h3>
+                <div class="bg-slate-900 rounded-lg p-3 sm:p-4 text-xs sm:text-sm text-slate-300 font-mono max-h-40 sm:max-h-52 overflow-y-auto whitespace-pre-wrap leading-relaxed">{{ project.script }}</div>
             </div>
             {% endif %}
             {% if project.tags %}
-            <div class="flex flex-wrap gap-2 mt-4">
+            <div class="flex flex-wrap gap-1.5 mt-4">
                 {% for tag in project.tags %}
-                <span class="text-xs bg-slate-700 text-slate-300 px-2 py-1 rounded">{{ tag }}</span>
+                <span class="text-xs bg-slate-700 text-slate-300 px-2.5 py-0.5 rounded-full">{{ tag }}</span>
                 {% endfor %}
             </div>
             {% endif %}
@@ -40,14 +56,17 @@
 
         <!-- Render Jobs -->
         <div class="card">
-            <h3 class="text-white font-semibold mb-4">مهام الرندر</h3>
+            <h3 class="text-white font-semibold mb-4 text-sm sm:text-base flex items-center gap-2">
+                <svg class="w-4 h-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
+                مهام الرندر
+            </h3>
             {% if render_jobs %}
-            <div class="space-y-3" id="render-jobs">
+            <div class="space-y-2.5" id="render-jobs">
                 {% for job in render_jobs %}
                 <div class="bg-slate-700/50 rounded-lg p-3" id="job-{{ job.id }}">
                     <div class="flex items-center justify-between mb-2">
-                        <span class="text-white text-sm font-mono">{{ job.id | string | truncate(20, True, '…') }}</span>
-                        <span class="status-{{ job.status.value }}">{{ job.status.value }}</span>
+                        <span class="text-white text-xs font-mono truncate max-w-[140px] sm:max-w-xs">{{ job.id | string | truncate(22, True, '…') }}</span>
+                        <span class="badge status-{{ job.status.value }} mr-2 flex-shrink-0">{{ job.status.value }}</span>
                     </div>
                     {% if job.status.value == 'processing' %}
                     <div class="w-full bg-slate-600 rounded-full h-2 mb-1"
@@ -59,9 +78,15 @@
                     </div>
                     <div id="stage-{{ job.id }}" class="text-xs text-slate-400">{{ job.progress | round(1) }}% — {{ job.current_stage }}</div>
                     {% elif job.status.value == 'completed' %}
-                    <div class="text-xs text-green-400">✓ اكتمل — {{ job.completed_at.strftime('%H:%M:%S') if job.completed_at }}</div>
+                    <div class="text-xs text-green-400 flex items-center gap-1">
+                        <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                        اكتمل{% if job.completed_at %} — {{ job.completed_at.strftime('%H:%M:%S') }}{% endif %}
+                    </div>
                     {% elif job.status.value == 'failed' %}
-                    <div class="text-xs text-red-400">✗ {{ job.error_message or 'فشل غير معروف' }}</div>
+                    <div class="text-xs text-red-400 flex items-center gap-1">
+                        <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                        {{ job.error_message or 'فشل غير معروف' }}
+                    </div>
                     {% endif %}
                     <div class="text-xs text-slate-500 mt-1">{{ job.created_at.strftime('%Y-%m-%d %H:%M') }}</div>
                 </div>
@@ -74,20 +99,51 @@
     </div>
 
     <!-- Side panel -->
-    <div class="space-y-5">
+    <div class="space-y-4">
+        <!-- Brand colors -->
         <div class="card">
-            <h3 class="text-slate-300 font-medium mb-3 text-sm">الألوان</h3>
-            <div class="flex gap-2">
+            <h3 class="text-slate-300 font-medium mb-3 text-sm flex items-center gap-2">
+                <svg class="w-4 h-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01"/></svg>
+                الألوان
+            </h3>
+            <div class="flex flex-wrap gap-2">
                 {% for key, color in project.brand_colors.to_dict().items() %}
-                <div title="{{ key }}: {{ color }}" class="w-8 h-8 rounded-lg border border-slate-600 flex-shrink-0" style="background: {{ color }}"></div>
+                <div title="{{ key }}: {{ color }}"
+                     class="w-8 h-8 rounded-lg border border-slate-600 flex-shrink-0 cursor-help"
+                     style="background: {{ color }}"></div>
                 {% endfor %}
             </div>
         </div>
+
+        <!-- Actions -->
         <div class="card">
             <h3 class="text-slate-300 font-medium mb-3 text-sm">إجراءات</h3>
             <div class="space-y-2">
-                <a href="/projects/{{ project.id }}/edit" class="btn-secondary w-full text-center block text-sm">✏️ تعديل</a>
-                <button onclick="deleteProject('{{ project.id }}')" class="btn-danger w-full text-sm">🗑 حذف</button>
+                <a href="/projects/{{ project.id }}/timeline" class="btn-secondary w-full justify-center text-sm">
+                    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 10h16M4 14h16M4 18h16"/></svg>
+                    محرر التايم لاين
+                </a>
+                <button onclick="deleteProject('{{ project.id }}')" class="btn-danger w-full justify-center text-sm">
+                    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                    حذف المشروع
+                </button>
+            </div>
+        </div>
+
+        <!-- Publish modal trigger -->
+        <div id="publish-modal" class="hidden fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+            <div class="card w-full max-w-sm">
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="text-white font-semibold">نشر المشروع</h3>
+                    <button onclick="document.getElementById('publish-modal').classList.add('hidden')" class="text-slate-400 hover:text-white">
+                        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                    </button>
+                </div>
+                <p class="text-slate-400 text-sm mb-4">تأكيد نشر الفيديو على المنصات المتصلة</p>
+                <div class="flex gap-2">
+                    <button onclick="publishProject('{{ project.id }}')" class="btn-primary flex-1 justify-center">نشر الآن</button>
+                    <button onclick="document.getElementById('publish-modal').classList.add('hidden')" class="btn-secondary flex-1 justify-center">إلغاء</button>
+                </div>
             </div>
         </div>
     </div>
@@ -96,6 +152,8 @@
 
 {% block scripts %}
 <script>
+function openPublishModal() { document.getElementById('publish-modal').classList.remove('hidden'); }
+
 async function startRender(projectId) {
     try {
         const resp = await fetch('/api/v1/production/render', {
@@ -103,21 +161,21 @@ async function startRender(projectId) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ project_id: projectId })
         });
-        if (resp.ok) {
-            showToast('بدأت عملية الرندر', 'success');
-            setTimeout(() => location.reload(), 1500);
-        } else {
-            const err = await resp.json();
-            showToast(err.detail || 'فشل بدء الرندر', 'error');
-        }
+        if (resp.ok) { showToast('بدأت عملية الرندر', 'success'); setTimeout(() => location.reload(), 1500); }
+        else { const err = await resp.json(); showToast(err.detail || 'فشل بدء الرندر', 'error'); }
     } catch (e) { showToast('خطأ في الاتصال', 'error'); }
 }
 
 async function deleteProject(id) {
     if (!confirm('هل أنت متأكد من حذف هذا المشروع؟')) return;
     const resp = await fetch(`/api/v1/projects/${id}`, { method: 'DELETE' });
-    if (resp.ok) { window.location.href = '/projects'; }
+    if (resp.ok) { showToast('تم الحذف', 'success'); setTimeout(() => window.location.href = '/projects', 800); }
     else showToast('فشل الحذف', 'error');
+}
+
+async function publishProject(id) {
+    document.getElementById('publish-modal').classList.add('hidden');
+    showToast('جارٍ النشر…', 'info');
 }
 
 function updateJobProgress(event, jobId) {

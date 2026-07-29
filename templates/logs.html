@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% block title %}السجلات{% endblock %}
+{% block page_title %}سجل العمليات{% endblock %}
+
+{% block header_actions %}
+<button onclick="clearLogs()" class="btn-secondary btn-sm">
+    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+    <span class="hidden xs:inline">مسح</span>
+</button>
+{% endblock %}
+
+{% block content %}
+<!-- Filters -->
+<div class="flex flex-col xs:flex-row gap-2 mb-4">
+    <select id="level-filter" class="input xs:max-w-[160px]" onchange="filterLogs()">
+        <option value="">كل المستويات</option>
+        <option value="info">INFO</option>
+        <option value="warning">WARNING</option>
+        <option value="error">ERROR</option>
+        <option value="debug">DEBUG</option>
+    </select>
+    <select id="source-filter" class="input xs:max-w-[180px]" onchange="filterLogs()">
+        <option value="">كل المصادر</option>
+        <option value="render">الرندر</option>
+        <option value="publish">النشر</option>
+        <option value="asset">الأصول</option>
+        <option value="project">المشاريع</option>
+        <option value="system">النظام</option>
+    </select>
+    <input type="text" id="log-search" placeholder="بحث في السجلات…" class="input" oninput="filterLogs()">
+</div>
+
+<!-- Log count -->
+<div class="text-xs text-slate-500 mb-3">
+    <span id="log-count">{{ log_entries | length }}</span> سجل
+</div>
+
+<!-- Log entries -->
+<div class="card p-0 overflow-hidden">
+    <div id="log-container" class="overflow-y-auto" style="max-height:65vh; font-family: 'Courier New', monospace;">
+        {% if log_entries %}
+        {% for entry in log_entries %}
+        <div class="log-entry border-b border-slate-700/50 px-3 sm:px-4 py-2 hover:bg-slate-700/30 transition-colors flex flex-col xs:flex-row xs:items-start gap-1 xs:gap-3 text-xs"
+             data-level="{{ entry.level | lower }}" data-source="{{ entry.source | lower }}" data-text="{{ entry.message | lower }}">
+            <div class="flex items-center gap-2 flex-shrink-0">
+                <span class="{% if entry.level == 'ERROR' %}text-red-400{% elif entry.level == 'WARNING' %}text-amber-400{% elif entry.level == 'DEBUG' %}text-slate-500{% else %}text-blue-400{% endif %} font-bold w-16 text-right">
+                    {{ entry.level }}
+                </span>
+                <span class="text-slate-600 w-14 text-right hidden xs:block">{{ entry.timestamp.strftime('%H:%M:%S') }}</span>
+                <span class="text-slate-600 text-right hidden sm:block">{{ entry.timestamp.strftime('%Y-%m-%d') }}</span>
+            </div>
+            <div class="flex-1 min-w-0">
+                <span class="{% if entry.level == 'ERROR' %}text-red-300{% elif entry.level == 'WARNING' %}text-amber-300{% elif entry.level == 'DEBUG' %}text-slate-500{% else %}text-slate-200{% endif %} break-all">
+                    {% if entry.source %}<span class="text-slate-500">[{{ entry.source }}]</span> {% endif %}{{ entry.message }}
+                </span>
+            </div>
+        </div>
+        {% endfor %}
+        {% else %}
+        <div class="text-center py-16 text-slate-500 text-sm">
+            <svg class="w-10 h-10 mx-auto mb-3 opacity-20" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
+            لا توجد سجلات
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Auto-scroll toggle -->
+<div class="flex items-center justify-between mt-3">
+    <label class="flex items-center gap-2 text-sm text-slate-400 cursor-pointer">
+        <input type="checkbox" id="auto-scroll" checked class="accent-blue-500 w-4 h-4">
+        تمرير تلقائي للأسفل
+    </label>
+    <button onclick="document.getElementById('log-container').scrollTop = document.getElementById('log-container').scrollHeight"
+            class="btn-secondary btn-sm text-xs">
+        ⬇ آخر السجلات
+    </button>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function filterLogs() {
+    const level = document.getElementById('level-filter').value.toLowerCase();
+    const source = document.getElementById('source-filter').value.toLowerCase();
+    const search = document.getElementById('log-search').value.toLowerCase();
+    let visible = 0;
+    document.querySelectorAll('.log-entry').forEach(el => {
+        const matchLevel  = !level  || el.dataset.level  === level;
+        const matchSource = !source || el.dataset.source === source;
+        const matchSearch = !search || el.dataset.text.includes(search);
+        const show = matchLevel && matchSource && matchSearch;
+        el.style.display = show ? '' : 'none';
+        if (show) visible++;
+    });
+    document.getElementById('log-count').textContent = visible;
+}
+
+function clearLogs() {
+    if (!confirm('مسح عرض السجلات؟')) return;
+    document.querySelectorAll('.log-entry').forEach(el => el.remove());
+    document.getElementById('log-count').textContent = '0';
+}
+
+// Auto-scroll to bottom on load
+const container = document.getElementById('log-container');
+if (container) container.scrollTop = container.scrollHeight;
+</script>
+{% endblock %}

@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+{% block title %}التحليلات{% endblock %}
+{% block page_title %}التحليلات{% endblock %}
+
+{% block head %}
+<style>
+    .bar-chart-bar { transition: width .6s cubic-bezier(.4,0,.2,1); }
+    .stat-card { background:#1e293b; border-radius:.75rem; border:1px solid #334155; padding:1rem; }
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- Top KPIs -->
+<div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
+    {% for kpi in kpis %}
+    <div class="stat-card">
+        <div class="flex items-center justify-between mb-2">
+            <span class="text-slate-400 text-xs">{{ kpi.label }}</span>
+            <span class="text-xs {{ 'text-green-400' if kpi.trend > 0 else ('text-red-400' if kpi.trend < 0 else 'text-slate-500') }}">
+                {% if kpi.trend > 0 %}↑{% elif kpi.trend < 0 %}↓{% endif %} {{ kpi.trend | abs }}%
+            </span>
+        </div>
+        <div class="text-2xl font-bold text-white">{{ kpi.value }}</div>
+        <div class="text-xs text-slate-500 mt-0.5">{{ kpi.sub }}</div>
+    </div>
+    {% endfor %}
+</div>
+
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
+    <!-- Projects by status -->
+    <div class="card">
+        <h2 class="text-white font-semibold text-sm mb-4 flex items-center gap-2">
+            <svg class="w-4 h-4 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
+            المشاريع حسب الحالة
+        </h2>
+        <div class="space-y-3">
+            {% for item in projects_by_status %}
+            <div>
+                <div class="flex items-center justify-between text-xs mb-1">
+                    <span class="text-slate-300">{{ item.label }}</span>
+                    <span class="text-slate-400">{{ item.count }}</span>
+                </div>
+                <div class="w-full bg-slate-700 rounded-full h-2">
+                    <div class="bar-chart-bar h-2 rounded-full {{ item.color }}"
+                         style="width: {{ (item.count / (total_projects or 1) * 100) | round }}%"></div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- Render jobs stats -->
+    <div class="card">
+        <h2 class="text-white font-semibold text-sm mb-4 flex items-center gap-2">
+            <svg class="w-4 h-4 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+            مهام الرندر
+        </h2>
+        <div class="grid grid-cols-2 gap-3">
+            {% for stat in render_stats %}
+            <div class="bg-slate-700/50 rounded-lg p-3 text-center">
+                <div class="text-xl font-bold {{ stat.color }}">{{ stat.value }}</div>
+                <div class="text-xs text-slate-400 mt-0.5">{{ stat.label }}</div>
+            </div>
+            {% endfor %}
+        </div>
+        {% if avg_render_time %}
+        <div class="mt-3 pt-3 border-t border-slate-700 flex items-center justify-between text-xs">
+            <span class="text-slate-400">متوسط وقت الرندر</span>
+            <span class="text-white font-medium">{{ avg_render_time }}</span>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Publishing activity -->
+    <div class="card">
+        <h2 class="text-white font-semibold text-sm mb-4 flex items-center gap-2">
+            <svg class="w-4 h-4 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316"/></svg>
+            نشاط النشر (آخر 7 أيام)
+        </h2>
+        {% if publish_activity %}
+        <div class="flex items-end gap-1 h-24 sm:h-32">
+            {% set max_val = publish_activity | map(attribute='count') | max %}
+            {% for day in publish_activity %}
+            <div class="flex-1 flex flex-col items-center gap-1">
+                <div class="w-full bg-blue-500 rounded-t" title="{{ day.count }} مهمة"
+                     style="height: {{ (day.count / (max_val or 1) * 100) | round }}%; min-height: {{ '4px' if day.count > 0 else '0' }};"></div>
+                <span class="text-slate-500 text-xs" style="font-size:.58rem;">{{ day.label }}</span>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="text-center py-8 text-slate-500 text-sm">لا توجد بيانات نشر</div>
+        {% endif %}
+    </div>
+
+    <!-- Asset distribution -->
+    <div class="card">
+        <h2 class="text-white font-semibold text-sm mb-4 flex items-center gap-2">
+            <svg class="w-4 h-4 text-purple-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+            توزيع الأصول ({{ total_assets }} إجمالاً)
+        </h2>
+        {% if asset_types %}
+        <div class="space-y-2.5">
+            {% for at in asset_types %}
+            <div>
+                <div class="flex items-center justify-between text-xs mb-1">
+                    <span class="text-slate-300 flex items-center gap-1.5">
+                        <span class="w-2 h-2 rounded-full inline-block {{ at.dot_color }}"></span>
+                        {{ at.label }}
+                    </span>
+                    <span class="text-slate-400">{{ at.count }}</span>
+                </div>
+                <div class="w-full bg-slate-700 rounded-full h-1.5">
+                    <div class="bar-chart-bar h-1.5 rounded-full {{ at.bar_color }}"
+                         style="width: {{ (at.count / (total_assets or 1) * 100) | round }}%"></div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="text-center py-8 text-slate-500 text-sm">لا توجد أصول</div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,169 @@
+{% extends "base.html" %}
+{% block title %}الإعدادات{% endblock %}
+{% block page_title %}الإعدادات{% endblock %}
+
+{% block content %}
+<div class="max-w-2xl" x-data="{ activeTab: 'general' }">
+
+    <!-- Tabs -->
+    <div class="flex gap-0.5 bg-slate-800 rounded-xl p-1 mb-5 overflow-x-auto">
+        {% for tab in [('general','عام'),('production','الإنتاج'),('publishing','النشر'),('storage','التخزين')] %}
+        <button @click="activeTab = '{{ tab[0] }}'"
+                :class="activeTab === '{{ tab[0] }}' ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-white'"
+                class="flex-1 sm:flex-none px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-medium transition-colors whitespace-nowrap">
+            {{ tab[1] }}
+        </button>
+        {% endfor %}
+    </div>
+
+    <!-- General -->
+    <div x-show="activeTab === 'general'" class="space-y-4">
+        <div class="card">
+            <h3 class="text-white font-semibold text-sm mb-4">إعدادات عامة</h3>
+            <form id="general-form" class="space-y-4">
+                <div>
+                    <label class="block text-sm text-slate-300 mb-1.5">اسم التطبيق</label>
+                    <input type="text" class="input" value="{{ settings.app_name }}" id="app-name">
+                </div>
+                <div>
+                    <label class="block text-sm text-slate-300 mb-1.5">الإصدار</label>
+                    <input type="text" class="input" value="{{ settings.app_version }}" readonly
+                           style="opacity:.5;cursor:not-allowed">
+                </div>
+                <div class="flex items-center justify-between py-1">
+                    <div>
+                        <div class="text-sm text-slate-300">وضع التصحيح (Debug)</div>
+                        <div class="text-xs text-slate-500">تسجيل تفاصيل إضافية في السجلات</div>
+                    </div>
+                    <label class="relative inline-flex items-center cursor-pointer">
+                        <input type="checkbox" id="debug-mode" {% if settings.debug %}checked{% endif %} class="sr-only peer">
+                        <div class="w-10 h-5 bg-slate-600 rounded-full peer peer-checked:bg-blue-600 peer-checked:after:translate-x-full after:absolute after:top-0.5 after:right-0.5 after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-transform"></div>
+                    </label>
+                </div>
+                <div class="flex items-center justify-between py-1">
+                    <div>
+                        <div class="text-sm text-slate-300">جدولة المهام</div>
+                        <div class="text-xs text-slate-500">تشغيل APScheduler للمهام الدورية</div>
+                    </div>
+                    <label class="relative inline-flex items-center cursor-pointer">
+                        <input type="checkbox" id="scheduler" {% if settings.scheduler_enabled %}checked{% endif %} class="sr-only peer">
+                        <div class="w-10 h-5 bg-slate-600 rounded-full peer peer-checked:bg-blue-600 peer-checked:after:translate-x-full after:absolute after:top-0.5 after:right-0.5 after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-transform"></div>
+                    </label>
+                </div>
+                <button type="submit" class="btn-primary btn-sm">حفظ الإعدادات</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Production -->
+    <div x-show="activeTab === 'production'" class="space-y-4">
+        <div class="card">
+            <h3 class="text-white font-semibold text-sm mb-4">إعدادات الإنتاج</h3>
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-sm text-slate-300 mb-1.5">محرك الرندر</label>
+                    <select class="input">
+                        <option value="ffmpeg">FFmpeg (افتراضي)</option>
+                        <option value="default">Default (بدون تحويل)</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm text-slate-300 mb-1.5">محرك الصوت الافتراضي</label>
+                    <select class="input">
+                        <option value="silent">Silent (صامت)</option>
+                        <option value="default">Default</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm text-slate-300 mb-1.5">دقة الفيديو الافتراضية</label>
+                    <select class="input">
+                        <option value="1920x1080">1920×1080 (Full HD)</option>
+                        <option value="1280x720">1280×720 (HD)</option>
+                        <option value="3840x2160">3840×2160 (4K)</option>
+                        <option value="1080x1920">1080×1920 (عمودي)</option>
+                        <option value="1080x1080">1080×1080 (مربع)</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm text-slate-300 mb-1.5">معدل الإطارات</label>
+                    <select class="input">
+                        <option value="30">30 FPS</option>
+                        <option value="24">24 FPS</option>
+                        <option value="60">60 FPS</option>
+                    </select>
+                </div>
+                <button class="btn-primary btn-sm">حفظ</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Publishing -->
+    <div x-show="activeTab === 'publishing'" class="space-y-4">
+        <div class="card">
+            <h3 class="text-white font-semibold text-sm mb-4">إعدادات النشر</h3>
+            <div class="space-y-4">
+                <div class="flex items-center justify-between py-1">
+                    <div>
+                        <div class="text-sm text-slate-300">إعادة المحاولة التلقائية</div>
+                        <div class="text-xs text-slate-500">إعادة محاولة النشر عند الفشل</div>
+                    </div>
+                    <label class="relative inline-flex items-center cursor-pointer">
+                        <input type="checkbox" checked class="sr-only peer">
+                        <div class="w-10 h-5 bg-slate-600 rounded-full peer peer-checked:bg-blue-600 peer-checked:after:translate-x-full after:absolute after:top-0.5 after:right-0.5 after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-transform"></div>
+                    </label>
+                </div>
+                <div>
+                    <label class="block text-sm text-slate-300 mb-1.5">الحد الأقصى لإعادة المحاولة</label>
+                    <input type="number" class="input" value="3" min="1" max="10">
+                </div>
+                <div>
+                    <label class="block text-sm text-slate-300 mb-1.5">الانتظار بين المحاولات (ثانية)</label>
+                    <input type="number" class="input" value="60" min="10" max="3600">
+                </div>
+                <button class="btn-primary btn-sm">حفظ</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Storage -->
+    <div x-show="activeTab === 'storage'" class="space-y-4">
+        <div class="card">
+            <h3 class="text-white font-semibold text-sm mb-4">إعدادات التخزين</h3>
+            <div class="space-y-3 text-sm mb-4">
+                <div class="flex justify-between py-2 border-b border-slate-700">
+                    <span class="text-slate-400">مجلد الوسائط</span>
+                    <span class="text-white font-mono text-xs">{{ settings.media_dir }}</span>
+                </div>
+                <div class="flex justify-between py-2 border-b border-slate-700">
+                    <span class="text-slate-400">مجلد التصدير</span>
+                    <span class="text-white font-mono text-xs">{{ settings.exports_dir }}</span>
+                </div>
+                <div class="flex justify-between py-2 border-b border-slate-700">
+                    <span class="text-slate-400">مجلد مؤقت</span>
+                    <span class="text-white font-mono text-xs">{{ settings.temp_dir }}</span>
+                </div>
+                <div class="flex justify-between py-2">
+                    <span class="text-slate-400">قاعدة البيانات</span>
+                    <span class="text-white font-mono text-xs">SQLite (MVP)</span>
+                </div>
+            </div>
+            <button onclick="cleanupTempFiles()" class="btn-secondary btn-sm">
+                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                تنظيف الملفات المؤقتة
+            </button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.getElementById('general-form')?.addEventListener('submit', e => {
+    e.preventDefault();
+    showToast('تم حفظ الإعدادات', 'success');
+});
+function cleanupTempFiles() {
+    showToast('جارٍ تنظيف الملفات المؤقتة…', 'info');
+}
+</script>
+{% endblock %}

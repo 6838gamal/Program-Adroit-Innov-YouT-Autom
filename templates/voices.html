@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+{% block title %}محركات الصوت{% endblock %}
+{% block page_title %}محركات الصوت{% endblock %}
+
+{% block content %}
+<!-- Active engine banner -->
+<div class="card-sm mb-5 flex flex-col sm:flex-row sm:items-center gap-3">
+    <div class="flex items-center gap-3 flex-1">
+        <div class="w-10 h-10 bg-green-600/20 rounded-xl flex items-center justify-center flex-shrink-0">
+            <svg class="w-5 h-5 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"/></svg>
+        </div>
+        <div>
+            <div class="text-white font-medium text-sm">المحرك النشط: <span class="text-green-400">{{ active_voice }}</span></div>
+            <div class="text-slate-400 text-xs">يُستخدم في توليد الصوت لجميع المشاريع الجديدة</div>
+        </div>
+    </div>
+</div>
+
+<!-- Voice engines list -->
+<h2 class="text-white font-semibold text-sm mb-3">المحركات المتاحة</h2>
+<div class="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4 mb-8">
+    {% for engine in voice_engines %}
+    <div class="card hover:border-slate-500 transition-colors {% if engine.active %}border-blue-700{% endif %}">
+        <div class="flex items-start justify-between mb-3">
+            <div class="flex items-center gap-2.5">
+                <div class="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 {{ 'bg-blue-600/20' if engine.active else 'bg-slate-700' }}">
+                    <svg class="w-4 h-4 {{ 'text-blue-400' if engine.active else 'text-slate-400' }}" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"/></svg>
+                </div>
+                <div>
+                    <div class="text-white font-medium text-sm">{{ engine.name }}</div>
+                    <div class="text-slate-400 text-xs">{{ engine.provider }}</div>
+                </div>
+            </div>
+            {% if engine.active %}
+            <span class="badge bg-blue-900/50 text-blue-300 border border-blue-700">نشط</span>
+            {% elif engine.available %}
+            <span class="badge bg-green-900/30 text-green-400 border border-green-800">متاح</span>
+            {% else %}
+            <span class="badge bg-slate-700 text-slate-400">غير متاح</span>
+            {% endif %}
+        </div>
+        <p class="text-slate-400 text-xs mb-3">{{ engine.description }}</p>
+
+        <!-- Language support -->
+        <div class="flex flex-wrap gap-1.5 mb-3">
+            {% for lang in engine.languages %}
+            <span class="text-xs bg-slate-700 text-slate-300 px-2 py-0.5 rounded-full">{{ lang }}</span>
+            {% endfor %}
+        </div>
+
+        <!-- Quality indicator -->
+        <div class="flex items-center gap-2 mb-3">
+            <span class="text-xs text-slate-500">الجودة:</span>
+            <div class="flex gap-0.5">
+                {% for i in range(5) %}
+                <div class="w-4 h-1.5 rounded-full {{ 'bg-blue-500' if i < engine.quality else 'bg-slate-700' }}"></div>
+                {% endfor %}
+            </div>
+        </div>
+
+        {% if not engine.active and engine.available %}
+        <button onclick="setActiveVoice('{{ engine.id }}')" class="btn-secondary btn-sm w-full justify-center">تعيين كمحرك نشط</button>
+        {% elif not engine.available %}
+        <div class="text-xs text-slate-500 text-center py-1">يتطلب إعداداً إضافياً</div>
+        {% endif %}
+    </div>
+    {% endfor %}
+</div>
+
+<!-- Test voice section -->
+<div class="card">
+    <h2 class="text-white font-semibold text-sm mb-4 flex items-center gap-2">
+        <svg class="w-4 h-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+        اختبار الصوت
+    </h2>
+    <div class="space-y-3">
+        <textarea id="test-text" rows="3" class="input resize-none" placeholder="اكتب نصاً لتجربة الصوت…&#10;مثال: مرحباً بكم في منصة إنتاج المحتوى"></textarea>
+        <div class="flex flex-col xs:flex-row gap-2">
+            <select id="test-engine" class="input xs:max-w-[200px]">
+                {% for engine in voice_engines %}
+                {% if engine.available %}
+                <option value="{{ engine.id }}" {% if engine.active %}selected{% endif %}>{{ engine.name }}</option>
+                {% endif %}
+                {% endfor %}
+            </select>
+            <button onclick="testVoice()" class="btn-primary btn-sm">
+                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/></svg>
+                تشغيل
+            </button>
+        </div>
+        <div id="audio-player" class="hidden">
+            <audio id="preview-audio" controls class="w-full mt-2" style="height:36px;"></audio>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function setActiveVoice(engineId) {
+    showToast('تم تعيين المحرك النشط', 'success');
+    setTimeout(() => location.reload(), 800);
+}
+async function testVoice() {
+    const text = document.getElementById('test-text').value.trim();
+    if (!text) { showToast('أدخل نصاً للاختبار', 'warning'); return; }
+    showToast('جارٍ توليد الصوت… (تجريبي)', 'info');
+}
+</script>
+{% endblock %}

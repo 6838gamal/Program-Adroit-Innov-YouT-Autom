@@ -4,29 +4,38 @@
 
 {% block content %}
 {% if jobs %}
-<div class="space-y-3">
+<div class="space-y-2 sm:space-y-3">
     {% for job in jobs %}
-    <div class="card">
-        <div class="flex items-center justify-between mb-2">
-            <span class="text-white font-mono text-sm">{{ job.id | string | truncate(24, True, '…') }}</span>
-            <span class="status-{{ job.status.value }}">{{ job.status.value }}</span>
+    <div class="card-sm">
+        <div class="flex items-start justify-between gap-3 mb-2">
+            <span class="text-white font-mono text-xs truncate">{{ job.id | string | truncate(24, True, '…') }}</span>
+            <span class="badge status-{{ job.status.value }} flex-shrink-0">{{ job.status.value }}</span>
         </div>
         {% if job.platform_url %}
-        <a href="{{ job.platform_url }}" target="_blank" class="text-blue-400 text-xs hover:underline">🔗 {{ job.platform_url }}</a>
+        <a href="{{ job.platform_url }}" target="_blank"
+           class="text-blue-400 text-xs hover:underline flex items-center gap-1 mb-1">
+            <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
+            {{ job.platform_url | truncate(50) }}
+        </a>
         {% endif %}
         {% if job.error_message %}
-        <div class="text-xs text-red-400 mt-1">✗ {{ job.error_message }}</div>
+        <div class="text-xs text-red-400 flex items-start gap-1">
+            <svg class="w-3.5 h-3.5 mt-0.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+            {{ job.error_message }}
+        </div>
         {% endif %}
         {% if job.retry_count > 0 %}
-        <div class="text-xs text-amber-400 mt-1">محاولة إعادة رقم {{ job.retry_count }}</div>
+        <div class="text-xs text-amber-400">إعادة المحاولة: {{ job.retry_count }}</div>
         {% endif %}
-        <div class="text-xs text-slate-500 mt-2">{{ job.created_at.strftime('%Y-%m-%d %H:%M') }}</div>
+        <div class="text-xs text-slate-500 mt-1.5">{{ job.created_at.strftime('%Y-%m-%d %H:%M') }}</div>
     </div>
     {% endfor %}
 </div>
 {% else %}
-<div class="text-center py-16 text-slate-500">
-    <p>لا توجد مهام نشر</p>
+<div class="text-center py-16 sm:py-20 text-slate-500">
+    <svg class="w-14 h-14 mx-auto mb-4 opacity-20" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"/></svg>
+    <p class="mb-1">لا توجد مهام نشر</p>
+    <p class="text-xs">انشر مشروعاً مكتمل الرندر لبدء النشر</p>
 </div>
 {% endif %}
 {% endblock %}

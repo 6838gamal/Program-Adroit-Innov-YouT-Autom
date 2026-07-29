@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% block title %}صحة النظام{% endblock %}
+{% block page_title %}صحة النظام{% endblock %}
+
+{% block header_actions %}
+<button onclick="location.reload()" class="btn-secondary btn-sm">
+    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+    <span class="hidden xs:inline">تحديث</span>
+</button>
+<a href="/docs" target="_blank" class="btn-secondary btn-sm">
+    <span class="hidden xs:inline">توثيق API</span>
+    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
+</a>
+{% endblock %}
+
+{% block content %}
+<!-- Overall status -->
+<div class="card mb-5 flex items-center gap-4">
+    <div class="w-14 h-14 rounded-full flex items-center justify-center flex-shrink-0
+                {{ 'bg-green-600/20' if overall_status == 'healthy' else ('bg-amber-600/20' if overall_status == 'degraded' else 'bg-red-600/20') }}">
+        {% if overall_status == 'healthy' %}
+        <svg class="w-7 h-7 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+        {% elif overall_status == 'degraded' %}
+        <svg class="w-7 h-7 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+        {% else %}
+        <svg class="w-7 h-7 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+        {% endif %}
+    </div>
+    <div>
+        <div class="text-white font-semibold text-base sm:text-lg">
+            {% if overall_status == 'healthy' %}النظام يعمل بشكل طبيعي
+            {% elif overall_status == 'degraded' %}النظام يعمل مع بعض المشكلات
+            {% else %}النظام يواجه مشكلات{% endif %}
+        </div>
+        <div class="text-slate-400 text-xs sm:text-sm mt-0.5">آخر فحص: {{ last_check }}</div>
+    </div>
+</div>
+
+<!-- Components -->
+<h2 class="text-white font-semibold text-sm mb-3">مكونات النظام</h2>
+<div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-6">
+    {% for component in components %}
+    <div class="card-sm flex items-center gap-3">
+        <div class="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0
+                    {{ 'bg-green-600/20' if component.status == 'ok' else ('bg-amber-600/20' if component.status == 'degraded' else 'bg-red-600/20') }}">
+            {{ component.icon | safe }}
+        </div>
+        <div class="flex-1 min-w-0">
+            <div class="text-white text-sm font-medium">{{ component.name }}</div>
+            <div class="text-xs {{ 'text-green-400' if component.status == 'ok' else ('text-amber-400' if component.status == 'degraded' else 'text-red-400') }}">
+                {{ component.detail }}
+            </div>
+        </div>
+        <span class="w-2.5 h-2.5 rounded-full flex-shrink-0
+                     {{ 'bg-green-400' if component.status == 'ok' else ('bg-amber-400' if component.status == 'degraded' else 'bg-red-400') }}"></span>
+    </div>
+    {% endfor %}
+</div>
+
+<!-- Plugins -->
+<h2 class="text-white font-semibold text-sm mb-3">البلاغينات المحملة</h2>
+<div class="card mb-6">
+    {% if plugins %}
+    <div class="divide-y divide-slate-700">
+        {% for plugin_type, plugin_names in plugins.items() %}
+        <div class="py-3 first:pt-0 last:pb-0 flex flex-col xs:flex-row xs:items-center gap-2">
+            <div class="text-slate-400 text-xs w-24 flex-shrink-0 font-medium uppercase tracking-wide">{{ plugin_type }}</div>
+            <div class="flex flex-wrap gap-1.5">
+                {% for name in plugin_names %}
+                <span class="text-xs bg-blue-900/40 text-blue-300 border border-blue-800/50 px-2 py-0.5 rounded-full">{{ name }}</span>
+                {% endfor %}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="text-slate-500 text-sm text-center py-4">لا توجد بلاغينات محملة</div>
+    {% endif %}
+</div>
+
+<!-- System info -->
+<h2 class="text-white font-semibold text-sm mb-3">معلومات النظام</h2>
+<div class="card">
+    <div class="grid grid-cols-1 xs:grid-cols-2 sm:grid-cols-3 gap-3">
+        {% for info in system_info %}
+        <div class="bg-slate-700/40 rounded-lg p-3">
+            <div class="text-slate-400 text-xs mb-0.5">{{ info.label }}</div>
+            <div class="text-white text-sm font-medium font-mono break-all">{{ info.value }}</div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endblock %}

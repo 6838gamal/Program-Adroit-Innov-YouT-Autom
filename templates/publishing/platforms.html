@@ -3,67 +3,106 @@
 {% block page_title %}المنصات المتصلة{% endblock %}
 
 {% block header_actions %}
-<button onclick="document.getElementById('connect-modal').classList.remove('hidden')" class="btn-primary">+ ربط منصة</button>
+<button onclick="document.getElementById('connect-modal').classList.remove('hidden')" class="btn-primary btn-sm">
+    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/></svg>
+    <span class="hidden xs:inline">ربط منصة</span>
+</button>
 {% endblock %}
 
 {% block content %}
 {% if accounts %}
-<div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4 mb-6">
     {% for account in accounts %}
-    <div class="card">
+    <div class="card hover:border-slate-500 transition-colors">
         <div class="flex items-center gap-3 mb-3">
-            <div class="w-10 h-10 bg-red-600/20 rounded-lg flex items-center justify-center">
+            <div class="w-10 h-10 bg-red-600/20 rounded-xl flex items-center justify-center flex-shrink-0">
+                {% if account.platform_name == 'youtube' %}
                 <svg class="w-5 h-5 text-red-400" fill="currentColor" viewBox="0 0 24 24"><path d="M23.495 6.205a3.007 3.007 0 00-2.088-2.088c-1.87-.501-9.396-.501-9.396-.501s-7.507-.01-9.396.501A3.007 3.007 0 00.527 6.205a31.247 31.247 0 00-.522 5.805 31.247 31.247 0 00.522 5.783 3.007 3.007 0 002.088 2.088c1.868.502 9.396.502 9.396.502s7.506 0 9.396-.502a3.007 3.007 0 002.088-2.088 31.247 31.247 0 00.5-5.783 31.247 31.247 0 00-.5-5.805zM9.609 15.601V8.408l6.264 3.602z"/></svg>
+                {% else %}
+                <svg class="w-5 h-5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/></svg>
+                {% endif %}
             </div>
-            <div>
-                <div class="text-white font-medium">{{ account.name }}</div>
-                <div class="text-slate-400 text-xs">{{ account.platform_name }}</div>
+            <div class="flex-1 min-w-0">
+                <div class="text-white font-medium text-sm truncate">{{ account.name }}</div>
+                <div class="text-slate-400 text-xs capitalize">{{ account.platform_name }}</div>
             </div>
         </div>
-        <div class="flex items-center gap-2">
-            <span class="{% if account.is_active %}text-green-400{% else %}text-red-400{% endif %} text-xs">
-                ● {% if account.is_active %}نشط{% else %}غير نشط{% endif %}
+        <div class="flex items-center justify-between">
+            <span class="text-xs flex items-center gap-1.5 {% if account.is_active %}text-green-400{% else %}text-red-400{% endif %}">
+                <span class="w-1.5 h-1.5 rounded-full {% if account.is_active %}bg-green-400{% else %}bg-red-400{% endif %}"></span>
+                {% if account.is_active %}نشط{% else %}غير نشط{% endif %}
             </span>
             {% if account.last_verified %}
-            <span class="text-slate-500 text-xs">آخر تحقق: {{ account.last_verified.strftime('%Y-%m-%d') }}</span>
+            <span class="text-slate-500 text-xs">{{ account.last_verified.strftime('%Y-%m-%d') }}</span>
             {% endif %}
         </div>
     </div>
     {% endfor %}
 </div>
 {% else %}
-<div class="text-center py-16 text-slate-500">
-    <svg class="w-16 h-16 mx-auto mb-4 opacity-20" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/></svg>
-    <p>لا توجد منصات مربوطة</p>
-    <p class="text-sm mt-1">اربط حساب YouTube لبدء النشر</p>
+<div class="text-center py-16 sm:py-20 text-slate-500">
+    <svg class="w-14 h-14 mx-auto mb-4 opacity-20" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/></svg>
+    <p class="mb-1">لا توجد منصات مربوطة</p>
+    <p class="text-xs mb-4">اربط حساب YouTube لبدء النشر</p>
+    <button onclick="document.getElementById('connect-modal').classList.remove('hidden')" class="btn-primary btn-sm">+ ربط منصة</button>
 </div>
 {% endif %}
 
+<!-- Available platforms info -->
+<div class="mt-6">
+    <h2 class="text-slate-300 font-medium text-sm mb-3">المنصات المدعومة</h2>
+    <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div class="card-sm flex items-center gap-2.5">
+            <div class="w-8 h-8 bg-red-600/20 rounded-lg flex items-center justify-center flex-shrink-0">
+                <svg class="w-4 h-4 text-red-400" fill="currentColor" viewBox="0 0 24 24"><path d="M23.495 6.205a3.007 3.007 0 00-2.088-2.088c-1.87-.501-9.396-.501-9.396-.501s-7.507-.01-9.396.501A3.007 3.007 0 00.527 6.205a31.247 31.247 0 00-.522 5.805 31.247 31.247 0 00.522 5.783 3.007 3.007 0 002.088 2.088c1.868.502 9.396.502 9.396.502s7.506 0 9.396-.502a3.007 3.007 0 002.088-2.088 31.247 31.247 0 00.5-5.783 31.247 31.247 0 00-.5-5.805zM9.609 15.601V8.408l6.264 3.602z"/></svg>
+            </div>
+            <div>
+                <div class="text-white text-xs font-medium">YouTube</div>
+                <div class="text-green-400 text-xs">متاح</div>
+            </div>
+        </div>
+        {% for name, label in [('TikTok','تيك توك'),('Instagram','إنستقرام'),('X / Twitter','إكس')] %}
+        <div class="card-sm flex items-center gap-2.5 opacity-50">
+            <div class="w-8 h-8 bg-slate-700 rounded-lg flex items-center justify-center flex-shrink-0">
+                <svg class="w-4 h-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101"/></svg>
+            </div>
+            <div>
+                <div class="text-white text-xs font-medium">{{ name }}</div>
+                <div class="text-slate-500 text-xs">قريباً</div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+
 <!-- Connect Modal -->
-<div id="connect-modal" class="hidden fixed inset-0 bg-black/70 flex items-center justify-center z-50">
+<div id="connect-modal" class="hidden fixed inset-0 bg-black/70 flex items-start sm:items-center justify-center z-50 p-4 pt-16 sm:pt-4">
     <div class="card w-full max-w-md">
-        <div class="flex items-center justify-between mb-4">
+        <div class="flex items-center justify-between mb-5">
             <h3 class="text-white font-semibold">ربط منصة جديدة</h3>
-            <button onclick="document.getElementById('connect-modal').classList.add('hidden')" class="text-slate-400 hover:text-white">✕</button>
+            <button onclick="document.getElementById('connect-modal').classList.add('hidden')"
+                    class="text-slate-400 hover:text-white p-1">
+                <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+            </button>
         </div>
         <form id="connect-form" class="space-y-4">
             <div>
-                <label class="block text-sm text-slate-300 mb-1">اسم الحساب</label>
+                <label class="block text-sm text-slate-300 mb-1.5">اسم الحساب</label>
                 <input type="text" id="account-name" class="input" placeholder="مثال: قناتي على YouTube" required>
             </div>
             <div>
-                <label class="block text-sm text-slate-300 mb-1">المنصة</label>
+                <label class="block text-sm text-slate-300 mb-1.5">المنصة</label>
                 <select id="platform-name" class="input">
                     <option value="youtube">YouTube</option>
                 </select>
             </div>
             <div>
-                <label class="block text-sm text-slate-300 mb-1">Access Token</label>
-                <input type="password" id="access-token" class="input" placeholder="أدخل OAuth2 access token">
+                <label class="block text-sm text-slate-300 mb-1.5">Access Token</label>
+                <input type="password" id="access-token" class="input" placeholder="OAuth2 access token">
             </div>
-            <div class="flex gap-3">
-                <button type="submit" class="btn-primary flex-1">ربط</button>
-                <button type="button" onclick="document.getElementById('connect-modal').classList.add('hidden')" class="btn-secondary">إلغاء</button>
+            <div class="flex gap-3 pt-1">
+                <button type="submit" class="btn-primary flex-1 justify-center">ربط الحساب</button>
+                <button type="button" onclick="document.getElementById('connect-modal').classList.add('hidden')" class="btn-secondary flex-1 justify-center">إلغاء</button>
             </div>
         </form>
     </div>
@@ -85,7 +124,7 @@ document.getElementById('connect-form').addEventListener('submit', async (e) => 
         body: JSON.stringify(payload),
     });
     if (resp.ok) { showToast('تم ربط الحساب بنجاح', 'success'); setTimeout(() => location.reload(), 1000); }
-    else { const e = await resp.json(); showToast(e.detail || 'فشل الربط', 'error'); }
+    else { const err = await resp.json(); showToast(err.detail || 'فشل الربط', 'error'); }
 });
 </script>
 {% endblock %}

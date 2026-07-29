@@ -3,12 +3,12 @@
 {% block page_title %}مشروع جديد{% endblock %}
 
 {% block content %}
-<div class="max-w-2xl">
+<div class="max-w-2xl mx-auto">
     <div class="card">
-        <form id="create-form" class="space-y-5">
+        <form id="create-form" class="space-y-4 sm:space-y-5">
             <div>
-                <label class="block text-sm text-slate-300 mb-1.5">عنوان المشروع *</label>
-                <input type="text" id="title" name="title" class="input" placeholder="أدخل عنوان المشروع" required>
+                <label class="block text-sm text-slate-300 mb-1.5">عنوان المشروع <span class="text-red-400">*</span></label>
+                <input type="text" id="title" name="title" class="input" placeholder="أدخل عنوان المشروع" required autofocus>
             </div>
             <div>
                 <label class="block text-sm text-slate-300 mb-1.5">الوصف</label>
@@ -16,15 +16,20 @@
             </div>
             <div>
                 <label class="block text-sm text-slate-300 mb-1.5">النص / السكريبت</label>
-                <textarea id="script" name="script" rows="6" class="input resize-none font-mono text-xs" placeholder="أدخل النص الكامل للفيديو هنا…"></textarea>
+                <textarea id="script" name="script" rows="7" class="input resize-y font-mono text-xs sm:text-sm" placeholder="أدخل النص الكامل للفيديو هنا…&#10;&#10;يمكنك تقسيم النص إلى فقرات وستتحول إلى مشاهد."></textarea>
+                <p class="text-xs text-slate-500 mt-1">كل فقرة مفصولة بسطر فارغ = مشهد منفصل</p>
             </div>
             <div>
-                <label class="block text-sm text-slate-300 mb-1.5">الوسوم (مفصولة بفاصلة)</label>
+                <label class="block text-sm text-slate-300 mb-1.5">الوسوم</label>
                 <input type="text" id="tags" name="tags" class="input" placeholder="تقنية, تعليم, مراجعة">
+                <p class="text-xs text-slate-500 mt-1">مفصولة بفاصلة</p>
             </div>
-            <div class="flex gap-3 pt-2">
-                <button type="submit" class="btn-primary">إنشاء المشروع</button>
-                <a href="/projects" class="btn-secondary">إلغاء</a>
+            <div class="flex flex-col xs:flex-row gap-2 sm:gap-3 pt-1">
+                <button type="submit" id="submit-btn" class="btn-primary justify-center">
+                    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+                    إنشاء المشروع
+                </button>
+                <a href="/projects" class="btn-secondary justify-center">إلغاء</a>
             </div>
         </form>
     </div>
@@ -35,6 +40,10 @@
 <script>
 document.getElementById('create-form').addEventListener('submit', async (e) => {
     e.preventDefault();
+    const btn = document.getElementById('submit-btn');
+    btn.disabled = true;
+    btn.textContent = 'جارٍ الإنشاء…';
+
     const tagsRaw = document.getElementById('tags').value;
     const tags = tagsRaw ? tagsRaw.split(',').map(t => t.trim()).filter(Boolean) : [];
     const payload = {
@@ -51,13 +60,17 @@ document.getElementById('create-form').addEventListener('submit', async (e) => {
         });
         if (resp.ok) {
             const project = await resp.json();
-            window.location.href = `/projects/${project.id}`;
+            showToast('تم إنشاء المشروع', 'success');
+            setTimeout(() => window.location.href = `/projects/${project.id}`, 500);
         } else {
             const err = await resp.json();
             showToast(err.detail || 'فشل إنشاء المشروع', 'error');
+            btn.disabled = false;
+            btn.innerHTML = '<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg> إنشاء المشروع';
         }
     } catch (e) {
         showToast('خطأ في الاتصال', 'error');
+        btn.disabled = false;
     }
 });
 </script>

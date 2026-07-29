@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ar" dir="rtl" x-data="{ sidebarOpen: false }">
+<html lang="ar" dir="rtl" x-data="appShell()" x-init="init()">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -12,130 +12,233 @@
             theme: {
                 extend: {
                     colors: {
-                        brand: { 50: '#eff6ff', 100: '#dbeafe', 500: '#3b82f6', 600: '#2563eb', 700: '#1d4ed8', 900: '#1e3a8a' },
-                        surface: { DEFAULT: '#0f172a', card: '#1e293b', border: '#334155' }
-                    }
+                        brand: { 50:'#eff6ff',100:'#dbeafe',500:'#3b82f6',600:'#2563eb',700:'#1d4ed8',900:'#1e3a8a' },
+                        surface: { DEFAULT:'#0f172a', card:'#1e293b', border:'#334155' }
+                    },
+                    screens: { xs: '375px' }
                 }
             }
         }
     </script>
     <style>
         [x-cloak] { display: none !important; }
+        * { -webkit-tap-highlight-color: transparent; }
         body { background: #0f172a; color: #e2e8f0; font-family: 'Segoe UI', system-ui, sans-serif; }
-        .nav-link { @apply flex items-center gap-3 px-3 py-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-700 transition-all text-sm; }
-        .nav-link.active { @apply bg-blue-600 text-white; }
-        .card { @apply bg-slate-800 rounded-xl border border-slate-700 p-5; }
-        .badge { @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium; }
-        .btn-primary { @apply bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors; }
-        .btn-secondary { @apply bg-slate-700 hover:bg-slate-600 text-slate-200 px-4 py-2 rounded-lg text-sm font-medium transition-colors; }
-        .btn-danger { @apply bg-red-600 hover:bg-red-500 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors; }
-        .input { @apply bg-slate-700 border border-slate-600 text-white rounded-lg px-3 py-2 text-sm w-full focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent; }
-        .status-draft { @apply badge bg-slate-700 text-slate-300; }
-        .status-in_production { @apply badge bg-amber-900 text-amber-300; }
-        .status-rendered { @apply badge bg-green-900 text-green-300; }
-        .status-published { @apply badge bg-blue-900 text-blue-300; }
-        .status-failed { @apply badge bg-red-900 text-red-300; }
-        .status-pending { @apply badge bg-slate-700 text-slate-300; }
-        .status-processing { @apply badge bg-amber-900 text-amber-300; }
-        .status-completed { @apply badge bg-green-900 text-green-300; }
+
+        /* Nav links */
+        .nav-link { display:flex; align-items:center; gap:0.625rem; padding:0.5rem 0.75rem; border-radius:0.5rem; color:#94a3b8; font-size:0.875rem; transition:all .15s; white-space:nowrap; }
+        .nav-link:hover { color:#fff; background:#334155; }
+        .nav-link.active { background:#2563eb; color:#fff; }
+        .nav-section { padding: 0.75rem 0.75rem 0.25rem; font-size:0.7rem; text-transform:uppercase; letter-spacing:.06em; color:#64748b; }
+
+        /* Cards & buttons */
+        .card { background:#1e293b; border-radius:0.75rem; border:1px solid #334155; padding:1.25rem; }
+        .card-sm { background:#1e293b; border-radius:0.75rem; border:1px solid #334155; padding:0.875rem; }
+        .badge { display:inline-flex; align-items:center; padding:0.125rem 0.625rem; border-radius:9999px; font-size:0.7rem; font-weight:500; }
+        .btn-primary { background:#2563eb; color:#fff; padding:0.5rem 1rem; border-radius:0.5rem; font-size:0.875rem; font-weight:500; transition:background .15s; display:inline-flex; align-items:center; gap:0.375rem; }
+        .btn-primary:hover { background:#3b82f6; }
+        .btn-secondary { background:#334155; color:#cbd5e1; padding:0.5rem 1rem; border-radius:0.5rem; font-size:0.875rem; font-weight:500; transition:background .15s; display:inline-flex; align-items:center; gap:0.375rem; }
+        .btn-secondary:hover { background:#475569; }
+        .btn-danger { background:#dc2626; color:#fff; padding:0.5rem 1rem; border-radius:0.5rem; font-size:0.875rem; font-weight:500; transition:background .15s; }
+        .btn-danger:hover { background:#ef4444; }
+        .btn-sm { padding:0.375rem 0.75rem; font-size:0.75rem; }
+        .input { background:#334155; border:1px solid #475569; color:#f1f5f9; border-radius:0.5rem; padding:0.5rem 0.75rem; font-size:0.875rem; width:100%; outline:none; transition:border-color .15s, box-shadow .15s; }
+        .input:focus { border-color:#3b82f6; box-shadow:0 0 0 3px rgba(59,130,246,.2); }
+        .input::placeholder { color:#64748b; }
+
+        /* Status badges */
+        .status-draft { background:#1e293b; color:#94a3b8; border:1px solid #334155; }
+        .status-in_production { background:#451a03; color:#fbbf24; border:1px solid #78350f; }
+        .status-rendered { background:#052e16; color:#4ade80; border:1px solid #14532d; }
+        .status-published { background:#1e3a8a; color:#93c5fd; border:1px solid #1d4ed8; }
+        .status-failed { background:#450a0a; color:#f87171; border:1px solid #7f1d1d; }
+        .status-pending { background:#1e293b; color:#94a3b8; border:1px solid #334155; }
+        .status-processing { background:#451a03; color:#fbbf24; border:1px solid #78350f; }
+        .status-completed { background:#052e16; color:#4ade80; border:1px solid #14532d; }
+        .status-queued { background:#1e293b; color:#94a3b8; border:1px solid #334155; }
+        .status-cancelled { background:#1e293b; color:#64748b; border:1px solid #334155; }
+        .status-scheduled { background:#1e3a5f; color:#7dd3fc; border:1px solid #0c4a6e; }
+
+        /* Progress bar */
         .progress-bar { transition: width 0.5s ease; }
-        ::-webkit-scrollbar { width: 6px; }
-        ::-webkit-scrollbar-track { background: #1e293b; }
-        ::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar { width:5px; height:5px; }
+        ::-webkit-scrollbar-track { background:#1e293b; }
+        ::-webkit-scrollbar-thumb { background:#475569; border-radius:3px; }
+
+        /* Sidebar width */
+        .sidebar-width { width: 15rem; }
+
+        /* Mobile bottom nav icon labels */
+        .bottom-nav-label { font-size:0.6rem; }
     </style>
     {% block head %}{% endblock %}
 </head>
-<body class="min-h-screen">
+<body class="min-h-screen" x-cloak>
+
+    <!-- Mobile overlay -->
+    <div x-show="sidebarOpen"
+         x-transition:enter="transition-opacity duration-200"
+         x-transition:enter-start="opacity-0"
+         x-transition:enter-end="opacity-100"
+         x-transition:leave="transition-opacity duration-200"
+         x-transition:leave-start="opacity-100"
+         x-transition:leave-end="opacity-0"
+         @click="sidebarOpen = false"
+         class="fixed inset-0 bg-black/60 z-40 lg:hidden"></div>
+
+    <!-- Layout -->
     <div class="flex h-screen overflow-hidden">
-        <!-- Sidebar -->
-        <aside class="w-64 flex-shrink-0 bg-slate-900 border-l border-slate-700 flex flex-col">
-            <!-- Logo -->
-            <div class="p-5 border-b border-slate-700">
-                <div class="flex items-center gap-3">
-                    <div class="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
-                        <svg class="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.069A1 1 0 0121 8.87v6.26a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+
+        <!-- ══════════════════ SIDEBAR ══════════════════ -->
+        <aside :class="sidebarOpen ? 'translate-x-0' : 'translate-x-full lg:translate-x-0'"
+               class="sidebar-width flex-shrink-0 bg-slate-900 border-l border-slate-700 flex flex-col
+                      fixed inset-y-0 right-0 z-50 transition-transform duration-200
+                      lg:relative lg:inset-auto lg:translate-x-0 lg:z-auto">
+
+            <!-- Logo + close btn -->
+            <div class="flex items-center justify-between p-4 border-b border-slate-700">
+                <div class="flex items-center gap-2.5">
+                    <div class="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center flex-shrink-0">
+                        <svg class="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.069A1 1 0 0121 8.87v6.26a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
                     </div>
                     <div>
-                        <div class="text-white font-semibold text-sm">Content Platform</div>
+                        <div class="text-white font-semibold text-sm leading-tight">Content Platform</div>
                         <div class="text-slate-500 text-xs">MVP v1.0</div>
                     </div>
                 </div>
+                <button @click="sidebarOpen = false" class="lg:hidden text-slate-400 hover:text-white p-1 rounded">
+                    <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                </button>
             </div>
 
             <!-- Navigation -->
-            <nav class="flex-1 p-3 space-y-1 overflow-y-auto">
+            <nav class="flex-1 px-2 py-3 overflow-y-auto space-y-0.5">
+
                 <a href="/" class="nav-link {% if active_page == 'dashboard' %}active{% endif %}">
-                    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>
+                    <svg class="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>
                     لوحة التحكم
                 </a>
+
+                <div class="nav-section">الإنتاج</div>
                 <a href="/projects" class="nav-link {% if active_page == 'projects' %}active{% endif %}">
-                    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
+                    <svg class="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
                     المشاريع
                 </a>
                 <a href="/assets" class="nav-link {% if active_page == 'assets' %}active{% endif %}">
-                    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+                    <svg class="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
                     مكتبة الأصول
                 </a>
+                <a href="/templates" class="nav-link {% if active_page == 'templates' %}active{% endif %}">
+                    <svg class="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z"/></svg>
+                    القوالب
+                </a>
+                <a href="/voices" class="nav-link {% if active_page == 'voices' %}active{% endif %}">
+                    <svg class="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"/></svg>
+                    محركات الصوت
+                </a>
+
+                <div class="nav-section">العمليات</div>
                 <a href="/render-queue" class="nav-link {% if active_page == 'render_queue' %}active{% endif %}">
-                    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
+                    <svg class="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
                     قائمة الرندر
                 </a>
                 <a href="/publishing-queue" class="nav-link {% if active_page == 'publishing_queue' %}active{% endif %}">
-                    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"/></svg>
+                    <svg class="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"/></svg>
                     قائمة النشر
                 </a>
                 <a href="/platforms" class="nav-link {% if active_page == 'platforms' %}active{% endif %}">
-                    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/></svg>
+                    <svg class="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/></svg>
                     المنصات
                 </a>
-                <div class="pt-3 pb-1 px-3 text-xs text-slate-500 uppercase tracking-wider">النظام</div>
-                <a href="/api/v1/health" target="_blank" class="nav-link">
-                    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                <a href="/schedules" class="nav-link {% if active_page == 'schedules' %}active{% endif %}">
+                    <svg class="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+                    الجدولة
+                </a>
+
+                <div class="nav-section">النظام</div>
+                <a href="/analytics" class="nav-link {% if active_page == 'analytics' %}active{% endif %}">
+                    <svg class="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
+                    التحليلات
+                </a>
+                <a href="/logs" class="nav-link {% if active_page == 'logs' %}active{% endif %}">
+                    <svg class="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
+                    السجلات
+                </a>
+                <a href="/health" class="nav-link {% if active_page == 'health' %}active{% endif %}">
+                    <svg class="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
                     صحة النظام
                 </a>
+                <a href="/settings" class="nav-link {% if active_page == 'settings' %}active{% endif %}">
+                    <svg class="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+                    الإعدادات
+                </a>
                 <a href="/docs" target="_blank" class="nav-link">
-                    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+                    <svg class="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
                     توثيق API
                 </a>
             </nav>
         </aside>
+        <!-- ══════════════════ END SIDEBAR ══════════════════ -->
 
         <!-- Main content -->
-        <main class="flex-1 overflow-auto">
+        <main class="flex-1 overflow-auto flex flex-col min-w-0">
+
             <!-- Top bar -->
-            <header class="sticky top-0 z-10 bg-slate-900/80 backdrop-blur border-b border-slate-700 px-6 py-3 flex items-center justify-between">
-                <h1 class="text-lg font-semibold text-white">{% block page_title %}{% endblock %}</h1>
-                <div class="flex items-center gap-3">
+            <header class="sticky top-0 z-30 bg-slate-900/90 backdrop-blur border-b border-slate-700 px-4 sm:px-6 py-3 flex items-center gap-3">
+                <!-- Hamburger (mobile only) -->
+                <button @click="sidebarOpen = true"
+                        class="lg:hidden text-slate-400 hover:text-white p-1.5 rounded-lg hover:bg-slate-700 transition-colors flex-shrink-0">
+                    <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
+                </button>
+
+                <h1 class="text-base sm:text-lg font-semibold text-white flex-1 truncate">{% block page_title %}{% endblock %}</h1>
+
+                <div class="flex items-center gap-2 flex-shrink-0">
                     {% block header_actions %}{% endblock %}
                 </div>
             </header>
 
             <!-- Page content -->
-            <div class="p-6">
+            <div class="flex-1 p-4 sm:p-6 overflow-auto">
                 {% block content %}{% endblock %}
             </div>
         </main>
     </div>
 
     <!-- Toast notifications -->
-    <div id="toasts" class="fixed top-4 left-4 z-50 space-y-2"></div>
+    <div id="toasts" class="fixed top-4 left-4 z-[100] space-y-2 max-w-xs w-full pointer-events-none"></div>
 
     <script>
-        // Toast helper
+        function appShell() {
+            return {
+                sidebarOpen: false,
+                init() {
+                    // close sidebar on navigation (mobile)
+                    document.querySelectorAll('.nav-link').forEach(a => {
+                        a.addEventListener('click', () => { this.sidebarOpen = false; });
+                    });
+                }
+            };
+        }
+
         function showToast(message, type = 'success') {
-            const colors = { success: 'bg-green-800 border-green-600', error: 'bg-red-800 border-red-600', info: 'bg-blue-800 border-blue-600' };
+            const colors = {
+                success: 'bg-green-900 border-green-700 text-green-200',
+                error:   'bg-red-900 border-red-700 text-red-200',
+                info:    'bg-blue-900 border-blue-700 text-blue-200',
+                warning: 'bg-amber-900 border-amber-700 text-amber-200',
+            };
             const el = document.createElement('div');
-            el.className = `${colors[type] || colors.info} border text-white text-sm px-4 py-3 rounded-lg shadow-lg transition-all`;
-            el.textContent = message;
+            el.className = `${colors[type] || colors.info} border text-sm px-4 py-3 rounded-xl shadow-xl pointer-events-auto flex items-start gap-2 transition-all`;
+            el.innerHTML = `<span class="flex-1">${message}</span><button onclick="this.parentElement.remove()" class="opacity-60 hover:opacity-100 text-lg leading-none mt-[-2px]">×</button>`;
             document.getElementById('toasts').appendChild(el);
+            setTimeout(() => el.classList.add('opacity-0'), 3500);
             setTimeout(() => el.remove(), 4000);
         }
 
-        // HTMX event listeners
-        document.body.addEventListener('htmx:responseError', e => showToast('حدث خطأ في الاتصال', 'error'));
-        document.body.addEventListener('htmx:afterSwap', e => {
-            if (e.detail.target.id === 'toast-target') showToast(e.detail.target.textContent.trim(), 'success');
-        });
+        document.body.addEventListener('htmx:responseError', () => showToast('حدث خطأ في الاتصال', 'error'));
     </script>
     {% block scripts %}{% endblock %}
 </body>
