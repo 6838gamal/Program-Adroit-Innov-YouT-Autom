@@ -7,7 +7,7 @@
 
     <!-- Tabs -->
     <div class="flex gap-0.5 bg-slate-800 rounded-xl p-1 mb-5 overflow-x-auto">
-        {% for tab in [('general','عام'),('production','الإنتاج'),('publishing','النشر'),('storage','التخزين')] %}
+        {% for tab in [('general','عام'),('production','الإنتاج'),('models','النماذج'),('publishing','النشر'),('storage','التخزين')] %}
         <button @click="activeTab = '{{ tab[0] }}'"
                 :class="activeTab === '{{ tab[0] }}' ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-white'"
                 class="flex-1 sm:flex-none px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-medium transition-colors whitespace-nowrap">
@@ -97,6 +97,73 @@
         </div>
     </div>
 
+    <!-- Models visibility -->
+    <div x-show="activeTab === 'models'" class="space-y-4" x-data="modelsSettings()" x-init="load()">
+        <div class="card">
+            <h3 class="text-white font-semibold text-sm mb-1">نماذج الاستوديو</h3>
+            <p class="text-slate-400 text-xs mb-4">تحكم في أي النماذج تظهر في استوديو الإنتاج. النموذج النشط هو الذي يُستخدم تلقائياً لكل نوع.</p>
+
+            <!-- Loading -->
+            <div x-show="loading" class="text-slate-400 text-sm text-center py-6">جارٍ التحميل…</div>
+
+            <!-- Empty -->
+            <div x-show="!loading && models.length === 0" class="text-center py-8">
+                <p class="text-slate-400 text-sm">لا توجد نماذج مضافة بعد.</p>
+                <a href="/models" class="btn-primary btn-sm mt-3 inline-flex">
+                    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+                    إضافة نماذج
+                </a>
+            </div>
+
+            <!-- Models grouped by type -->
+            <template x-if="!loading && models.length > 0">
+                <div class="space-y-5">
+                    <template x-for="group in groupedModels()" :key="group.type">
+                        <div>
+                            <div class="flex items-center gap-2 mb-2">
+                                <span class="text-xs font-semibold text-slate-300 uppercase tracking-wide" x-text="group.label"></span>
+                                <div class="flex-1 h-px bg-slate-700"></div>
+                            </div>
+                            <div class="space-y-2">
+                                <template x-for="m in group.items" :key="m.id">
+                                    <div class="flex items-center justify-between py-2.5 px-3 bg-slate-800/50 rounded-lg border border-slate-700/50">
+                                        <div class="flex items-center gap-3 min-w-0">
+                                            <div class="w-1.5 h-1.5 rounded-full flex-shrink-0"
+                                                 :class="m.is_active ? 'bg-blue-400' : (m.is_enabled ? 'bg-green-400' : 'bg-slate-600')"></div>
+                                            <div class="min-w-0">
+                                                <div class="text-sm text-white truncate" x-text="m.name"></div>
+                                                <div class="text-xs text-slate-500 font-mono truncate" x-text="m.hf_model_id"></div>
+                                            </div>
+                                            <span x-show="m.is_active"
+                                                  class="badge bg-blue-900/50 text-blue-300 border border-blue-700 text-xs flex-shrink-0">نشط</span>
+                                        </div>
+                                        <div class="flex items-center gap-2 flex-shrink-0 mr-2">
+                                            <button x-show="!m.is_active && m.is_enabled"
+                                                    @click="activate(m)"
+                                                    class="text-xs text-blue-400 hover:text-blue-300 px-2 py-1 rounded hover:bg-blue-900/30 transition-colors">
+                                                تعيين نشط
+                                            </button>
+                                            <label class="relative inline-flex items-center cursor-pointer">
+                                                <input type="checkbox" class="sr-only peer"
+                                                       :checked="m.is_enabled"
+                                                       @change="toggleEnabled(m, $event.target.checked)">
+                                                <div class="w-8 h-4 bg-slate-600 rounded-full peer peer-checked:bg-blue-600 peer-checked:after:translate-x-full after:absolute after:top-0.5 after:right-0.5 after:bg-white after:rounded-full after:h-3 after:w-3 after:transition-transform"></div>
+                                            </label>
+                                        </div>
+                                    </div>
+                                </template>
+                            </div>
+                        </div>
+                    </template>
+                    <a href="/models" class="btn-secondary btn-sm inline-flex">
+                        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+                        إدارة المكتبة الكاملة
+                    </a>
+                </div>
+            </template>
+        </div>
+    </div>
+
     <!-- Publishing -->
     <div x-show="activeTab === 'publishing'" class="space-y-4">
         <div class="card">
@@ -164,6 +231,44 @@ document.getElementById('general-form')?.addEventListener('submit', e => {
 });
 function cleanupTempFiles() {
     showToast('جارٍ تنظيف الملفات المؤقتة…', 'info');
+}
+
+function modelsSettings() {
+    return {
+        models: [],
+        loading: true,
+        async load() {
+            try {
+                const res = await fetch('/api/v1/models');
+                this.models = await res.json();
+            } catch(e) { this.models = []; }
+            finally { this.loading = false; }
+        },
+        groupedModels() {
+            const labels = { 'tts': '🔊 نماذج الصوت (TTS)', 'text-to-image': '🖼️ نماذج الصور', 'text-to-video': '🎬 نماذج الفيديو' };
+            const groups = {};
+            for (const m of this.models) {
+                if (!groups[m.model_type]) groups[m.model_type] = { type: m.model_type, label: labels[m.model_type] || m.model_type, items: [] };
+                groups[m.model_type].items.push(m);
+            }
+            return Object.values(groups);
+        },
+        async toggleEnabled(m, val) {
+            await fetch(`/api/v1/models/${m.id}`, {
+                method: 'PATCH',
+                headers: {'Content-Type':'application/json'},
+                body: JSON.stringify({ is_enabled: val })
+            });
+            m.is_enabled = val;
+            showToast(val ? 'النموذج مرئي في الاستوديو' : 'النموذج مخفي من الاستوديو', 'info');
+        },
+        async activate(m) {
+            await fetch(`/api/v1/models/${m.id}/activate`, { method: 'POST' });
+            for (const x of this.models) if (x.model_type === m.model_type) x.is_active = false;
+            m.is_active = true;
+            showToast(`"${m.name}" هو النموذج النشط الآن`, 'success');
+        },
+    };
 }
 </script>
 {% endblock %}

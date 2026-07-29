@@ -1,0 +1,289 @@
+{% extends "base.html" %}
+{% block title %}مكتبة النماذج{% endblock %}
+{% block page_title %}مكتبة نماذج HuggingFace{% endblock %}
+
+{% block header_actions %}
+<button onclick="document.getElementById('add-modal').classList.remove('hidden')"
+        class="btn-primary btn-sm">
+    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+    إضافة نموذج
+</button>
+{% endblock %}
+
+{% block content %}
+<div x-data="modelsPage()" x-init="init()">
+
+    <!-- Stats bar -->
+    <div class="grid grid-cols-3 gap-3 mb-5">
+        {% set type_labels = {'tts': 'نماذج الصوت', 'text-to-image': 'نماذج الصور', 'text-to-video': 'نماذج الفيديو'} %}
+        {% set type_icons = {'tts': 'M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z', 'text-to-image': 'M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z', 'text-to-video': 'M15 10l4.553-2.069A1 1 0 0121 8.87v6.26a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z'} %}
+        {% set type_colors = {'tts': 'text-blue-400 bg-blue-900/30', 'text-to-image': 'text-purple-400 bg-purple-900/30', 'text-to-video': 'text-green-400 bg-green-900/30'} %}
+        {% for type_key, type_label in type_labels.items() %}
+        {% set count = models | selectattr('model_type', 'equalto', type_key) | list | length %}
+        <div class="card-sm flex items-center gap-3">
+            <div class="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 {{ type_colors[type_key] }}">
+                <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="{{ type_icons[type_key] }}"/></svg>
+            </div>
+            <div>
+                <div class="text-xl font-bold text-white">{{ count }}</div>
+                <div class="text-xs text-slate-400">{{ type_label }}</div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    <!-- Filter tabs -->
+    <div class="flex gap-1 bg-slate-800 rounded-xl p-1 mb-4 w-fit">
+        {% for f, label in [('all','الكل'),('tts','الصوت'),('text-to-image','الصور'),('text-to-video','الفيديو')] %}
+        <button @click="filter='{{ f }}'"
+                :class="filter==='{{ f }}' ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-white'"
+                class="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors whitespace-nowrap">
+            {{ label }}
+        </button>
+        {% endfor %}
+    </div>
+
+    <!-- Models grid -->
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        {% for model in models %}
+        <div class="card hover:border-slate-500 transition-all"
+             x-show="filter==='all' || filter==='{{ model.model_type }}'"
+             id="model-card-{{ model.id }}">
+
+            <!-- Header -->
+            <div class="flex items-start justify-between mb-3">
+                <div class="flex items-center gap-2.5 min-w-0">
+                    {% if model.model_type == 'tts' %}
+                    <div class="w-9 h-9 bg-blue-900/40 rounded-xl flex items-center justify-center flex-shrink-0">
+                        <svg class="w-4 h-4 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"/></svg>
+                    </div>
+                    {% elif model.model_type == 'text-to-image' %}
+                    <div class="w-9 h-9 bg-purple-900/40 rounded-xl flex items-center justify-center flex-shrink-0">
+                        <svg class="w-4 h-4 text-purple-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+                    </div>
+                    {% else %}
+                    <div class="w-9 h-9 bg-green-900/40 rounded-xl flex items-center justify-center flex-shrink-0">
+                        <svg class="w-4 h-4 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.069A1 1 0 0121 8.87v6.26a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+                    </div>
+                    {% endif %}
+                    <div class="min-w-0">
+                        <div class="text-white font-medium text-sm truncate">{{ model.name }}</div>
+                        <div class="text-slate-500 text-xs truncate font-mono">{{ model.hf_model_id }}</div>
+                    </div>
+                </div>
+                <div class="flex items-center gap-1.5 flex-shrink-0 mr-1">
+                    {% if model.is_active %}
+                    <span class="badge bg-blue-900/50 text-blue-300 border border-blue-700">نشط</span>
+                    {% endif %}
+                    {% if not model.is_enabled %}
+                    <span class="badge bg-slate-700 text-slate-400">مخفي</span>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Description -->
+            {% if model.description %}
+            <p class="text-slate-400 text-xs mb-3 line-clamp-2">{{ model.description }}</p>
+            {% endif %}
+
+            <!-- Languages -->
+            {% if model.languages %}
+            <div class="flex flex-wrap gap-1 mb-3">
+                {% for lang in model.languages[:4] %}
+                <span class="text-xs bg-slate-700/60 text-slate-300 px-2 py-0.5 rounded-full">{{ lang }}</span>
+                {% endfor %}
+            </div>
+            {% endif %}
+
+            <!-- HF metadata -->
+            {% if model.hf_metadata.get('downloads') %}
+            <div class="flex items-center gap-3 text-xs text-slate-500 mb-3">
+                <span>⬇ {{ "{:,}".format(model.hf_metadata.downloads) }}</span>
+                {% if model.hf_metadata.get('likes') %}<span>♥ {{ model.hf_metadata.likes }}</span>{% endif %}
+            </div>
+            {% endif %}
+
+            <!-- Actions -->
+            <div class="flex gap-2 flex-wrap">
+                {% if not model.is_active %}
+                <button onclick="activateModel('{{ model.id }}', '{{ model.model_type }}')"
+                        class="btn-primary btn-sm flex-1 justify-center text-xs">
+                    تعيين كنشط
+                </button>
+                {% endif %}
+                <button onclick="toggleEnabled('{{ model.id }}', {{ 'false' if model.is_enabled else 'true' }})"
+                        class="btn-secondary btn-sm text-xs">
+                    {{ 'إخفاء' if model.is_enabled else 'إظهار' }}
+                </button>
+                <button onclick="testModel('{{ model.id }}', '{{ model.name }}')"
+                        class="btn-secondary btn-sm text-xs">اختبار</button>
+                <button onclick="deleteModel('{{ model.id }}', '{{ model.name }}')"
+                        class="btn-danger btn-sm text-xs">حذف</button>
+            </div>
+        </div>
+        {% else %}
+        <div class="col-span-full text-center py-16 text-slate-500"
+             x-show="filter==='all'">
+            <svg class="w-12 h-12 mx-auto mb-3 opacity-30" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
+            <p class="text-sm">لا توجد نماذج بعد</p>
+            <p class="text-xs mt-1">اضغط «إضافة نموذج» لإضافة أول نموذج من HuggingFace</p>
+        </div>
+        {% endfor %}
+    </div>
+
+    <!-- ══════ ADD MODEL MODAL ══════ -->
+    <div id="add-modal" class="hidden fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4"
+         @click.self="document.getElementById('add-modal').classList.add('hidden')">
+        <div class="card w-full max-w-lg">
+            <div class="flex items-center justify-between mb-4">
+                <h2 class="text-white font-semibold">إضافة نموذج HuggingFace</h2>
+                <button onclick="document.getElementById('add-modal').classList.add('hidden')"
+                        class="text-slate-400 hover:text-white">
+                    <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                </button>
+            </div>
+
+            <form id="add-model-form" class="space-y-4" onsubmit="submitAddModel(event)">
+                <div>
+                    <label class="block text-sm text-slate-300 mb-1.5">معرّف النموذج على HuggingFace *</label>
+                    <input id="new-hf-id" type="text" class="input" required
+                           placeholder="مثال: facebook/mms-tts-ara"
+                           autocomplete="off">
+                    <p class="text-xs text-slate-500 mt-1">ابحث على <a href="https://huggingface.co/models" target="_blank" class="text-blue-400 hover:underline">huggingface.co/models</a> ثم الصق المعرّف هنا</p>
+                </div>
+
+                <div>
+                    <label class="block text-sm text-slate-300 mb-1.5">نوع النموذج *</label>
+                    <select id="new-type" class="input" required>
+                        <option value="">— اختر النوع —</option>
+                        <option value="tts">🔊 نص إلى صوت (TTS)</option>
+                        <option value="text-to-image">🖼️ نص إلى صورة</option>
+                        <option value="text-to-video">🎬 نص إلى فيديو</option>
+                    </select>
+                </div>
+
+                <div>
+                    <label class="block text-sm text-slate-300 mb-1.5">الاسم المعروض (اختياري)</label>
+                    <input id="new-name" type="text" class="input" placeholder="اتركه فارغاً للاسم التلقائي">
+                </div>
+
+                <div>
+                    <label class="block text-sm text-slate-300 mb-1.5">وصف (اختياري)</label>
+                    <input id="new-desc" type="text" class="input" placeholder="وصف مختصر للنموذج">
+                </div>
+
+                <!-- Quick suggestions -->
+                <div>
+                    <p class="text-xs text-slate-500 mb-2">نماذج مقترحة:</p>
+                    <div class="flex flex-wrap gap-1.5">
+                        {% for sug in [
+                            ('facebook/mms-tts-ara','tts','عربي TTS'),
+                            ('microsoft/speecht5_tts','tts','SpeechT5'),
+                            ('black-forest-labs/FLUX.1-schnell','text-to-image','FLUX Schnell'),
+                            ('stabilityai/stable-diffusion-xl-base-1.0','text-to-image','SDXL'),
+                        ] %}
+                        <button type="button"
+                                onclick="fillSuggestion('{{ sug[0] }}','{{ sug[1] }}')"
+                                class="text-xs bg-slate-700 hover:bg-slate-600 text-slate-300 px-2 py-1 rounded-lg transition-colors">
+                            {{ sug[2] }}
+                        </button>
+                        {% endfor %}
+                    </div>
+                </div>
+
+                <div class="flex gap-2 pt-1">
+                    <button type="submit" class="btn-primary flex-1 justify-center" id="add-btn">
+                        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+                        إضافة النموذج
+                    </button>
+                    <button type="button" onclick="document.getElementById('add-modal').classList.add('hidden')"
+                            class="btn-secondary">إلغاء</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function modelsPage() {
+    return { filter: 'all', init() {} };
+}
+
+function fillSuggestion(hfId, type) {
+    document.getElementById('new-hf-id').value = hfId;
+    document.getElementById('new-type').value = type;
+}
+
+async function submitAddModel(e) {
+    e.preventDefault();
+    const btn = document.getElementById('add-btn');
+    const hfId = document.getElementById('new-hf-id').value.trim();
+    const type = document.getElementById('new-type').value;
+    const name = document.getElementById('new-name').value.trim();
+    const desc = document.getElementById('new-desc').value.trim();
+    if (!hfId || !type) { showToast('يرجى تعبئة الحقول المطلوبة', 'warning'); return; }
+
+    btn.disabled = true;
+    btn.innerHTML = '<span class="animate-spin mr-2">⟳</span> جارٍ الإضافة…';
+    showToast('جارٍ جلب بيانات النموذج من HuggingFace…', 'info');
+
+    try {
+        const res = await fetch('/api/v1/models', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ hf_model_id: hfId, model_type: type, name, description: desc }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'خطأ في الإضافة');
+        showToast(`تم إضافة "${data.name}" بنجاح`, 'success');
+        document.getElementById('add-modal').classList.add('hidden');
+        setTimeout(() => location.reload(), 800);
+    } catch (err) {
+        showToast('خطأ: ' + err.message, 'error');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg> إضافة النموذج';
+    }
+}
+
+async function activateModel(id, type) {
+    const res = await fetch(`/api/v1/models/${id}/activate`, { method: 'POST' });
+    if (res.ok) {
+        showToast('تم تعيين النموذج كنشط للاستوديو', 'success');
+        setTimeout(() => location.reload(), 700);
+    } else showToast('فشل التعيين', 'error');
+}
+
+async function toggleEnabled(id, enable) {
+    const res = await fetch(`/api/v1/models/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ is_enabled: enable }),
+    });
+    if (res.ok) {
+        showToast(enable ? 'النموذج ظاهر في الاستوديو' : 'النموذج مخفي من الاستوديو', 'info');
+        setTimeout(() => location.reload(), 700);
+    }
+}
+
+async function testModel(id, name) {
+    showToast(`جارٍ اختبار "${name}"…`, 'info');
+    const res = await fetch(`/api/v1/models/${id}/test`, { method: 'POST' });
+    const data = await res.json();
+    if (data.ok) showToast(`✅ "${name}" يعمل — ${data.bytes || ''} bytes`, 'success');
+    else showToast(`❌ فشل الاختبار: ${data.error}`, 'error');
+}
+
+async function deleteModel(id, name) {
+    if (!confirm(`هل تريد حذف النموذج "${name}"؟`)) return;
+    const res = await fetch(`/api/v1/models/${id}`, { method: 'DELETE' });
+    if (res.ok || res.status === 204) {
+        showToast(`تم حذف "${name}"`, 'info');
+        document.getElementById('model-card-' + id)?.remove();
+    } else showToast('فشل الحذف', 'error');
+}
+</script>
+{% endblock %}

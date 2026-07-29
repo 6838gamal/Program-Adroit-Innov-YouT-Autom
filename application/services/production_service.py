@@ -109,9 +109,9 @@ class ProductionService:
 
             await save_progress(10.0, f"توليد {len(raw_scenes)} مشهد")
 
-            # ── Generate TTS audio + scene images per scene ───────────────────
-            voice_plugin    = self._registry.get_voice_provider()
-            image_generator = _get_image_generator(rs)
+            # ── Resolve active HF models (if any) ────────────────────────────
+            voice_plugin    = await _resolve_voice_plugin(self._registry)
+            image_generator = await _resolve_image_generator(rs)
 
             from shared.ports.voice_port import VoiceConfig
             voice_config = VoiceConfig(language="ar", speed=1.0, pitch=1.0)
@@ -283,6 +283,70 @@ def _split_script_to_scenes(script: str, title: str = "") -> list[str]:
     return scenes or [script.strip()]
 
 
-def _get_image_generator(rs: RenderSettings):
+async def _resolve_voice_plugin(registry):
+    """Return active HF TTS plugin if configured, else fallback to edge_tts."""
+    try:
+        from infrastructure.database.session import get_session_factory
+        from infrastructure.repositories.sql_hf_model_repository import SQLHFModelRepository
+        factory = get_session_factory()
+        async with factory() as session:
+            repo = SQLHFModelRepository(session)
+            active = await repo.get_active("tts")
+            if active:
+                from plugins.hf.hf_tts_plugin import HFTTSPlugin
+                logger.info("Using HF TTS model: %s", active.hf_model_id)
+                return HFTTSPlugin(model_id=active.hf_model_id, config=active.config)
+    except Exception as e:
+        logger.warning("HF TTS lookup failed: %s — using edge_tts", e)
+    return registry.get_voice_provider()
+
+
+async def _resolve_image_generator(rs: RenderSettings):
+    """Return active HF image plugin if configured, else fallback to Pillow."""
+    try:
+        from infrastructure.database.session import get_session_factory
+        from infrastructure.repositories.sql_hf_model_repository import SQLHFModelRepository
+        factory = get_session_factory()
+        async with factory() as session:
+            repo = SQLHFModelRepository(session)
+            active = await repo.get_active("text-to-image")
+            if active:
+                from plugins.hf.hf_image_plugin import HFImagePlugin
+                logger.info("Using HF image model: %s", active.hf_model_id)
+                return _HFImageAdapter(
+                    HFImagePlugin(model_id=active.hf_model_id, config=active.config),
+                    rs,
+                )
+    except Exception as e:
+        logger.warning("HF image lookup failed: %s — using Pillow", e)
+    return _get_pillow_generator(rs)
+
+
+def _get_pillow_generator(rs: RenderSettings):
     from plugins.image_gen.pillow_generator import SceneImageGenerator
     return SceneImageGenerator(width=rs.resolution_width, height=rs.resolution_height)
+
+
+class _HFImageAdapter:
+    """Wraps HFImagePlugin to match SceneImageGenerator.generate_scene_image() interface."""
+    def __init__(self, plugin, rs: RenderSettings):
+        self._plugin = plugin
+        self._rs = rs
+        self._fallback = _get_pillow_generator(rs)
+
+    async def generate_scene_image(self, text, output_path, scene_index=0, title="",
+                                   brand_color=None, logo_path=None):
+        prompt = f"{title}: {text}" if title else text
+        try:
+            return await self._plugin.generate_image(
+                prompt=prompt,
+                output_path=output_path,
+                width=min(self._rs.resolution_width, 1024),
+                height=min(self._rs.resolution_height, 576),
+            )
+        except Exception as e:
+            logger.warning("HF image adapter failed: %s — using Pillow", e)
+            return await self._fallback.generate_scene_image(
+                text=text, output_path=output_path, scene_index=scene_index,
+                title=title, brand_color=brand_color,
+            )

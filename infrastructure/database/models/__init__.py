@@ -12,6 +12,7 @@ from infrastructure.database.models.publishing_model import (
 )
 from infrastructure.database.models.log_model import LogModel
 from infrastructure.database.models.notification_model import NotificationModel
+from infrastructure.database.models.hf_model_model import HFModelModel
 
 __all__ = [
     "ProjectModel",
@@ -22,4 +23,5 @@ __all__ = [
     "PublisherAccountModel", "PublishingPlatformModel",
     "PublishingJobModel", "ScheduleModel",
     "LogModel", "NotificationModel",
+    "HFModelModel",
 ]

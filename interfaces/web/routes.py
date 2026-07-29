@@ -593,6 +593,18 @@ async def health_page(request: Request, session: AsyncSession = Depends(get_db))
     })
 
 
+# ──────────────────────────────────────────────────────── MODEL LIBRARY ───────
+@router.get("/models", response_class=HTMLResponse)
+async def models_page(request: Request, session: AsyncSession = Depends(get_db)):
+    from infrastructure.repositories.sql_hf_model_repository import SQLHFModelRepository
+    repo = SQLHFModelRepository(session)
+    all_models = await repo.list_all()
+    return templates.TemplateResponse(request, "models.html", {
+        "models": [m.to_dict() for m in all_models],
+        "active_page": "models",
+    })
+
+
 # ──────────────────────────────────────────────────────────── SETTINGS ────────
 @router.get("/settings", response_class=HTMLResponse)
 async def settings_page(request: Request):
