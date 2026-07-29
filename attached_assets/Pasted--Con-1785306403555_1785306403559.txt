@@ -1,0 +1,804 @@
+# المهمة
+
+أريد تصميم وبناء منصة احترافية مفتوحة وقابلة للتوسع لإدارة وإنتاج ونشر المحتوى المرئي (Content Production & Publishing Platform) باستخدام **Python فقط**.
+
+الهدف ليس إنشاء تطبيق ينشر على YouTube فقط، وإنما إنشاء منصة متكاملة لإنتاج الفيديوهات وإدارة المشاريع ونشرها على منصات متعددة من خلال نظام Plugins، بحيث يكون الإصدار الأول (MVP) داعماً لـ YouTube فقط، مع تصميم يسمح بإضافة TikTok وInstagram وFacebook وTelegram وLinkedIn وX وأي منصة مستقبلية دون إعادة هيكلة النظام.
+
+---
+
+# الرؤية
+
+لا أريد تطبيقاً عادياً.
+
+أريد إنشاء **Production Engine** و **Publishing Engine** احترافيين يعملان معاً.
+
+المنصة يجب أن تكون قابلة للتحول لاحقاً إلى SaaS متعدد المستخدمين دون الحاجة لإعادة تصميم المشروع.
+
+---
+
+# التقنيات
+
+Python 3.13+
+
+FastAPI
+
+Jinja2
+
+HTMX
+
+Alpine.js
+
+Tailwind CSS
+
+SQLAlchemy 2
+
+Alembic
+
+Pydantic
+
+APScheduler
+
+WebSocket
+
+FFmpeg
+
+ffmpeg-python
+
+Pillow
+
+OpenCV
+
+SQLite (MVP)
+
+PostgreSQL (لاحقاً)
+
+Docker
+
+pytest
+
+---
+
+# Architecture
+
+اعتمد على:
+
+Clean Architecture
+
+SOLID
+
+Repository Pattern
+
+Service Layer
+
+Dependency Injection
+
+Domain Driven Design
+
+Plugin Architecture
+
+Factory Pattern
+
+Strategy Pattern
+
+Command Pattern
+
+Adapter Pattern
+
+Event Driven Architecture
+
+ويجب أن تكون جميع الوحدات مستقلة.
+
+---
+
+# الطبقات
+
+Core Engine
+
+Application Layer
+
+Infrastructure Layer
+
+Interfaces
+
+Plugins
+
+Shared Kernel
+
+أي منطق أعمال يجب أن يكون داخل Core فقط.
+
+---
+
+# فكرة المشروع
+
+يقوم المستخدم بإنشاء مشروع جديد.
+
+ثم يضيف:
+
+عنوان
+
+وصف
+
+النص
+
+الوسوم
+
+الصور
+
+الفيديوهات
+
+الموسيقى
+
+الشعار
+
+الألوان
+
+القالب
+
+ثم يقوم النظام بتحويل المشروع إلى فيديو احترافي.
+
+بعد ذلك يمكن للمستخدم:
+
+* حفظ الفيديو.
+* تصديره.
+* جدولته.
+* نشره على منصة أو أكثر.
+
+---
+
+# Production Pipeline
+
+Project
+
+↓
+
+Script Processing
+
+↓
+
+Scene Detection
+
+↓
+
+Timeline Generation
+
+↓
+
+Voice Generation
+
+↓
+
+Subtitle Generation
+
+↓
+
+Assets Assignment
+
+↓
+
+Layer Composition
+
+↓
+
+Effects
+
+↓
+
+Transitions
+
+↓
+
+Rendering
+
+↓
+
+Encoding
+
+↓
+
+Thumbnail Generation
+
+↓
+
+Export
+
+↓
+
+Publishing Queue
+
+↓
+
+Publisher Plugin
+
+---
+
+# أهم نقطة
+
+لا تعتمد على الفيديو النهائي.
+
+اعتمد على Project.
+
+Project
+
+↓
+
+Timeline
+
+↓
+
+Tracks
+
+↓
+
+Scenes
+
+↓
+
+Layers
+
+↓
+
+Assets
+
+↓
+
+Effects
+
+↓
+
+Transitions
+
+↓
+
+Output Profiles
+
+ثم يقوم Rendering Engine بتحويل المشروع إلى الفيديو النهائي.
+
+---
+
+# Timeline Engine
+
+يدعم:
+
+Scenes
+
+Tracks
+
+Layers
+
+Markers
+
+Audio Track
+
+Subtitle Track
+
+Animation Track
+
+Overlay Track
+
+Music Track
+
+---
+
+# Layer System
+
+Video Layer
+
+Image Layer
+
+Text Layer
+
+Subtitle Layer
+
+Logo Layer
+
+Overlay Layer
+
+Audio Layer
+
+Music Layer
+
+Animation Layer
+
+كل Layer مستقل.
+
+---
+
+# Assets Library
+
+Images
+
+Videos
+
+Music
+
+Fonts
+
+Icons
+
+Logos
+
+Transitions
+
+Animations
+
+Backgrounds
+
+Stickers
+
+Overlays
+
+ويتم استخدامها بين جميع المشاريع.
+
+---
+
+# Template Engine
+
+القوالب تحدد:
+
+ألوان المشروع
+
+الخطوط
+
+أماكن النصوص
+
+أماكن الشعار
+
+حجم الفيديو
+
+الانتقالات
+
+المؤثرات
+
+شكل الترجمة
+
+Animation Presets
+
+Camera Movement
+
+ويجب أن تكون القوالب قابلة للإضافة دون تعديل النظام.
+
+---
+
+# Voice Engine
+
+يجب أن يدعم Plugins.
+
+مثل:
+
+Piper
+
+Coqui
+
+Kokoro
+
+وأي محرك جديد لاحقاً.
+
+---
+
+# Subtitle Engine
+
+يدعم:
+
+SRT
+
+ASS
+
+Burned Subtitle
+
+وتخصيص:
+
+الخط
+
+الحجم
+
+اللون
+
+الظل
+
+الحدود
+
+المحاذاة
+
+التوقيت
+
+التأثيرات
+
+---
+
+# Effects Engine
+
+Fade
+
+Zoom
+
+Pan
+
+Rotate
+
+Blur
+
+Glow
+
+Shake
+
+Ken Burns
+
+Color Filters
+
+Motion Blur
+
+ويجب أن تكون جميع المؤثرات Plugins.
+
+---
+
+# Transition Engine
+
+Fade
+
+Cross Fade
+
+Push
+
+Slide
+
+Zoom
+
+Flash
+
+Circle
+
+Blur
+
+Swipe
+
+ويجب أن تكون Plugins.
+
+---
+
+# Animation Engine
+
+Keyframes
+
+Move
+
+Scale
+
+Opacity
+
+Rotation
+
+Color Animation
+
+Timeline Animation
+
+---
+
+# Rendering Engine
+
+لا تستخدم FFmpeg داخل بقية النظام.
+
+أنشئ Rendering Engine مستقلاً.
+
+بحيث يمكن مستقبلاً استبداله بمحرك آخر.
+
+---
+
+# Thumbnail Engine
+
+أنشئ مولداً مستقلاً.
+
+يعتمد على:
+
+Templates
+
+Fonts
+
+Images
+
+Logo
+
+Colors
+
+Text Styles
+
+---
+
+# Export Engine
+
+يدعم:
+
+MP4
+
+MOV
+
+AVI
+
+GIF
+
+WEBM
+
+كما يجب أن يدعم مستقبلاً:
+
+16:9
+
+9:16
+
+1:1
+
+4:5
+
+بنفس المشروع.
+
+---
+
+# Publishing Engine
+
+هذه الوحدة مستقلة تماماً عن محرك إنتاج الفيديو.
+
+مسؤوليتها:
+
+* إدارة الحسابات.
+* إدارة المنصات.
+* جدولة النشر.
+* رفع المحتوى.
+* متابعة حالة النشر.
+* إعادة المحاولة عند الفشل.
+* تسجيل جميع العمليات.
+
+لا تحتوي أي منصة على منطق خاص داخل Core.
+
+---
+
+# Publisher Plugins
+
+كل منصة عبارة عن Plugin مستقل.
+
+مثل:
+
+YouTube Publisher
+
+TikTok Publisher
+
+Instagram Publisher
+
+Facebook Publisher
+
+Telegram Publisher
+
+LinkedIn Publisher
+
+X Publisher
+
+Pinterest Publisher
+
+أي إضافة جديدة يجب أن تتم عبر Plugin فقط.
+
+---
+
+# Platform Profiles
+
+كل منصة لها خصائصها.
+
+مثلاً:
+
+الدقة
+
+نسبة الأبعاد
+
+الحد الأقصى لمدة الفيديو
+
+الحد الأقصى لحجم الملف
+
+صيغة الفيديو
+
+متطلبات الصورة المصغرة
+
+طريقة الوسوم
+
+طريقة الوصف
+
+طريقة الجدولة
+
+ويجب أن يعرف النظام هذه القيود قبل التصدير.
+
+---
+
+# Multi Output Profiles
+
+من نفس المشروع يمكن إنتاج:
+
+YouTube 16:9
+
+YouTube Shorts
+
+TikTok
+
+Instagram Reel
+
+Instagram Feed
+
+Facebook Reel
+
+Facebook Video
+
+Telegram
+
+دون إعادة إنشاء المشروع.
+
+---
+
+# Scheduler
+
+يدعم:
+
+النشر الفوري
+
+النشر المجدول
+
+النشر المتكرر
+
+Queue Management
+
+Retry Policy
+
+Failure Recovery
+
+---
+
+# Plugin System
+
+كل ما يلي عبارة عن Plugins:
+
+Voice
+
+Renderer
+
+Exporter
+
+Publisher
+
+Subtitle
+
+Transition
+
+Animation
+
+Effects
+
+Templates
+
+Media Provider
+
+Storage
+
+Authentication
+
+Analytics
+
+ولا يسمح بتعديل Core لإضافة Plugin.
+
+---
+
+# واجهة FastAPI
+
+أنشئ لوحة احترافية باستخدام:
+
+FastAPI
+
+Jinja2
+
+HTMX
+
+Alpine.js
+
+Tailwind CSS
+
+وتحتوي على:
+
+Dashboard
+
+Projects
+
+Timeline Editor
+
+Media Library
+
+Templates
+
+Voices
+
+Render Queue
+
+Publishing Queue
+
+Connected Platforms
+
+Schedules
+
+Logs
+
+Settings
+
+Analytics
+
+System Health
+
+ويجب أن تدعم WebSocket لعرض تقدم عمليات الرندر والنشر لحظياً.
+
+---
+
+# قاعدة البيانات
+
+صمم قاعدة بيانات قابلة للتوسع تتضمن:
+
+Projects
+
+Timelines
+
+Scenes
+
+Tracks
+
+Layers
+
+Assets
+
+Templates
+
+Voices
+
+Effects
+
+Transitions
+
+Animations
+
+Render Jobs
+
+Export Jobs
+
+Publisher Accounts
+
+Publishing Platforms
+
+Publishing Profiles
+
+Publishing Queue
+
+Schedules
+
+Platform Settings
+
+Logs
+
+Plugins
+
+Configurations
+
+Analytics
+
+Notifications
+
+مع تصميم ERD احترافي.
+
+---
+
+# المطلوب
+
+أريد وثيقة هندسية كاملة تتضمن:
+
+1. تحليل المتطلبات الوظيفية وغير الوظيفية.
+2. التصميم المعماري مع شرح مسؤولية كل طبقة وكل Module.
+3. هيكل المجلدات النهائي.
+4. تصميم قاعدة البيانات (ERD والجداول والعلاقات).
+5. تصميم جميع REST APIs.
+6. تصميم Core Engine.
+7. تصميم Timeline Engine.
+8. تصميم Rendering Engine.
+9. تصميم Publishing Engine.
+10. تصميم Plugin System.
+11. تصميم واجهة FastAPI.
+12. تصميم نظام المهام المجدولة.
+13. خطة تنفيذ تبدأ بـ MVP ثم التوسع.
+14. اقتراحات لتحسين الأداء ودعم المعالجة المتوازية.
+15. ضمان أن أي منصة نشر جديدة يمكن إضافتها مستقبلاً كـ Plugin دون تعديل أي جزء من Core أو إعادة هيكلة المشروع.
