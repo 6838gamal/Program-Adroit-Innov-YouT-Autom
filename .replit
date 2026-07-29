@@ -1,4 +1,4 @@
-modules = ["python-3.11"]
+modules = ["python-3.11", "web", "nix"]
 [nix]
 channel = "stable-25_05"
 packages = ["cargo", "ffmpeg-full", "freetype", "lcms2", "libiconv", "libimagequant", "libjpeg", "libtiff", "libwebp", "libxcrypt", "libyaml", "openjpeg", "openssl", "pkg-config", "rustc", "tcl", "tk", "zlib"]
