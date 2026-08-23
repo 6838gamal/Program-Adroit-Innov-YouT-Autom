@@ -35,30 +35,48 @@ class Settings(BaseSettings):
     )
 
     # ============================================
-    # SUPABASE DATABASE (القاعدة الأساسية)
+    # SUPABASE - المفاتيح الجديدة (Current)
     # ============================================
+    
     # 1. SUPABASE_URL: رابط مشروع Supabase
     SUPABASE_URL: Optional[str] = Field(
         default=None,
         description="Supabase project URL (e.g., https://project.supabase.co)"
     )
     
-    # 2. SUPABASE_PUBLIC_KEY: المفتاح العام
+    # 2. SUPABASE_PUBLIC_KEY: المفتاح العام الجديد
+    #    يبدأ بـ sb_publishable_...
+    #    Dashboard > API Settings > Project API Keys > Publishable Key
     SUPABASE_PUBLIC_KEY: Optional[SecretStr] = Field(
         default=None,
-        description="Supabase public/anonymous key for client-side operations"
+        description="Supabase publishable key (starts with sb_publishable_)"
     )
     
-    # 3. SUPABASE_SECRET_KEY: المفتاح السري (للتشغيل من الخادم)
+    # 3. SUPABASE_SECRET_KEY: المفتاح السري الجديد
+    #    يبدأ بـ sb_secret_...
+    #    ⚠️ Dashboard > API Settings > Project API Keys > Secret Key
     SUPABASE_SECRET_KEY: Optional[SecretStr] = Field(
         default=None,
-        description="Supabase secret/service role key for server-side admin operations"
+        description="Supabase secret key for server-side (starts with sb_secret_)"
+    )
+    
+    # ============================================
+    # SUPABASE - المفاتيح القديمة (Legacy) للتوافق
+    # ============================================
+    # هذه للتوافق مع الكود القديم - يمكن إزالتها لاحقاً
+    SUPABASE_LEGACY_PUBLIC_KEY: Optional[SecretStr] = Field(
+        default=None,
+        description="[Legacy] Supabase anon key (deprecated, use SUPABASE_PUBLIC_KEY)"
+    )
+    SUPABASE_LEGACY_SECRET_KEY: Optional[SecretStr] = Field(
+        default=None,
+        description="[Legacy] Supabase service_role key (deprecated, use SUPABASE_SECRET_KEY)"
     )
     
     # 4. SUPABASE_DB_SCHEMA: مخطط قاعدة البيانات
     SUPABASE_DB_SCHEMA: str = Field(
         default="public",
-        description="Supabase database schema (default: public)"
+        description="Supabase database schema"
     )
     
     # 5. SUPABASE_DB_POOL_SIZE: حجم تجمع الاتصالات
@@ -67,17 +85,41 @@ class Settings(BaseSettings):
         description="Supabase connection pool size"
     )
     
+    # 6. SUPABASE_STORAGE: نوع التخزين
+    SUPABASE_STORAGE: str = Field(
+        default="s3",
+        description="Supabase storage type"
+    )
+    
+    # 7. SUPABASE_BUCKET: دلاء التخزين
+    SUPABASE_BUCKET: str = Field(
+        default="videos",
+        description="Supabase storage bucket for videos"
+    )
+    SUPABASE_BUCKET_THUMBNAILS: str = Field(
+        default="thumbnails",
+        description="Supabase storage bucket for thumbnails"
+    )
+    SUPABASE_BUCKET_TEMP: str = Field(
+        default="temp",
+        description="Supabase storage bucket for temporary files"
+    )
+    SUPABASE_BUCKET_EXPORTS: str = Field(
+        default="exports",
+        description="Supabase storage bucket for exported files"
+    )
+    
     @property
     def supabase_database_url(self) -> Optional[str]:
         """Construct Supabase database connection URL using the REST API"""
         if not self.SUPABASE_URL:
             return None
-        # Supabase uses PostgreSQL under the hood but we access it via REST/API
         return f"{self.SUPABASE_URL}/rest/v1"
     
     @property
     def supabase_configured(self) -> bool:
-        """Check if Supabase is properly configured"""
+        """Check if Supabase is properly configured with new keys"""
+        # التحقق من المفاتيح الجديدة
         has_public_key = bool(
             self.SUPABASE_PUBLIC_KEY and 
             self.SUPABASE_PUBLIC_KEY.get_secret_value() not in [None, "", "your-supabase-public-key"]
@@ -87,24 +129,46 @@ class Settings(BaseSettings):
             self.SUPABASE_SECRET_KEY.get_secret_value() not in [None, "", "your-supabase-secret-key"]
         )
         
+        # التحقق من المفاتيح القديمة كاحتياطي
+        has_legacy_public = bool(
+            self.SUPABASE_LEGACY_PUBLIC_KEY and 
+            self.SUPABASE_LEGACY_PUBLIC_KEY.get_secret_value() not in [None, "", "your-supabase-legacy-public-key"]
+        )
+        has_legacy_secret = bool(
+            self.SUPABASE_LEGACY_SECRET_KEY and 
+            self.SUPABASE_LEGACY_SECRET_KEY.get_secret_value() not in [None, "", "your-supabase-legacy-secret-key"]
+        )
+        
         return bool(
             self.SUPABASE_URL and 
             self.SUPABASE_URL not in [None, "", "https://your-project.supabase.co"] and
-            (has_public_key or has_secret_key)
+            (has_public_key or has_secret_key or has_legacy_public or has_legacy_secret)
         )
     
     @property
     def supabase_public_key_value(self) -> Optional[str]:
-        """Get the public key value"""
+        """Get the public key value (prefer new, fallback to legacy)"""
         if self.SUPABASE_PUBLIC_KEY:
             return self.SUPABASE_PUBLIC_KEY.get_secret_value()
+        elif self.SUPABASE_LEGACY_PUBLIC_KEY:
+            warnings.warn(
+                "Using legacy public key. Please migrate to SUPABASE_PUBLIC_KEY.",
+                DeprecationWarning
+            )
+            return self.SUPABASE_LEGACY_PUBLIC_KEY.get_secret_value()
         return None
     
     @property
     def supabase_secret_key_value(self) -> Optional[str]:
-        """Get the secret key value"""
+        """Get the secret key value (prefer new, fallback to legacy)"""
         if self.SUPABASE_SECRET_KEY:
             return self.SUPABASE_SECRET_KEY.get_secret_value()
+        elif self.SUPABASE_LEGACY_SECRET_KEY:
+            warnings.warn(
+                "Using legacy secret key. Please migrate to SUPABASE_SECRET_KEY.",
+                DeprecationWarning
+            )
+            return self.SUPABASE_LEGACY_SECRET_KEY.get_secret_value()
         return None
 
     # ============================================
@@ -131,7 +195,7 @@ class Settings(BaseSettings):
         ssl_param = f"?sslmode={self.POSTGRES_SSL_MODE}" if self.POSTGRES_SSL_MODE else ""
         return f"postgresql://{self.POSTGRES_USER}:{password}@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}{ssl_param}"
 
-    # Database Pool (for PostgreSQL when used)
+    # Database Pool
     DB_POOL_SIZE: int = 10
     DB_MAX_OVERFLOW: int = 20
     DB_POOL_TIMEOUT: int = 30
@@ -139,32 +203,7 @@ class Settings(BaseSettings):
     DATABASE_ECHO: bool = False
 
     # ============================================
-    # SUPABASE STORAGE (للملفات)
-    # ============================================
-    SUPABASE_STORAGE: str = Field(
-        default="s3",
-        description="Supabase storage type (s3, gcs, azure)"
-    )
-    
-    SUPABASE_BUCKET: str = Field(
-        default="videos",
-        description="Supabase storage bucket name for videos"
-    )
-    SUPABASE_BUCKET_THUMBNAILS: str = Field(
-        default="thumbnails",
-        description="Supabase storage bucket for thumbnails"
-    )
-    SUPABASE_BUCKET_TEMP: str = Field(
-        default="temp",
-        description="Supabase storage bucket for temporary files"
-    )
-    SUPABASE_BUCKET_EXPORTS: str = Field(
-        default="exports",
-        description="Supabase storage bucket for exported files"
-    )
-
-    # ============================================
-    # LOCAL STORAGE (احتياطي)
+    # LOCAL STORAGE
     # ============================================
     MEDIA_DIR: Path = BASE_DIR / "media"
     TEMP_DIR: Path = BASE_DIR / "temp"
@@ -367,7 +406,7 @@ def validate_config() -> bool:
             if not settings.supabase_configured:
                 raise ValueError(
                     "Supabase must be configured for production! "
-                    "Set SUPABASE_URL, SUPABASE_PUBLIC_KEY, and SUPABASE_SECRET_KEY."
+                    "Set SUPABASE_URL and at least one key (SUPABASE_PUBLIC_KEY or SUPABASE_SECRET_KEY)."
                 )
         
         # Validate based on database type
@@ -376,14 +415,6 @@ def validate_config() -> bool:
                 raise ValueError(
                     "DATABASE_TYPE is set to 'supabase' but Supabase is not properly configured!"
                 )
-        else:
-            # PostgreSQL validation
-            if not all([
-                settings.POSTGRES_HOST,
-                settings.POSTGRES_USER,
-                settings.POSTGRES_DB,
-            ]):
-                raise ValueError("All PostgreSQL connection parameters must be configured!")
         
         # Validate video processing settings
         if settings.MAX_CONCURRENT_PROCESSING < 1:
