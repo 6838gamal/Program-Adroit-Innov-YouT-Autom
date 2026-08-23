@@ -6,6 +6,9 @@ import asyncio
 import uuid
 from datetime import datetime
 
+# إضافة استيراد BaseModel من pydantic
+from pydantic import BaseModel
+
 from application.services.project_service import ProjectService
 from infrastructure.database.session import get_db
 from infrastructure.repositories.sql_project_repository import SQLProjectRepository
@@ -27,6 +30,21 @@ def get_project_service(session: AsyncSession = Depends(get_db)) -> ProjectServi
         repo=SQLProjectRepository(session),
         event_bus=InMemoryEventBus(),
     )
+
+
+# ============================================
+# تعريف نماذج Pydantic للفيديو
+# ============================================
+
+class VideoProcessRequest(BaseModel):
+    url: str
+    session_id: Optional[str] = None
+
+
+class VideoGenerateRequest(BaseModel):
+    prompt: str
+    session_id: Optional[str] = None
+    links: Optional[List[str]] = []
 
 
 # ============================================
@@ -115,22 +133,14 @@ async def delete_project(
 # نقاط النهاية لمعالجة الفيديو
 # ============================================
 
-class VideoProcessRequest(BaseModel):
-    url: str
-    session_id: Optional[str] = None
-
-class VideoGenerateRequest(BaseModel):
-    prompt: str
-    session_id: Optional[str] = None
-    links: Optional[List[str]] = []
-
-
 @router.post("/video/process")
 async def process_video(
     request: VideoProcessRequest,
     background_tasks: BackgroundTasks,
 ):
-    """معالجة رابط فيديو من الإنترنت"""
+    """
+    معالجة رابط فيديو من الإنترنت
+    """
     session_id = request.session_id or str(uuid.uuid4())
     
     processing_sessions[session_id] = {
@@ -152,7 +162,9 @@ async def process_video(
 
 @router.get("/video/process/{session_id}/status")
 async def get_processing_status(session_id: str):
-    """الحصول على حالة معالجة الفيديو"""
+    """
+    الحصول على حالة معالجة الفيديو
+    """
     if session_id not in processing_sessions:
         raise HTTPException(status_code=404, detail="Session not found")
     return processing_sessions[session_id]
@@ -163,7 +175,9 @@ async def generate_video(
     request: VideoGenerateRequest,
     background_tasks: BackgroundTasks,
 ):
-    """توليد فيديو من برومبت"""
+    """
+    توليد فيديو من برومبت باستخدام الذكاء الاصطناعي
+    """
     session_id = request.session_id or str(uuid.uuid4())
     
     processing_sessions[session_id] = {
@@ -178,7 +192,7 @@ async def generate_video(
         generate_video_background, 
         session_id, 
         request.prompt, 
-        request.links
+        request.links or []
     )
     
     return {
@@ -190,7 +204,9 @@ async def generate_video(
 
 @router.get("/video/generate/{session_id}/status")
 async def get_generation_status(session_id: str):
-    """الحصول على حالة توليد الفيديو"""
+    """
+    الحصول على حالة توليد الفيديو
+    """
     if session_id not in processing_sessions:
         raise HTTPException(status_code=404, detail="Session not found")
     return processing_sessions[session_id]
@@ -198,7 +214,9 @@ async def get_generation_status(session_id: str):
 
 @router.get("/video/health")
 async def video_health_check():
-    """التحقق من صحة خدمة الفيديو"""
+    """
+    التحقق من صحة خدمة الفيديو
+    """
     return {
         "status": "ok",
         "message": "Video processing service is running",
@@ -216,7 +234,9 @@ async def publish_project(
     project_id: UUID,
     service: ProjectService = Depends(get_project_service),
 ):
-    """نشر المشروع"""
+    """
+    نشر المشروع
+    """
     try:
         project = await service.get(project_id)
         if not project:
@@ -233,6 +253,8 @@ async def publish_project(
         }
     except ProjectNotFoundError:
         raise HTTPException(status_code=404, detail="Project not found")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/{project_id}/export")
@@ -240,7 +262,9 @@ async def export_project(
     project_id: UUID,
     service: ProjectService = Depends(get_project_service),
 ):
-    """تصدير المشروع"""
+    """
+    تصدير المشروع كملف JSON
+    """
     try:
         project = await service.get(project_id)
         if not project:
@@ -252,6 +276,8 @@ async def export_project(
         }
     except ProjectNotFoundError:
         raise HTTPException(status_code=404, detail="Project not found")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/{project_id}/duplicate")
@@ -259,7 +285,9 @@ async def duplicate_project(
     project_id: UUID,
     service: ProjectService = Depends(get_project_service),
 ):
-    """نسخ مشروع"""
+    """
+    نسخ مشروع موجود
+    """
     try:
         original = await service.get(project_id)
         if not original:
@@ -277,6 +305,8 @@ async def duplicate_project(
         return ProjectResponse(**new_project.to_dict())
     except ProjectNotFoundError:
         raise HTTPException(status_code=404, detail="Project not found")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/{project_id}/render")
@@ -284,7 +314,9 @@ async def render_project(
     project_id: UUID,
     service: ProjectService = Depends(get_project_service),
 ):
-    """بدء عملية الرندر"""
+    """
+    بدء عملية الرندر
+    """
     try:
         project = await service.get(project_id)
         if not project:
@@ -301,6 +333,8 @@ async def render_project(
         }
     except ProjectNotFoundError:
         raise HTTPException(status_code=404, detail="Project not found")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ============================================
@@ -308,7 +342,9 @@ async def render_project(
 # ============================================
 
 async def process_video_background(session_id: str, url: str):
-    """معالجة الفيديو في الخلفية"""
+    """
+    معالجة الفيديو في الخلفية مع تحديث التقدم
+    """
     try:
         steps = [
             (10, "جاري تحليل الرابط..."),
@@ -320,36 +356,41 @@ async def process_video_background(session_id: str, url: str):
         ]
         
         for progress, detail in steps:
-            await asyncio.sleep(1)
-            processing_sessions[session_id].update({
-                "progress": progress,
-                "detail": detail,
-                "status": "processing"
-            })
+            await asyncio.sleep(1.5)
+            if session_id in processing_sessions:
+                processing_sessions[session_id].update({
+                    "progress": progress,
+                    "detail": detail,
+                    "status": "processing"
+                })
         
         # اكتمال المعالجة
-        processing_sessions[session_id].update({
-            "status": "completed",
-            "progress": 100,
-            "detail": "اكتملت المعالجة!",
-            "completed": True,
-            "video_url": url,
-            "title": f"فيديو معالج - {datetime.now().strftime('%Y-%m-%d %H:%M')}",
-            "duration": 120,
-            "thumbnail": None
-        })
+        if session_id in processing_sessions:
+            processing_sessions[session_id].update({
+                "status": "completed",
+                "progress": 100,
+                "detail": "اكتملت المعالجة!",
+                "completed": True,
+                "video_url": url,
+                "title": f"فيديو معالج - {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+                "duration": 120,
+                "thumbnail": None
+            })
         
     except Exception as e:
-        processing_sessions[session_id].update({
-            "status": "failed",
-            "detail": str(e),
-            "completed": True,
-            "error": str(e)
-        })
+        if session_id in processing_sessions:
+            processing_sessions[session_id].update({
+                "status": "failed",
+                "detail": str(e),
+                "completed": True,
+                "error": str(e)
+            })
 
 
 async def generate_video_background(session_id: str, prompt: str, links: List[str]):
-    """توليد فيديو في الخلفية"""
+    """
+    توليد فيديو في الخلفية مع تحديث التقدم
+    """
     try:
         steps = [
             (5, "تحليل الطلب..."),
@@ -362,60 +403,55 @@ async def generate_video_background(session_id: str, prompt: str, links: List[st
         ]
         
         for progress, detail in steps:
-            await asyncio.sleep(1.5)
-            processing_sessions[session_id].update({
-                "progress": progress,
-                "detail": detail,
-                "status": "generating"
-            })
+            await asyncio.sleep(2)
+            if session_id in processing_sessions:
+                processing_sessions[session_id].update({
+                    "progress": progress,
+                    "detail": detail,
+                    "status": "generating"
+                })
         
-        # اكتمال التوليد
+        # اكتمال التوليد - استخدام فيديو تجريبي
         video_url = "https://sample-videos.com/video321/mp4/240/big_buck_bunny_240p_1mb.mp4"
         
-        processing_sessions[session_id].update({
-            "status": "completed",
-            "progress": 100,
-            "detail": "اكتمل التوليد!",
-            "completed": True,
-            "video_url": video_url,
-            "title": prompt[:50] + ("..." if len(prompt) > 50 else ""),
-            "duration": 180,
-            "thumbnail": None,
-            "generated": True
-        })
+        if session_id in processing_sessions:
+            processing_sessions[session_id].update({
+                "status": "completed",
+                "progress": 100,
+                "detail": "اكتمل التوليد!",
+                "completed": True,
+                "video_url": video_url,
+                "title": prompt[:50] + ("..." if len(prompt) > 50 else ""),
+                "description": prompt,
+                "duration": 180,
+                "thumbnail": None,
+                "generated": True
+            })
         
     except Exception as e:
-        processing_sessions[session_id].update({
-            "status": "failed",
-            "detail": str(e),
-            "completed": True,
-            "error": str(e)
-        })
+        if session_id in processing_sessions:
+            processing_sessions[session_id].update({
+                "status": "failed",
+                "detail": str(e),
+                "completed": True,
+                "error": str(e)
+            })
 
 
 # ============================================
-# تنظيف الجلسات القديمة
+# تنظيف الجلسات القديمة (اختياري)
 # ============================================
 async def cleanup_old_sessions():
+    """
+    تنظيف الجلسات القديمة بشكل دوري
+    """
     while True:
-        await asyncio.sleep(3600)
-        # حذف الجلسات المكتملة
-        to_remove = [sid for sid, sess in processing_sessions.items() if sess.get("completed")]
+        await asyncio.sleep(3600)  # كل ساعة
+        to_remove = []
+        for sid, sess in processing_sessions.items():
+            if sess.get("completed"):
+                to_remove.append(sid)
+        
         for sid in to_remove:
             if sid in processing_sessions:
                 del processing_sessions[sid]
-
-
-# ============================================
-# استيراد النماذج
-# ============================================
-from pydantic import BaseModel
-
-class VideoProcessRequest(BaseModel):
-    url: str
-    session_id: Optional[str] = None
-
-class VideoGenerateRequest(BaseModel):
-    prompt: str
-    session_id: Optional[str] = None
-    links: Optional[List[str]] = []
