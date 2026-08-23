@@ -2,9 +2,9 @@
 version: '3.8'
 
 services:
-  app:
+  web:
     build: .
-    container_name: video-platform-app
+    container_name: video-platform
     ports:
       - "5000:5000"
     environment:
@@ -25,6 +25,10 @@ services:
       - PLUGINS_ENABLED=${PLUGINS_ENABLED:-True}
       - SCHEDULER_ENABLED=${SCHEDULER_ENABLED:-True}
       - CACHE_TYPE=${CACHE_TYPE:-simple}
+      - MEDIA_DIR=/app/media
+      - TEMP_DIR=/app/temp
+      - EXPORTS_DIR=/app/exports
+      - DATA_DIR=/app/data
     volumes:
       - ./media:/app/media
       - ./temp:/app/temp
@@ -34,6 +38,7 @@ services:
       - ./cache:/app/cache
       - ./config:/app/config
       - ./static:/app/static
+      - ./templates:/app/templates
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
