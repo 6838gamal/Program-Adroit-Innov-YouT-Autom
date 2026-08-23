@@ -124,7 +124,7 @@
         </div>
     </div>
 
-    <!-- شريط التقدم -->
+    <!-- شريط التقدم المحسن -->
     <div id="progress-area" class="hidden">
         <div class="card bg-slate-800/40 border-slate-700">
             <div class="p-4">
@@ -372,7 +372,7 @@ function removeVideoLink(index) {
 }
 
 // ============================================
-// معالجة الفيديو
+// معالجة الفيديو مع عرض التقدم الفعلي
 // ============================================
 async function processVideoLink(url) {
     showProgress('جاري تحليل رابط الفيديو...', 5, 'تحليل الرابط', 'جاري استخراج معلومات الفيديو');
@@ -398,6 +398,8 @@ async function processVideoLink(url) {
         
         const data = await response.json();
         state.processingSessionId = data.session_id;
+        console.log('✅ بدأت المعالجة، Session ID:', state.processingSessionId);
+        
         await pollProcessingStatus(state.processingSessionId);
         
     } catch (error) {
@@ -409,51 +411,65 @@ async function processVideoLink(url) {
 }
 
 // ============================================
-// مراقبة حالة المعالجة
+// مراقبة التقدم مع تحديث مستمر
 // ============================================
 async function pollProcessingStatus(sessionId) {
     let attempts = 0;
     const maxAttempts = 60;
-    let lastProgress = 0;
+    let lastProgress = -1;
+    
+    console.log('🔄 بدء مراقبة التقدم للجلسة:', sessionId);
     
     while (attempts < maxAttempts && !state.cancelProcessing) {
         try {
             const response = await fetch(`/api/v1/projects/video/process/${sessionId}/status`);
             
             if (!response.ok) {
-                console.warn('فشل الحصول على الحالة، إعادة المحاولة...');
+                console.warn('⚠️ فشل الحصول على الحالة، إعادة المحاولة...');
                 await new Promise(resolve => setTimeout(resolve, 2000));
                 attempts++;
                 continue;
             }
             
             const status = await response.json();
-            console.log('📊 حالة المعالجة:', status);
+            console.log('📊 حالة المعالجة:', {
+                progress: status.progress,
+                step: status.step,
+                detail: status.detail,
+                completed: status.completed
+            });
             
             if (status.progress !== undefined && status.progress !== lastProgress) {
                 lastProgress = status.progress;
+                
                 updateProgress(
                     status.detail || 'جاري المعالجة...',
                     status.progress || 0,
                     status.step || status.status || 'processing'
                 );
-            }
-            
-            // تحديث معلومات الفيديو من الخادم
-            if (status.title || status.format || status.size || status.duration || status.dimensions) {
-                updateLoadingVideoInfo(
-                    status.format || 'جاري التحديد...',
-                    status.size || '—',
-                    status.duration ? formatDuration(status.duration) : '—',
-                    status.dimensions || '—'
-                );
-                document.getElementById('video-info-loading').classList.remove('hidden');
+                
+                if (status.format || status.size || status.duration || status.dimensions) {
+                    updateLoadingVideoInfo(
+                        status.format || 'جاري التحديد...',
+                        status.size || '—',
+                        status.duration ? formatDuration(status.duration) : '—',
+                        status.dimensions || '—'
+                    );
+                    document.getElementById('video-info-loading').classList.remove('hidden');
+                }
+                
+                if (status.title) {
+                    document.getElementById('progress-title').textContent = '🎬 ' + status.title;
+                }
             }
             
             if (status.completed) {
-                if (status.error) throw new Error(status.error);
+                if (status.error) {
+                    throw new Error(status.error);
+                }
                 
-                // استخدم الفيديو من الخادم أو فيديو تجريبي
+                console.log('✅ اكتملت المعالجة!');
+                
                 const videoUrl = status.video_url || 'https://sample-videos.com/video321/mp4/240/big_buck_bunny_240p_1mb.mp4';
                 
                 showPreviewWithInfo(videoUrl, {
@@ -478,15 +494,22 @@ async function pollProcessingStatus(sessionId) {
             }
             
         } catch (error) {
-            if (error.message && error.message.includes('فشل')) throw error;
-            console.warn('خطأ في جلب الحالة:', error);
+            if (error.message && error.message.includes('فشل')) {
+                throw error;
+            }
+            console.warn('⚠️ خطأ في جلب الحالة:', error);
         }
         
         await new Promise(resolve => setTimeout(resolve, 1500));
         attempts++;
     }
     
-    if (state.cancelProcessing) return;
+    if (state.cancelProcessing) {
+        console.log('⏹️ تم إلغاء المعالجة');
+        return;
+    }
+    
+    console.error('⏰ انتهى وقت المعالجة');
     throw new Error('انتهى وقت المعالجة. يرجى المحاولة مرة أخرى.');
 }
 
@@ -521,6 +544,8 @@ async function generateVideoFromPrompt(prompt) {
         
         const data = await response.json();
         state.processingSessionId = data.session_id;
+        console.log('✅ بدأ التوليد، Session ID:', state.processingSessionId);
+        
         await pollGenerationStatus(state.processingSessionId);
         
     } catch (error) {
@@ -534,43 +559,59 @@ async function generateVideoFromPrompt(prompt) {
 async function pollGenerationStatus(sessionId) {
     let attempts = 0;
     const maxAttempts = 90;
-    let lastProgress = 0;
+    let lastProgress = -1;
+    
+    console.log('🔄 بدء مراقبة التوليد للجلسة:', sessionId);
     
     while (attempts < maxAttempts && !state.cancelProcessing) {
         try {
             const response = await fetch(`/api/v1/projects/video/generate/${sessionId}/status`);
             
             if (!response.ok) {
-                console.warn('فشل الحصول على حالة التوليد، إعادة المحاولة...');
+                console.warn('⚠️ فشل الحصول على حالة التوليد، إعادة المحاولة...');
                 await new Promise(resolve => setTimeout(resolve, 2000));
                 attempts++;
                 continue;
             }
             
             const status = await response.json();
-            console.log('📊 حالة التوليد:', status);
+            console.log('📊 حالة التوليد:', {
+                progress: status.progress,
+                step: status.step,
+                detail: status.detail,
+                completed: status.completed
+            });
             
             if (status.progress !== undefined && status.progress !== lastProgress) {
                 lastProgress = status.progress;
+                
                 updateProgress(
                     status.detail || 'جاري التوليد...',
                     status.progress || 0,
                     status.step || status.status || 'generating'
                 );
-            }
-            
-            if (status.title || status.format || status.size || status.duration || status.dimensions) {
-                updateLoadingVideoInfo(
-                    status.format || 'جاري التحديد...',
-                    status.size || '—',
-                    status.duration ? formatDuration(status.duration) : '—',
-                    status.dimensions || '—'
-                );
-                document.getElementById('video-info-loading').classList.remove('hidden');
+                
+                if (status.format || status.size || status.duration || status.dimensions) {
+                    updateLoadingVideoInfo(
+                        status.format || 'جاري التحديد...',
+                        status.size || '—',
+                        status.duration ? formatDuration(status.duration) : '—',
+                        status.dimensions || '—'
+                    );
+                    document.getElementById('video-info-loading').classList.remove('hidden');
+                }
+                
+                if (status.title) {
+                    document.getElementById('progress-title').textContent = '🎬 ' + status.title;
+                }
             }
             
             if (status.completed) {
-                if (status.error) throw new Error(status.error);
+                if (status.error) {
+                    throw new Error(status.error);
+                }
+                
+                console.log('✅ اكتمل التوليد!');
                 
                 const videoUrl = status.video_url || 'https://sample-videos.com/video321/mp4/240/big_buck_bunny_240p_1mb.mp4';
                 
@@ -597,15 +638,22 @@ async function pollGenerationStatus(sessionId) {
             }
             
         } catch (error) {
-            if (error.message && error.message.includes('فشل')) throw error;
-            console.warn('خطأ في جلب حالة التوليد:', error);
+            if (error.message && error.message.includes('فشل')) {
+                throw error;
+            }
+            console.warn('⚠️ خطأ في جلب حالة التوليد:', error);
         }
         
         await new Promise(resolve => setTimeout(resolve, 1500));
         attempts++;
     }
     
-    if (state.cancelProcessing) return;
+    if (state.cancelProcessing) {
+        console.log('⏹️ تم إلغاء التوليد');
+        return;
+    }
+    
+    console.error('⏰ انتهى وقت التوليد');
     throw new Error('انتهى وقت التوليد. يرجى المحاولة مرة أخرى.');
 }
 
@@ -672,6 +720,16 @@ function cancelProcessing() {
 }
 
 // ============================================
+// دالة مساعدة لتنسيق المدة
+// ============================================
+function formatDuration(seconds) {
+    if (!seconds || isNaN(seconds)) return '—';
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${mins}:${String(secs).padStart(2, '0')}`;
+}
+
+// ============================================
 // عرض المعاينة مع استخراج معلومات الفيديو
 // ============================================
 function showPreviewWithInfo(videoUrl, videoData) {
@@ -690,7 +748,6 @@ function showPreviewWithInfo(videoUrl, videoData) {
     source.src = videoUrl;
     video.load();
     
-    // تحديث معلومات الفيديو من البيانات المستلمة
     document.getElementById('video-format').textContent = videoData.format || 'mp4';
     document.getElementById('video-size').textContent = videoData.size || '—';
     document.getElementById('video-duration').textContent = videoData.duration ? formatDuration(videoData.duration) : '—';
@@ -703,19 +760,14 @@ function showPreviewWithInfo(videoUrl, videoData) {
         session_id: videoData.session_id
     };
     
-    // استخراج معلومات الفيديو من المتصفح
     video.addEventListener('loadedmetadata', function() {
-        // تحديث المدة من الفيديو الفعلي
         if (this.duration && !isNaN(this.duration)) {
-            const durationStr = formatDuration(this.duration);
-            document.getElementById('video-duration').textContent = durationStr;
-            // تحديث في البيانات
+            document.getElementById('video-duration').textContent = formatDuration(this.duration);
             if (state.generatedVideo) {
                 state.generatedVideo.data.duration = this.duration;
             }
         }
         
-        // تحديث الأبعاد من الفيديو الفعلي
         if (this.videoWidth && this.videoHeight) {
             const dimensions = `${this.videoWidth}×${this.videoHeight}`;
             document.getElementById('video-dimensions').textContent = dimensions;
@@ -724,11 +776,9 @@ function showPreviewWithInfo(videoUrl, videoData) {
             }
         }
         
-        // إخفاء overlay التحميل
         overlay.classList.add('hidden');
     });
     
-    // تتبع تقدم تحميل الفيديو
     video.addEventListener('progress', function() {
         if (this.buffered.length > 0) {
             const buffered = this.buffered.end(0);
@@ -749,16 +799,6 @@ function showPreviewWithInfo(videoUrl, videoData) {
     };
     
     previewArea.scrollIntoView({ behavior: 'smooth', block: 'center' });
-}
-
-// ============================================
-// وظائف مساعدة
-// ============================================
-function formatDuration(seconds) {
-    if (!seconds || isNaN(seconds)) return '—';
-    const mins = Math.floor(seconds / 60);
-    const secs = Math.floor(seconds % 60);
-    return `${mins}:${String(secs).padStart(2, '0')}`;
 }
 
 function hidePreview() {
