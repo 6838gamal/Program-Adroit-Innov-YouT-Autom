@@ -27,7 +27,6 @@
                 </div>
                 <div class="flex-1 bg-slate-800 rounded-2xl rounded-tr-sm px-4 py-3">
                     <p class="text-sm text-slate-300">مرحباً! 👋 أنا مساعدك الذكي لإنشاء فيديوهات. أخبرني عن فكرة الفيديو الذي ترغب في إنشائه، أو أضف رابط فيديو من الإنترنت لاستخدامه كمصدر إلهام.</p>
-                    <p class="text-xs text-slate-500 mt-2">💡 ملاحظة: روابط يوتيوب قد تحتاج إلى تسجيل دخول، يمكنك استخدام روابط من منصات أخرى أو تحميل الفيديو مباشرة.</p>
                 </div>
                 <span class="text-[10px] text-slate-600 flex-shrink-0">الآن</span>
             </div>
@@ -63,7 +62,7 @@
                     </div>
                 </div>
                 
-                <!-- معلومات الفيديو التفصيلية -->
+                <!-- معلومات الفيديو -->
                 <div id="video-info" class="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
                     <div class="bg-slate-800/50 rounded-lg p-2 text-center">
                         <span class="text-slate-500 block">📹 الصيغة</span>
@@ -83,40 +82,10 @@
                     </div>
                 </div>
                 
-                <!-- معلومات إضافية -->
-                <div id="video-extra-info" class="mt-2 grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs hidden">
-                    <div class="bg-slate-800/30 rounded-lg p-2 text-center">
-                        <span class="text-slate-500 block">👤 الناشر</span>
-                        <span id="video-uploader" class="text-slate-300">—</span>
-                    </div>
-                    <div class="bg-slate-800/30 rounded-lg p-2 text-center">
-                        <span class="text-slate-500 block">👁️ المشاهدات</span>
-                        <span id="video-views" class="text-slate-300">—</span>
-                    </div>
-                    <div class="bg-slate-800/30 rounded-lg p-2 text-center">
-                        <span class="text-slate-500 block">👍 الإعجابات</span>
-                        <span id="video-likes" class="text-slate-300">—</span>
-                    </div>
-                </div>
-                
-                <!-- رسالة تحذيرية -->
+                <!-- رسالة تحذير -->
                 <div id="video-warning" class="mt-2 hidden">
                     <div class="bg-yellow-900/30 border border-yellow-700/50 rounded-lg p-2">
-                        <div class="flex items-start gap-2">
-                            <span class="text-yellow-500 text-sm">⚠️</span>
-                            <div>
-                                <p id="video-warning-text" class="text-xs text-yellow-300"></p>
-                                <p class="text-[10px] text-yellow-500/70 mt-1">تم استخدام معلومات تقديرية للفيديو</p>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                
-                <!-- وصف الفيديو -->
-                <div id="video-description" class="mt-2 hidden">
-                    <div class="bg-slate-800/30 rounded-lg p-2">
-                        <span class="text-xs text-slate-500 block mb-1">📝 الوصف:</span>
-                        <p id="video-description-text" class="text-xs text-slate-300 line-clamp-3"></p>
+                        <p id="video-warning-text" class="text-xs text-yellow-300"></p>
                     </div>
                 </div>
             </div>
@@ -227,16 +196,6 @@
                             <span id="loading-dimensions" class="text-slate-300 text-xs">—</span>
                         </div>
                     </div>
-                    <div id="loading-extra-info" class="grid grid-cols-2 gap-2 mt-2 hidden">
-                        <div class="bg-slate-800/30 rounded p-2 text-center">
-                            <span class="text-slate-500 block text-[10px]">👤 الناشر</span>
-                            <span id="loading-uploader" class="text-slate-300 text-xs">—</span>
-                        </div>
-                        <div class="bg-slate-800/30 rounded p-2 text-center">
-                            <span class="text-slate-500 block text-[10px]">👁️ المشاهدات</span>
-                            <span id="loading-views" class="text-slate-300 text-xs">—</span>
-                        </div>
-                    </div>
                 </div>
                 
                 <div class="mt-3 flex justify-end">
@@ -296,12 +255,6 @@
 #video-preview::-webkit-media-controls-panel {
     background: rgba(0, 0, 0, 0.7);
 }
-.line-clamp-3 {
-    display: -webkit-box;
-    -webkit-line-clamp: 3;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
-}
 </style>
 {% endblock %}
 
@@ -320,9 +273,7 @@ let state = {
     startTime: null,
     progressTimer: null,
     processing: false,
-    cancelProcessing: false,
-    videoMetadata: null,
-    errorCount: 0
+    cancelProcessing: false
 };
 
 // ============================================
@@ -373,7 +324,7 @@ function clearChat() {
     const container = document.getElementById('chat-messages');
     container.innerHTML = '';
     state.chatHistory = [];
-    addMessage('assistant', 'مرحباً! 👋 أنا مساعدك الذكي لإنشاء فيديوهات. أخبرني عن فكرة الفيديو الذي ترغب في إنشائه، أو أضف رابط فيديو من الإنترنت لاستخدامه كمصدر إلهام.\n\n💡 ملاحظة: روابط يوتيوب قد تحتاج إلى تسجيل دخول، يمكنك استخدام روابط من منصات أخرى أو تحميل الفيديو مباشرة.');
+    addMessage('assistant', 'مرحباً! 👋 أنا مساعدك الذكي لإنشاء فيديوهات. أخبرني عن فكرة الفيديو الذي ترغب في إنشائه، أو أضف رابط فيديو من الإنترنت لاستخدامه كمصدر إلهام.');
 }
 
 function addSuggestion(text) {
@@ -444,14 +395,10 @@ function removeVideoLink(index) {
 // معالجة الفيديو
 // ============================================
 async function processVideoLink(url) {
-    // إظهار شريط التقدم
-    showProgress('جاري تحليل رابط الفيديو...', 5, 'تحليل الرابط', 'جاري استخراج معلومات الفيديو');
-    updateLoadingVideoInfo('جاري التحليل...', '—', '—', '—');
+    showProgress('جاري تحليل رابط الفيديو...', 5);
     hideProgressWarning();
     hideProgressError();
     hideWarning();
-    
-    state.errorCount = 0;
     
     try {
         const response = await fetch('/api/v1/projects/video/process', {
@@ -479,27 +426,18 @@ async function processVideoLink(url) {
         
     } catch (error) {
         hideProgress();
-        // عرض رسالة واضحة للمستخدم
-        let errorMsg = error.message;
-        if (errorMsg.includes('auth_required') || errorMsg.includes('تسجيل الدخول')) {
-            errorMsg = '⚠️ يوتيوب يطلب تسجيل الدخول للتحقق من أنك لست روبوت. يمكنك:\n1. استخدام رابط من منصة أخرى (مثل TikTok أو Vimeo)\n2. تحميل الفيديو مباشرة من جهازك\n3. المحاولة مرة أخرى لاحقاً';
-            showToast('⚠️ ' + errorMsg, 'warning');
-            addMessage('assistant', `❌ ${errorMsg}`);
-        } else {
-            showToast('❌ فشل معالجة الفيديو: ' + error.message, 'error');
-            addMessage('assistant', `❌ عذراً، فشلت معالجة الفيديو: ${error.message}`);
-        }
+        showToast('❌ فشل معالجة الفيديو: ' + error.message, 'error');
+        addMessage('assistant', `❌ عذراً، فشلت معالجة الفيديو: ${error.message}`);
         console.error('Video processing error:', error);
     }
 }
 
 // ============================================
-// مراقبة التقدم
+// مراقبة التقدم - النسخة المبسطة والموثوقة
 // ============================================
 async function pollProcessingStatus(sessionId) {
     let attempts = 0;
     const maxAttempts = 60;
-    let lastProgress = -1;
     
     console.log('🔄 بدء مراقبة التقدم للجلسة:', sessionId);
     
@@ -515,66 +453,49 @@ async function pollProcessingStatus(sessionId) {
             }
             
             const status = await response.json();
-            console.log('📊 حالة المعالجة:', {
-                progress: status.progress,
-                step: status.step,
-                detail: status.detail,
-                completed: status.completed,
-                title: status.title,
-                ytdlp_error: status.ytdlp_error
-            });
+            console.log('📊 حالة المعالجة:', status);
             
-            // تحديث التقدم
+            // تحديث التقدم - بطريقة مباشرة
             if (status.progress !== undefined) {
-                const progressPercent = status.progress || 0;
-                document.getElementById('progress-percent').textContent = progressPercent + '%';
-                document.getElementById('progress-bar').style.width = progressPercent + '%';
+                const percent = status.progress || 0;
                 
-                if (status.step) {
-                    document.getElementById('progress-status').textContent = status.step;
-                }
-                if (status.detail) {
-                    document.getElementById('progress-detail').textContent = status.detail;
-                }
+                // تحديث شريط التقدم
+                const percentEl = document.getElementById('progress-percent');
+                const barEl = document.getElementById('progress-bar');
+                if (percentEl) percentEl.textContent = percent + '%';
+                if (barEl) barEl.style.width = percent + '%';
                 
-                if (status.title && status.title !== document.getElementById('progress-title').textContent.replace('🎬 ', '')) {
-                    document.getElementById('progress-title').textContent = '🎬 ' + status.title;
+                // تحديث الحالة
+                const statusEl = document.getElementById('progress-status');
+                const detailEl = document.getElementById('progress-detail');
+                if (statusEl && status.step) statusEl.textContent = status.step;
+                if (detailEl && status.detail) detailEl.textContent = status.detail;
+                
+                // تحديث العنوان
+                const titleEl = document.getElementById('progress-title');
+                if (titleEl && status.title) {
+                    titleEl.textContent = '🎬 ' + status.title;
                 }
                 
                 // تحديث معلومات الفيديو
                 if (status.format || status.size || status.duration || status.dimensions) {
-                    document.getElementById('loading-format').textContent = status.format || '—';
-                    document.getElementById('loading-size').textContent = status.size || '—';
-                    document.getElementById('loading-duration').textContent = status.duration ? formatDuration(status.duration) : '—';
-                    document.getElementById('loading-dimensions').textContent = status.dimensions || '—';
+                    const formatEl = document.getElementById('loading-format');
+                    const sizeEl = document.getElementById('loading-size');
+                    const durationEl = document.getElementById('loading-duration');
+                    const dimensionsEl = document.getElementById('loading-dimensions');
+                    
+                    if (formatEl) formatEl.textContent = status.format || '—';
+                    if (sizeEl) sizeEl.textContent = status.size || '—';
+                    if (durationEl) durationEl.textContent = status.duration ? formatDuration(status.duration) : '—';
+                    if (dimensionsEl) dimensionsEl.textContent = status.dimensions || '—';
+                    
                     document.getElementById('video-info-loading').classList.remove('hidden');
                 }
-                
-                // تحديث المعلومات الإضافية
-                if (status.uploader || status.view_count) {
-                    document.getElementById('loading-extra-info').classList.remove('hidden');
-                    if (status.uploader) {
-                        document.getElementById('loading-uploader').textContent = status.uploader;
-                    }
-                    if (status.view_count) {
-                        document.getElementById('loading-views').textContent = formatNumber(status.view_count);
-                    }
-                }
-                
-                // عرض رسائل التحذير
-                if (status.ytdlp_error) {
-                    let warningMsg = '';
-                    if (status.ytdlp_error === 'auth_required') {
-                        warningMsg = '⚠️ يوتيوب يطلب تسجيل الدخول. سيتم استخدام معلومات تقديرية.';
-                    } else if (status.ytdlp_error === 'video_unavailable') {
-                        warningMsg = '⚠️ الفيديو غير متاح. سيتم استخدام معلومات تقديرية.';
-                    } else {
-                        warningMsg = '⚠️ تعذر الحصول على معلومات دقيقة. سيتم استخدام معلومات تقديرية.';
-                    }
-                    showProgressWarning(warningMsg);
-                }
-                
-                lastProgress = status.progress;
+            }
+            
+            // عرض التحذيرات
+            if (status.warning) {
+                showProgressWarning(status.warning);
             }
             
             // التحقق من الاكتمال
@@ -600,7 +521,7 @@ async function pollProcessingStatus(sessionId) {
                     like_count: status.like_count,
                     description: status.description,
                     thumbnail: status.thumbnail,
-                    ytdlp_error: status.ytdlp_error,
+                    warning: status.warning,
                     processed: true,
                     session_id: sessionId
                 });
@@ -641,8 +562,7 @@ async function pollProcessingStatus(sessionId) {
 // توليد فيديو من البرومبت
 // ============================================
 async function generateVideoFromPrompt(prompt) {
-    showProgress('جاري توليد الفيديو...', 5, 'تحليل الطلب', 'جاري تحليل الطلب');
-    updateLoadingVideoInfo('جاري التوليد...', '—', '—', '—');
+    showProgress('جاري توليد الفيديو...', 5);
     hideProgressWarning();
     hideProgressError();
     
@@ -688,7 +608,6 @@ async function generateVideoFromPrompt(prompt) {
 async function pollGenerationStatus(sessionId) {
     let attempts = 0;
     const maxAttempts = 90;
-    let lastProgress = -1;
     
     console.log('🔄 بدء مراقبة التوليد للجلسة:', sessionId);
     
@@ -704,38 +623,38 @@ async function pollGenerationStatus(sessionId) {
             }
             
             const status = await response.json();
-            console.log('📊 حالة التوليد:', {
-                progress: status.progress,
-                step: status.step,
-                detail: status.detail,
-                completed: status.completed
-            });
+            console.log('📊 حالة التوليد:', status);
             
             if (status.progress !== undefined) {
-                const progressPercent = status.progress || 0;
-                document.getElementById('progress-percent').textContent = progressPercent + '%';
-                document.getElementById('progress-bar').style.width = progressPercent + '%';
+                const percent = status.progress || 0;
+                const percentEl = document.getElementById('progress-percent');
+                const barEl = document.getElementById('progress-bar');
+                if (percentEl) percentEl.textContent = percent + '%';
+                if (barEl) barEl.style.width = percent + '%';
                 
-                if (status.step) {
-                    document.getElementById('progress-status').textContent = status.step;
-                }
-                if (status.detail) {
-                    document.getElementById('progress-detail').textContent = status.detail;
-                }
+                const statusEl = document.getElementById('progress-status');
+                const detailEl = document.getElementById('progress-detail');
+                if (statusEl && status.step) statusEl.textContent = status.step;
+                if (detailEl && status.detail) detailEl.textContent = status.detail;
                 
-                if (status.title && status.title !== document.getElementById('progress-title').textContent.replace('🎬 ', '')) {
-                    document.getElementById('progress-title').textContent = '🎬 ' + status.title;
+                const titleEl = document.getElementById('progress-title');
+                if (titleEl && status.title) {
+                    titleEl.textContent = '🎬 ' + status.title;
                 }
                 
                 if (status.format || status.size || status.duration || status.dimensions) {
-                    document.getElementById('loading-format').textContent = status.format || '—';
-                    document.getElementById('loading-size').textContent = status.size || '—';
-                    document.getElementById('loading-duration').textContent = status.duration ? formatDuration(status.duration) : '—';
-                    document.getElementById('loading-dimensions').textContent = status.dimensions || '—';
+                    const formatEl = document.getElementById('loading-format');
+                    const sizeEl = document.getElementById('loading-size');
+                    const durationEl = document.getElementById('loading-duration');
+                    const dimensionsEl = document.getElementById('loading-dimensions');
+                    
+                    if (formatEl) formatEl.textContent = status.format || '—';
+                    if (sizeEl) sizeEl.textContent = status.size || '—';
+                    if (durationEl) durationEl.textContent = status.duration ? formatDuration(status.duration) : '—';
+                    if (dimensionsEl) dimensionsEl.textContent = status.dimensions || '—';
+                    
                     document.getElementById('video-info-loading').classList.remove('hidden');
                 }
-                
-                lastProgress = status.progress;
             }
             
             if (status.completed) {
@@ -795,15 +714,15 @@ async function pollGenerationStatus(sessionId) {
 // ============================================
 // عرض التقدم
 // ============================================
-function showProgress(title, percent = 0, step = '', detail = '') {
+function showProgress(title, percent = 0) {
     const area = document.getElementById('progress-area');
     area.classList.remove('hidden');
     
     document.getElementById('progress-title').textContent = title;
     document.getElementById('progress-percent').textContent = percent + '%';
     document.getElementById('progress-bar').style.width = percent + '%';
-    document.getElementById('progress-status').textContent = step || 'جاري التهيئة...';
-    document.getElementById('progress-detail').textContent = detail || 'في انتظار بدء المعالجة...';
+    document.getElementById('progress-status').textContent = 'جاري التهيئة...';
+    document.getElementById('progress-detail').textContent = 'في انتظار بدء المعالجة...';
     document.getElementById('video-info-loading').classList.remove('hidden');
     
     hideProgressWarning();
@@ -909,32 +828,12 @@ function showPreviewWithInfo(videoUrl, videoData) {
     document.getElementById('video-dimensions').textContent = videoData.dimensions || '—';
     
     // عرض رسالة تحذيرية
-    if (videoData.ytdlp_error) {
-        let warningMsg = '';
-        if (videoData.ytdlp_error === 'auth_required') {
-            warningMsg = '⚠️ يوتيوب يطلب تسجيل الدخول. تم استخدام معلومات تقديرية للفيديو.';
-        } else if (videoData.ytdlp_error === 'video_unavailable') {
-            warningMsg = '⚠️ الفيديو غير متاح. تم استخدام معلومات تقديرية.';
-        } else {
-            warningMsg = '⚠️ تعذر الحصول على معلومات دقيقة للفيديو. تم استخدام معلومات تقديرية.';
-        }
-        showWarning(warningMsg);
+    if (videoData.warning) {
+        const warning = document.getElementById('video-warning');
+        warning.classList.remove('hidden');
+        document.getElementById('video-warning-text').textContent = '⚠️ ' + videoData.warning;
     } else {
         hideWarning();
-    }
-    
-    // تحديث المعلومات الإضافية
-    if (videoData.uploader || videoData.view_count || videoData.like_count) {
-        document.getElementById('video-extra-info').classList.remove('hidden');
-        document.getElementById('video-uploader').textContent = videoData.uploader || '—';
-        document.getElementById('video-views').textContent = videoData.view_count ? formatNumber(videoData.view_count) : '—';
-        document.getElementById('video-likes').textContent = videoData.like_count ? formatNumber(videoData.like_count) : '—';
-    }
-    
-    // عرض الوصف
-    if (videoData.description) {
-        document.getElementById('video-description').classList.remove('hidden');
-        document.getElementById('video-description-text').textContent = videoData.description;
     }
     
     state.generatedVideo = {
@@ -983,12 +882,6 @@ function showPreviewWithInfo(videoUrl, videoData) {
     };
     
     previewArea.scrollIntoView({ behavior: 'smooth', block: 'center' });
-}
-
-function showWarning(message) {
-    const warning = document.getElementById('video-warning');
-    warning.classList.remove('hidden');
-    document.getElementById('video-warning-text').textContent = message;
 }
 
 function hideWarning() {
