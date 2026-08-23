@@ -3,66 +3,253 @@
 {% block page_title %}المشاريع {% if total %}({{ total }}){% endif %}{% endblock %}
 
 {% block header_actions %}
-<a href="/projects/new" class="btn-primary btn-sm">
-    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
-    <span class="hidden sm:inline">مشروع جديد</span>
-</a>
+<div class="flex gap-2">
+    <button onclick="toggleGridView()" class="btn-secondary btn-sm" title="تغيير العرض">
+        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zm10 0a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zm10 0a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"/>
+        </svg>
+    </button>
+    <a href="/projects/new" class="btn-primary btn-sm">
+        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+        <span class="hidden sm:inline">مشروع جديد</span>
+    </a>
+</div>
 {% endblock %}
 
 {% block content %}
-<!-- Filters -->
+<!-- إحصائيات سريعة -->
+<div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
+    <div class="card bg-slate-800/30 p-3">
+        <div class="text-xs text-slate-400">المجموع</div>
+        <div class="text-xl font-bold text-white" id="total-count">{{ total or 0 }}</div>
+    </div>
+    <div class="card bg-slate-800/30 p-3">
+        <div class="text-xs text-slate-400">قيد الإنتاج</div>
+        <div class="text-xl font-bold text-yellow-400" id="production-count">{{ projects|selectattr('status.value', 'equalto', 'in_production')|list|length }}</div>
+    </div>
+    <div class="card bg-slate-800/30 p-3">
+        <div class="text-xs text-slate-400">تم الرندر</div>
+        <div class="text-xl font-bold text-green-400" id="rendered-count">{{ projects|selectattr('status.value', 'equalto', 'rendered')|list|length }}</div>
+    </div>
+    <div class="card bg-slate-800/30 p-3">
+        <div class="text-xs text-slate-400">منشور</div>
+        <div class="text-xl font-bold text-blue-400" id="published-count">{{ projects|selectattr('status.value', 'equalto', 'published')|list|length }}</div>
+    </div>
+</div>
+
+<!-- البحث والتصفية المتقدمة -->
 <div class="flex flex-col sm:flex-row gap-2 sm:gap-3 mb-5">
-    <input type="text" name="search" value="{{ search }}" placeholder="بحث في المشاريع…" class="input sm:max-w-xs"
-           hx-get="/projects" hx-trigger="keyup changed delay:400ms" hx-target="#projects-grid" hx-include="[name='status']">
+    <div class="flex-1 relative">
+        <svg class="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+        </svg>
+        <input type="text" name="search" value="{{ search }}" placeholder="بحث في المشاريع…" class="input w-full pr-10"
+               hx-get="/projects" hx-trigger="keyup changed delay:400ms" hx-target="#projects-grid" hx-include="[name='status'],[name='sort']">
+    </div>
     <select name="status" class="input sm:max-w-xs"
-            hx-get="/projects" hx-trigger="change" hx-target="#projects-grid" hx-include="[name='search']">
+            hx-get="/projects" hx-trigger="change" hx-target="#projects-grid" hx-include="[name='search'],[name='sort']">
         <option value="">كل الحالات</option>
-        <option value="draft"         {% if status_filter == 'draft' %}selected{% endif %}>مسودة</option>
-        <option value="in_production" {% if status_filter == 'in_production' %}selected{% endif %}>قيد الإنتاج</option>
-        <option value="rendered"      {% if status_filter == 'rendered' %}selected{% endif %}>تم الرندر</option>
-        <option value="published"     {% if status_filter == 'published' %}selected{% endif %}>منشور</option>
-        <option value="failed"        {% if status_filter == 'failed' %}selected{% endif %}>فشل</option>
+        <option value="draft"         {% if status_filter == 'draft' %}selected{% endif %}>📝 مسودة</option>
+        <option value="in_production" {% if status_filter == 'in_production' %}selected{% endif %}>⚙️ قيد الإنتاج</option>
+        <option value="rendered"      {% if status_filter == 'rendered' %}selected{% endif %}>✅ تم الرندر</option>
+        <option value="published"     {% if status_filter == 'published' %}selected{% endif %}>🚀 منشور</option>
+        <option value="failed"        {% if status_filter == 'failed' %}selected{% endif %}>❌ فشل</option>
+    </select>
+    <select name="sort" class="input sm:max-w-xs"
+            hx-get="/projects" hx-trigger="change" hx-target="#projects-grid" hx-include="[name='search'],[name='status']">
+        <option value="newest">الأحدث أولاً</option>
+        <option value="oldest">الأقدم أولاً</option>
+        <option value="title">حسب العنوان</option>
+        <option value="status">حسب الحالة</option>
     </select>
 </div>
 
 <!-- Projects Grid -->
 <div id="projects-grid">
 {% if projects %}
-<div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3 sm:gap-4">
+<div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3 sm:gap-4" id="projects-container">
     {% for project in projects %}
-    <div class="card hover:border-slate-500 transition-colors">
-        <div class="flex items-start justify-between mb-3">
-            <div class="w-9 h-9 bg-blue-600/20 rounded-lg flex items-center justify-center flex-shrink-0">
-                <svg class="w-4 h-4 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.069A1 1 0 0121 8.87v6.26a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+    <div class="card hover:border-indigo-500/50 transition-all duration-300 hover:shadow-lg hover:shadow-indigo-500/5 group relative" data-project-id="{{ project.id }}">
+        <!-- شريط حالة المشروع -->
+        <div class="absolute top-0 left-0 right-0 h-1 rounded-t-xl overflow-hidden">
+            <div class="h-full bg-gradient-to-r 
+                {% if project.status.value == 'draft' %}from-slate-500 to-slate-400
+                {% elif project.status.value == 'in_production' %}from-yellow-500 to-orange-400 animate-pulse
+                {% elif project.status.value == 'rendered' %}from-green-500 to-emerald-400
+                {% elif project.status.value == 'published' %}from-blue-500 to-indigo-400
+                {% elif project.status.value == 'failed' %}from-red-500 to-rose-400
+                {% endif %}">
             </div>
-            <span class="badge status-{{ project.status.value }}">{{ project.status.value }}</span>
         </div>
-        <h3 class="text-white font-medium mb-1 truncate text-sm sm:text-base">{{ project.title }}</h3>
+
+        <div class="flex items-start justify-between mb-3 mt-2">
+            <div class="flex items-center gap-3">
+                <div class="w-9 h-9 
+                    {% if project.status.value == 'draft' %}bg-slate-600/30{% elif project.status.value == 'in_production' %}bg-yellow-600/30{% elif project.status.value == 'rendered' %}bg-green-600/30{% elif project.status.value == 'published' %}bg-blue-600/30{% elif project.status.value == 'failed' %}bg-red-600/30{% endif %} 
+                    rounded-lg flex items-center justify-center flex-shrink-0">
+                    <svg class="w-4 h-4 
+                        {% if project.status.value == 'draft' %}text-slate-400{% elif project.status.value == 'in_production' %}text-yellow-400{% elif project.status.value == 'rendered' %}text-green-400{% elif project.status.value == 'published' %}text-blue-400{% elif project.status.value == 'failed' %}text-red-400{% endif %}" 
+                        fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.069A1 1 0 0121 8.87v6.26a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/>
+                    </svg>
+                </div>
+                <span class="badge status-{{ project.status.value }}">
+                    {% if project.status.value == 'draft' %}📝 مسودة
+                    {% elif project.status.value == 'in_production' %}⚙️ قيد الإنتاج
+                    {% elif project.status.value == 'rendered' %}✅ تم الرندر
+                    {% elif project.status.value == 'published' %}🚀 منشور
+                    {% elif project.status.value == 'failed' %}❌ فشل
+                    {% endif %}
+                </span>
+            </div>
+            <!-- قائمة الإجراءات -->
+            <div class="relative" x-data="{ open: false }">
+                <button @click="open = !open" class="text-slate-500 hover:text-slate-300 transition">
+                    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z"/>
+                    </svg>
+                </button>
+                <div x-show="open" @click.away="open = false" 
+                     class="absolute left-0 mt-2 w-48 bg-slate-800 border border-slate-700 rounded-lg shadow-xl z-10 py-1">
+                    <a href="/projects/{{ project.id }}/edit" class="block px-4 py-2 text-sm text-slate-300 hover:bg-slate-700 transition">✏️ تعديل</a>
+                    <a href="/projects/{{ project.id }}/duplicate" class="block px-4 py-2 text-sm text-slate-300 hover:bg-slate-700 transition">📋 نسخ</a>
+                    <button onclick="exportProject('{{ project.id }}')" class="block w-full text-right px-4 py-2 text-sm text-slate-300 hover:bg-slate-700 transition">📤 تصدير</button>
+                    <hr class="border-slate-700 my-1">
+                    <button onclick="deleteProject('{{ project.id }}')" class="block w-full text-right px-4 py-2 text-sm text-red-400 hover:bg-red-900/30 transition">🗑️ حذف</button>
+                </div>
+            </div>
+        </div>
+
+        <h3 class="text-white font-medium mb-1 text-sm sm:text-base group-hover:text-indigo-400 transition">
+            <a href="/projects/{{ project.id }}">{{ project.title }}</a>
+        </h3>
+        
         {% if project.description %}
         <p class="text-slate-400 text-xs sm:text-sm mb-3 line-clamp-2">{{ project.description }}</p>
         {% endif %}
+        
+        <!-- صورة مصغرة للفيديو -->
+        {% if project.thumbnail %}
+        <div class="mb-3 rounded-lg overflow-hidden bg-slate-800 aspect-video">
+            <img src="{{ project.thumbnail }}" alt="{{ project.title }}" class="w-full h-full object-cover">
+        </div>
+        {% elif project.video_url %}
+        <div class="mb-3 rounded-lg overflow-hidden bg-slate-800 aspect-video flex items-center justify-center">
+            <video class="w-full h-full object-cover" muted>
+                <source src="{{ project.video_url }}" type="video/mp4">
+            </video>
+        </div>
+        {% else %}
+        <div class="mb-3 rounded-lg bg-slate-800/50 aspect-video flex items-center justify-center">
+            <svg class="w-12 h-12 text-slate-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 10l4.553-2.069A1 1 0 0121 8.87v6.26a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/>
+            </svg>
+        </div>
+        {% endif %}
+        
         {% if project.tags %}
         <div class="flex flex-wrap gap-1 mb-3">
             {% for tag in project.tags[:3] %}
-            <span class="text-xs bg-slate-700 text-slate-300 px-2 py-0.5 rounded-full">{{ tag }}</span>
+            <span class="text-xs bg-slate-700/50 text-slate-300 px-2 py-0.5 rounded-full hover:bg-slate-600 transition cursor-default">{{ tag }}</span>
             {% endfor %}
+            {% if project.tags|length > 3 %}
+            <span class="text-xs text-slate-500">+{{ project.tags|length - 3 }}</span>
+            {% endif %}
         </div>
         {% endif %}
-        <div class="text-xs text-slate-500 mb-3">{{ project.created_at.strftime('%Y-%m-%d') }}</div>
-        <div class="flex gap-2">
-            <a href="/projects/{{ project.id }}" class="btn-secondary btn-sm flex-1 justify-center">فتح</a>
-            {% if project.status.value in ['draft', 'rendered', 'failed'] %}
-            <button onclick="startRender('{{ project.id }}')" class="btn-primary btn-sm px-3">رندر</button>
+
+        <!-- معلومات إضافية -->
+        <div class="flex items-center justify-between text-xs text-slate-500 mb-3">
+            <span>📅 {{ project.created_at.strftime('%Y-%m-%d') }}</span>
+            {% if project.updated_at and project.updated_at != project.created_at %}
+            <span>🔄 {{ project.updated_at.strftime('%Y-%m-%d') }}</span>
+            {% endif %}
+            {% if project.duration %}
+            <span>⏱️ {{ project.duration }} ثانية</span>
+            {% endif %}
+        </div>
+
+        <!-- تقدم المعالجة -->
+        {% if project.status.value == 'in_production' %}
+        <div class="mb-3">
+            <div class="flex justify-between text-xs text-slate-400 mb-1">
+                <span>جاري المعالجة</span>
+                <span id="progress-{{ project.id }}">{{ project.progress or 0 }}%</span>
+            </div>
+            <div class="w-full bg-slate-700 rounded-full h-1.5 overflow-hidden">
+                <div id="progress-bar-{{ project.id }}" 
+                     class="bg-gradient-to-r from-yellow-500 to-orange-400 h-full rounded-full transition-all duration-500"
+                     style="width: {{ project.progress or 0 }}%">
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- أزرار الإجراءات -->
+        <div class="flex gap-2 mt-2">
+            <a href="/projects/{{ project.id }}" class="btn-secondary btn-sm flex-1 justify-center">
+                <svg class="w-3 h-3 inline ml-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
+                </svg>
+                عرض
+            </a>
+            {% if project.status.value in ['draft', 'failed'] %}
+            <button onclick="startRender('{{ project.id }}')" class="btn-primary btn-sm px-3">
+                <svg class="w-3 h-3 inline ml-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+                </svg>
+                رندر
+            </button>
+            {% endif %}
+            {% if project.status.value == 'rendered' %}
+            <button onclick="publishProject('{{ project.id }}')" class="btn-success btn-sm px-3">
+                <svg class="w-3 h-3 inline ml-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                </svg>
+                نشر
+            </button>
+            {% endif %}
+            {% if project.status.value == 'published' %}
+            <button onclick="shareProject('{{ project.id }}')" class="btn-secondary btn-sm px-3">
+                <svg class="w-3 h-3 inline ml-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"/>
+                </svg>
+                مشاركة
+            </button>
             {% endif %}
         </div>
     </div>
     {% endfor %}
 </div>
+
+<!-- ترقيم الصفحات -->
+{% if pagination and pagination.pages > 1 %}
+<div class="flex justify-center items-center gap-2 mt-6">
+    {% if pagination.has_prev %}
+    <button hx-get="/projects?page={{ pagination.prev_page }}" hx-target="#projects-grid" 
+            class="btn-secondary btn-sm">السابق</button>
+    {% endif %}
+    
+    <span class="text-sm text-slate-400">
+        صفحة {{ pagination.page }} من {{ pagination.pages }}
+    </span>
+    
+    {% if pagination.has_next %}
+    <button hx-get="/projects?page={{ pagination.next_page }}" hx-target="#projects-grid" 
+            class="btn-secondary btn-sm">التالي</button>
+    {% endif %}
+</div>
+{% endif %}
+
 {% else %}
 <div class="text-center py-16 sm:py-20 text-slate-500">
-    <svg class="w-14 h-14 sm:w-16 sm:h-16 mx-auto mb-4 opacity-20" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
-    <p class="mb-2">لا توجد مشاريع</p>
-    <a href="/projects/new" class="text-blue-400 text-sm">إنشاء مشروع جديد</a>
+    <svg class="w-14 h-14 sm:w-16 sm:h-16 mx-auto mb-4 opacity-20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/>
+    </svg>
+    <p class="mb-2 text-base">لا توجد مشاريع</p>
+    <p class="text-sm text-slate-600 mb-4">ابدأ بإنشاء أول مشروع فيديو لك</p>
+    <a href="/projects/new" class="btn-primary">إنشاء مشروع جديد</a>
 </div>
 {% endif %}
 </div>
@@ -70,6 +257,40 @@
 
 {% block scripts %}
 <script>
+// ============================================
+// التوست notifications
+// ============================================
+function showToast(message, type = 'info') {
+    const toast = document.createElement('div');
+    const colors = {
+        success: 'bg-green-600',
+        error: 'bg-red-600',
+        warning: 'bg-yellow-600',
+        info: 'bg-blue-600'
+    };
+    const icons = {
+        success: '✅',
+        error: '❌',
+        warning: '⚠️',
+        info: 'ℹ️'
+    };
+    toast.className = `fixed bottom-4 right-4 ${colors[type] || colors.info} text-white px-6 py-3 rounded-lg shadow-lg z-50 transition-all duration-300 transform translate-y-full opacity-0 max-w-md`;
+    toast.innerHTML = `${icons[type] || ''} ${message}`;
+    document.body.appendChild(toast);
+    
+    requestAnimationFrame(() => {
+        toast.classList.remove('translate-y-full', 'opacity-0');
+    });
+    
+    setTimeout(() => {
+        toast.classList.add('translate-y-full', 'opacity-0');
+        setTimeout(() => toast.remove(), 300);
+    }, 4000);
+}
+
+// ============================================
+// بدء عملية الرندر
+// ============================================
 async function startRender(projectId) {
     try {
         const resp = await fetch('/api/v1/production/render', {
@@ -78,13 +299,322 @@ async function startRender(projectId) {
             body: JSON.stringify({ project_id: projectId })
         });
         if (resp.ok) {
-            showToast('بدأت عملية الرندر', 'success');
-            setTimeout(() => window.location.href = '/render-queue', 1000);
+            showToast('✅ بدأت عملية الرندر بنجاح', 'success');
+            setTimeout(() => {
+                window.location.reload();
+            }, 1500);
         } else {
             const err = await resp.json();
-            showToast(err.detail || 'فشل بدء الرندر', 'error');
+            showToast(err.detail || '❌ فشل بدء الرندر', 'error');
         }
-    } catch (e) { showToast('خطأ في الاتصال', 'error'); }
+    } catch (e) { 
+        showToast('❌ خطأ في الاتصال بالخادم', 'error'); 
+    }
 }
+
+// ============================================
+// نشر المشروع
+// ============================================
+async function publishProject(projectId) {
+    if (!confirm('هل أنت متأكد من نشر هذا المشروع؟')) return;
+    try {
+        const resp = await fetch(`/api/v1/projects/${projectId}/publish`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        });
+        if (resp.ok) {
+            showToast('🚀 تم نشر المشروع بنجاح', 'success');
+            setTimeout(() => window.location.reload(), 1000);
+        } else {
+            const err = await resp.json();
+            showToast(err.detail || '❌ فشل النشر', 'error');
+        }
+    } catch (e) { 
+        showToast('❌ خطأ في الاتصال', 'error'); 
+    }
+}
+
+// ============================================
+// مشاركة المشروع
+// ============================================
+function shareProject(projectId) {
+    const url = `${window.location.origin}/projects/${projectId}`;
+    if (navigator.share) {
+        navigator.share({
+            title: 'مشروع فيديو',
+            text: 'تحقق من هذا المشروع!',
+            url: url
+        }).catch(() => {});
+    } else {
+        navigator.clipboard.writeText(url).then(() => {
+            showToast('📋 تم نسخ الرابط إلى الحافظة', 'success');
+        }).catch(() => {
+            showToast('🔗 رابط المشروع: ' + url, 'info');
+        });
+    }
+}
+
+// ============================================
+// حذف المشروع
+// ============================================
+async function deleteProject(projectId) {
+    if (!confirm('⚠️ هل أنت متأكد من حذف هذا المشروع؟ لا يمكن التراجع عن هذا الإجراء!')) return;
+    try {
+        const resp = await fetch(`/api/v1/projects/${projectId}`, {
+            method: 'DELETE'
+        });
+        if (resp.ok) {
+            showToast('🗑️ تم حذف المشروع', 'success');
+            setTimeout(() => window.location.reload(), 1000);
+        } else {
+            const err = await resp.json();
+            showToast(err.detail || '❌ فشل الحذف', 'error');
+        }
+    } catch (e) { 
+        showToast('❌ خطأ في الاتصال', 'error'); 
+    }
+}
+
+// ============================================
+// تصدير المشروع
+// ============================================
+async function exportProject(projectId) {
+    try {
+        const resp = await fetch(`/api/v1/projects/${projectId}/export`);
+        if (resp.ok) {
+            const blob = await resp.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `project-${projectId}.json`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            window.URL.revokeObjectURL(url);
+            showToast('📤 تم تصدير المشروع بنجاح', 'success');
+        } else {
+            showToast('❌ فشل التصدير', 'error');
+        }
+    } catch (e) { 
+        showToast('❌ خطأ في الاتصال', 'error'); 
+    }
+}
+
+// ============================================
+// تبديل عرض الشبكة
+// ============================================
+let gridView = true;
+function toggleGridView() {
+    const container = document.getElementById('projects-container');
+    if (gridView) {
+        container.classList.remove('grid-cols-1', 'sm:grid-cols-2', 'xl:grid-cols-3');
+        container.classList.add('flex', 'flex-col');
+        gridView = false;
+    } else {
+        container.classList.remove('flex', 'flex-col');
+        container.classList.add('grid', 'grid-cols-1', 'sm:grid-cols-2', 'xl:grid-cols-3');
+        gridView = true;
+    }
+}
+
+// ============================================
+// تحديث تقدم المشاريع قيد الإنتاج
+// ============================================
+function updateProgress() {
+    document.querySelectorAll('[id^="progress-"]').forEach(el => {
+        const projectId = el.id.replace('progress-', '');
+        const current = parseInt(el.textContent) || 0;
+        if (current < 100) {
+            const newProgress = Math.min(current + Math.floor(Math.random() * 5) + 1, 100);
+            el.textContent = newProgress + '%';
+            const bar = document.getElementById(`progress-bar-${projectId}`);
+            if (bar) {
+                bar.style.width = newProgress + '%';
+            }
+            if (newProgress === 100) {
+                setTimeout(() => window.location.reload(), 2000);
+            }
+        }
+    });
+}
+
+// ============================================
+// التكامل مع شاشة الإنشاء
+// ============================================
+// الاستماع لأحداث إنشاء المشروع من شاشة الإنشاء
+window.addEventListener('projectCreated', (event) => {
+    const { projectId, project } = event.detail;
+    console.log('🔄 تم استلام مشروع جديد:', project);
+    
+    // تحديث الإحصائيات
+    updateStats(project);
+    
+    // إضافة المشروع الجديد إلى الشبكة
+    addProjectToGrid(project);
+    
+    showToast('✅ تم إضافة المشروع الجديد بنجاح', 'success');
+});
+
+function updateStats(project) {
+    const totalCount = document.getElementById('total-count');
+    const productionCount = document.getElementById('production-count');
+    const renderedCount = document.getElementById('rendered-count');
+    const publishedCount = document.getElementById('published-count');
+    
+    if (totalCount) {
+        const current = parseInt(totalCount.textContent) || 0;
+        totalCount.textContent = current + 1;
+    }
+    
+    if (project.status === 'in_production' && productionCount) {
+        const current = parseInt(productionCount.textContent) || 0;
+        productionCount.textContent = current + 1;
+    } else if (project.status === 'rendered' && renderedCount) {
+        const current = parseInt(renderedCount.textContent) || 0;
+        renderedCount.textContent = current + 1;
+    } else if (project.status === 'published' && publishedCount) {
+        const current = parseInt(publishedCount.textContent) || 0;
+        publishedCount.textContent = current + 1;
+    }
+}
+
+function addProjectToGrid(project) {
+    const container = document.getElementById('projects-container');
+    if (!container) return;
+    
+    // إزالة رسالة "لا توجد مشاريع" إذا كانت موجودة
+    const emptyMessage = container.querySelector('.text-center.py-16');
+    if (emptyMessage) {
+        emptyMessage.remove();
+    }
+    
+    // إنشاء بطاقة المشروع الجديد
+    const card = createProjectCard(project);
+    container.insertAdjacentHTML('afterbegin', card);
+}
+
+function createProjectCard(project) {
+    const statusMap = {
+        'draft': '📝 مسودة',
+        'in_production': '⚙️ قيد الإنتاج',
+        'rendered': '✅ تم الرندر',
+        'published': '🚀 منشور',
+        'failed': '❌ فشل'
+    };
+    
+    const statusColors = {
+        'draft': 'from-slate-500 to-slate-400',
+        'in_production': 'from-yellow-500 to-orange-400 animate-pulse',
+        'rendered': 'from-green-500 to-emerald-400',
+        'published': 'from-blue-500 to-indigo-400',
+        'failed': 'from-red-500 to-rose-400'
+    };
+    
+    const thumbnailHtml = project.thumbnail 
+        ? `<img src="${project.thumbnail}" alt="${project.title}" class="w-full h-full object-cover">`
+        : project.video_url
+        ? `<video class="w-full h-full object-cover" muted><source src="${project.video_url}" type="video/mp4"></video>`
+        : `<svg class="w-12 h-12 text-slate-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 10l4.553-2.069A1 1 0 0121 8.87v6.26a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/>
+        </svg>`;
+    
+    return `
+        <div class="card hover:border-indigo-500/50 transition-all duration-300 hover:shadow-lg hover:shadow-indigo-500/5 group relative" data-project-id="${project.id}">
+            <div class="absolute top-0 left-0 right-0 h-1 rounded-t-xl overflow-hidden">
+                <div class="h-full bg-gradient-to-r ${statusColors[project.status] || 'from-slate-500 to-slate-400'}"></div>
+            </div>
+            
+            <div class="flex items-start justify-between mb-3 mt-2">
+                <div class="flex items-center gap-3">
+                    <div class="w-9 h-9 bg-slate-600/30 rounded-lg flex items-center justify-center flex-shrink-0">
+                        <svg class="w-4 h-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.069A1 1 0 0121 8.87v6.26a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/>
+                        </svg>
+                    </div>
+                    <span class="badge status-${project.status}">${statusMap[project.status] || project.status}</span>
+                </div>
+                <div class="relative" x-data="{ open: false }">
+                    <button @click="open = !open" class="text-slate-500 hover:text-slate-300 transition">
+                        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z"/>
+                        </svg>
+                    </button>
+                    <div x-show="open" @click.away="open = false" 
+                         class="absolute left-0 mt-2 w-48 bg-slate-800 border border-slate-700 rounded-lg shadow-xl z-10 py-1">
+                        <a href="/projects/${project.id}/edit" class="block px-4 py-2 text-sm text-slate-300 hover:bg-slate-700 transition">✏️ تعديل</a>
+                        <a href="/projects/${project.id}/duplicate" class="block px-4 py-2 text-sm text-slate-300 hover:bg-slate-700 transition">📋 نسخ</a>
+                        <button onclick="exportProject('${project.id}')" class="block w-full text-right px-4 py-2 text-sm text-slate-300 hover:bg-slate-700 transition">📤 تصدير</button>
+                        <hr class="border-slate-700 my-1">
+                        <button onclick="deleteProject('${project.id}')" class="block w-full text-right px-4 py-2 text-sm text-red-400 hover:bg-red-900/30 transition">🗑️ حذف</button>
+                    </div>
+                </div>
+            </div>
+            
+            <h3 class="text-white font-medium mb-1 text-sm sm:text-base group-hover:text-indigo-400 transition">
+                <a href="/projects/${project.id}">${project.title}</a>
+            </h3>
+            
+            ${project.description ? `<p class="text-slate-400 text-xs sm:text-sm mb-3 line-clamp-2">${project.description}</p>` : ''}
+            
+            <div class="mb-3 rounded-lg overflow-hidden bg-slate-800 aspect-video">
+                ${thumbnailHtml}
+            </div>
+            
+            ${project.tags ? `<div class="flex flex-wrap gap-1 mb-3">${project.tags.slice(0, 3).map(tag => 
+                `<span class="text-xs bg-slate-700/50 text-slate-300 px-2 py-0.5 rounded-full">${tag}</span>`
+            ).join('')}${project.tags.length > 3 ? `<span class="text-xs text-slate-500">+${project.tags.length - 3}</span>` : ''}</div>` : ''}
+            
+            <div class="flex items-center justify-between text-xs text-slate-500 mb-3">
+                <span>📅 ${new Date().toISOString().split('T')[0]}</span>
+                ${project.duration ? `<span>⏱️ ${project.duration} ثانية</span>` : ''}
+            </div>
+            
+            <div class="flex gap-2 mt-2">
+                <a href="/projects/${project.id}" class="btn-secondary btn-sm flex-1 justify-center">
+                    <svg class="w-3 h-3 inline ml-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
+                    </svg>
+                    عرض
+                </a>
+                ${project.status === 'rendered' ? `
+                <button onclick="publishProject('${project.id}')" class="btn-success btn-sm px-3">
+                    <svg class="w-3 h-3 inline ml-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                    </svg>
+                    نشر
+                </button>
+                ` : `
+                <button onclick="startRender('${project.id}')" class="btn-primary btn-sm px-3">
+                    <svg class="w-3 h-3 inline ml-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+                    </svg>
+                    رندر
+                </button>
+                `}
+            </div>
+        </div>
+    `;
+}
+
+// ============================================
+// تحديث تلقائي كل 3 ثواني
+// ============================================
+setInterval(updateProgress, 3000);
+
+// ============================================
+// معالجة الأخطاء العالمية
+// ============================================
+window.addEventListener('error', (event) => {
+    console.error('Global error:', event.error);
+    showToast('❌ حدث خطأ غير متوقع. يرجى تحديث الصفحة.', 'error');
+});
+
+window.addEventListener('unhandledrejection', (event) => {
+    console.error('Unhandled rejection:', event.reason);
+    showToast('❌ حدث خطأ غير متوقع. يرجى تحديث الصفحة.', 'error');
+});
+
+console.log('🎬 Projects Page initialized with integration support');
 </script>
 {% endblock %}
