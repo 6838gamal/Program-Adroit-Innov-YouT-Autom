@@ -98,6 +98,19 @@
                     </div>
                 </div>
                 
+                <!-- رسالة تحذيرية من yt-dlp -->
+                <div id="video-warning" class="mt-2 hidden">
+                    <div class="bg-yellow-900/30 border border-yellow-700/50 rounded-lg p-2">
+                        <div class="flex items-start gap-2">
+                            <span class="text-yellow-500 text-sm">⚠️</span>
+                            <div>
+                                <p id="video-warning-text" class="text-xs text-yellow-300"></p>
+                                <p class="text-[10px] text-yellow-500/70 mt-1">تم استخدام معلومات تقديرية للفيديو</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
                 <!-- وصف الفيديو -->
                 <div id="video-description" class="mt-2 hidden">
                     <div class="bg-slate-800/30 rounded-lg p-2">
@@ -180,6 +193,13 @@
                     </div>
                 </div>
                 
+                <!-- رسالة تحذيرية أثناء التحميل -->
+                <div id="progress-warning" class="mt-2 hidden">
+                    <div class="bg-yellow-900/20 border border-yellow-700/30 rounded-lg p-2">
+                        <p id="progress-warning-text" class="text-xs text-yellow-400"></p>
+                    </div>
+                </div>
+                
                 <div id="video-info-loading" class="mt-3 pt-3 border-t border-slate-700/50">
                     <div class="text-xs text-slate-400 mb-2">🎬 معلومات الفيديو:</div>
                     <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
@@ -200,7 +220,6 @@
                             <span id="loading-dimensions" class="text-slate-300 text-xs">—</span>
                         </div>
                     </div>
-                    <!-- معلومات إضافية أثناء التحميل -->
                     <div id="loading-extra-info" class="grid grid-cols-2 gap-2 mt-2 hidden">
                         <div class="bg-slate-800/30 rounded p-2 text-center">
                             <span class="text-slate-500 block text-[10px]">👤 الناشر</span>
@@ -417,8 +436,10 @@ function removeVideoLink(index) {
 // معالجة الفيديو مع عرض التقدم الفعلي
 // ============================================
 async function processVideoLink(url) {
-    showProgress('جاري تحليل رابط الفيديو...', 5, 'تحليل الرابط', 'جاري استخراج معلومات الفيديو باستخدام yt-dlp');
+    showProgress('جاري تحليل رابط الفيديو...', 5, 'تحليل الرابط', 'جاري استخراج معلومات الفيديو');
     updateLoadingVideoInfo('جاري التحليل...', '—', '—', '—');
+    hideProgressWarning();
+    hideWarning();
     
     try {
         const response = await fetch('/api/v1/projects/video/process', {
@@ -480,8 +501,22 @@ async function pollProcessingStatus(sessionId) {
                 detail: status.detail,
                 completed: status.completed,
                 title: status.title,
-                uploader: status.uploader
+                uploader: status.uploader,
+                ytdlp_error: status.ytdlp_error
             });
+            
+            // عرض رسالة تحذيرية إذا كان هناك خطأ في yt-dlp
+            if (status.ytdlp_error) {
+                let warningMsg = '';
+                if (status.ytdlp_error === 'auth_required') {
+                    warningMsg = '⚠️ يوتيوب يطلب تسجيل الدخول. تم استخدام معلومات تقديرية للفيديو.';
+                } else if (status.ytdlp_error === 'video_unavailable') {
+                    warningMsg = '⚠️ الفيديو غير متاح. تم استخدام معلومات تقديرية.';
+                } else {
+                    warningMsg = '⚠️ تعذر الحصول على معلومات دقيقة للفيديو. تم استخدام معلومات تقديرية.';
+                }
+                showProgressWarning(warningMsg);
+            }
             
             if (status.progress !== undefined && status.progress !== lastProgress) {
                 lastProgress = status.progress;
@@ -503,7 +538,7 @@ async function pollProcessingStatus(sessionId) {
                     document.getElementById('video-info-loading').classList.remove('hidden');
                 }
                 
-                // تحديث المعلومات الإضافية (الناشر، المشاهدات)
+                // تحديث المعلومات الإضافية
                 if (status.uploader || status.view_count) {
                     document.getElementById('loading-extra-info').classList.remove('hidden');
                     if (status.uploader) {
@@ -540,6 +575,7 @@ async function pollProcessingStatus(sessionId) {
                     like_count: status.like_count,
                     description: status.description,
                     thumbnail: status.thumbnail,
+                    ytdlp_error: status.ytdlp_error,
                     processed: true,
                     session_id: sessionId
                 });
@@ -580,6 +616,7 @@ async function pollProcessingStatus(sessionId) {
 async function generateVideoFromPrompt(prompt) {
     showProgress('جاري توليد الفيديو...', 5, 'تحليل الطلب', 'جاري تحليل الطلب');
     updateLoadingVideoInfo('جاري التوليد...', '—', '—', '—');
+    hideProgressWarning();
     
     try {
         const response = await fetch('/api/v1/projects/video/generate', {
@@ -755,6 +792,16 @@ function updateLoadingVideoInfo(format, size, duration, dimensions) {
     document.getElementById('loading-dimensions').textContent = dimensions || '—';
 }
 
+function showProgressWarning(message) {
+    const warning = document.getElementById('progress-warning');
+    warning.classList.remove('hidden');
+    document.getElementById('progress-warning-text').textContent = message;
+}
+
+function hideProgressWarning() {
+    document.getElementById('progress-warning').classList.add('hidden');
+}
+
 function updateElapsedTime() {
     if (!state.startTime) return;
     const elapsed = Math.floor((Date.now() - state.startTime) / 1000);
@@ -826,6 +873,21 @@ function showPreviewWithInfo(videoUrl, videoData) {
     document.getElementById('video-duration').textContent = videoData.duration ? formatDuration(videoData.duration) : '—';
     document.getElementById('video-dimensions').textContent = videoData.dimensions || '—';
     
+    // عرض رسالة تحذيرية إذا كان هناك خطأ
+    if (videoData.ytdlp_error) {
+        let warningMsg = '';
+        if (videoData.ytdlp_error === 'auth_required') {
+            warningMsg = '⚠️ يوتيوب يطلب تسجيل الدخول. تم استخدام معلومات تقديرية للفيديو.';
+        } else if (videoData.ytdlp_error === 'video_unavailable') {
+            warningMsg = '⚠️ الفيديو غير متاح. تم استخدام معلومات تقديرية.';
+        } else {
+            warningMsg = '⚠️ تعذر الحصول على معلومات دقيقة للفيديو. تم استخدام معلومات تقديرية.';
+        }
+        showWarning(warningMsg);
+    } else {
+        hideWarning();
+    }
+    
     // تحديث المعلومات الإضافية
     if (videoData.uploader || videoData.view_count || videoData.like_count) {
         document.getElementById('video-extra-info').classList.remove('hidden');
@@ -886,6 +948,16 @@ function showPreviewWithInfo(videoUrl, videoData) {
     };
     
     previewArea.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+function showWarning(message) {
+    const warning = document.getElementById('video-warning');
+    warning.classList.remove('hidden');
+    document.getElementById('video-warning-text').textContent = message;
+}
+
+function hideWarning() {
+    document.getElementById('video-warning').classList.add('hidden');
 }
 
 function hidePreview() {
