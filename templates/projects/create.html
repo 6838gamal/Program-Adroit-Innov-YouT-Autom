@@ -200,6 +200,13 @@
                     </div>
                 </div>
                 
+                <!-- رسالة خطأ أثناء التحميل -->
+                <div id="progress-error" class="mt-2 hidden">
+                    <div class="bg-red-900/20 border border-red-700/30 rounded-lg p-2">
+                        <p id="progress-error-text" class="text-xs text-red-400"></p>
+                    </div>
+                </div>
+                
                 <div id="video-info-loading" class="mt-3 pt-3 border-t border-slate-700/50">
                     <div class="text-xs text-slate-400 mb-2">🎬 معلومات الفيديو:</div>
                     <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
@@ -314,7 +321,8 @@ let state = {
     progressTimer: null,
     processing: false,
     cancelProcessing: false,
-    videoMetadata: null
+    videoMetadata: null,
+    errorCount: 0
 };
 
 // ============================================
@@ -439,7 +447,10 @@ async function processVideoLink(url) {
     showProgress('جاري تحليل رابط الفيديو...', 5, 'تحليل الرابط', 'جاري استخراج معلومات الفيديو');
     updateLoadingVideoInfo('جاري التحليل...', '—', '—', '—');
     hideProgressWarning();
+    hideProgressError();
     hideWarning();
+    
+    state.errorCount = 0;
     
     try {
         const response = await fetch('/api/v1/projects/video/process', {
@@ -474,7 +485,7 @@ async function processVideoLink(url) {
 }
 
 // ============================================
-// مراقبة التقدم مع تحديث مستمر - النسخة المحسنة
+// مراقبة التقدم مع تحديث مستمر
 // ============================================
 async function pollProcessingStatus(sessionId) {
     let attempts = 0;
@@ -500,19 +511,18 @@ async function pollProcessingStatus(sessionId) {
                 step: status.step,
                 detail: status.detail,
                 completed: status.completed,
-                title: status.title
+                title: status.title,
+                ytdlp_error: status.ytdlp_error
             });
             
             // ============================================
-            // تحديث التقدم - الجزء المهم
+            // تحديث التقدم
             // ============================================
             if (status.progress !== undefined) {
-                // تحديث شريط التقدم
                 const progressPercent = status.progress || 0;
                 document.getElementById('progress-percent').textContent = progressPercent + '%';
                 document.getElementById('progress-bar').style.width = progressPercent + '%';
                 
-                // تحديث الحالة
                 if (status.step) {
                     document.getElementById('progress-status').textContent = status.step;
                 }
@@ -520,7 +530,6 @@ async function pollProcessingStatus(sessionId) {
                     document.getElementById('progress-detail').textContent = status.detail;
                 }
                 
-                // تحديث العنوان إذا تغير
                 if (status.title && status.title !== document.getElementById('progress-title').textContent.replace('🎬 ', '')) {
                     document.getElementById('progress-title').textContent = '🎬 ' + status.title;
                 }
@@ -545,7 +554,7 @@ async function pollProcessingStatus(sessionId) {
                     }
                 }
                 
-                // عرض رسالة تحذيرية إذا كان هناك خطأ في yt-dlp
+                // عرض رسائل التحذير أو الخطأ
                 if (status.ytdlp_error) {
                     let warningMsg = '';
                     if (status.ytdlp_error === 'auth_required') {
@@ -564,6 +573,7 @@ async function pollProcessingStatus(sessionId) {
             // التحقق من الاكتمال
             if (status.completed) {
                 if (status.error) {
+                    showProgressError('❌ ' + status.error);
                     throw new Error(status.error);
                 }
                 
@@ -595,6 +605,7 @@ async function pollProcessingStatus(sessionId) {
             }
             
             if (status.status === 'failed') {
+                showProgressError('❌ ' + (status.detail || 'فشلت المعالجة'));
                 throw new Error(status.detail || 'فشلت المعالجة');
             }
             
@@ -605,7 +616,6 @@ async function pollProcessingStatus(sessionId) {
             console.warn('⚠️ خطأ في جلب الحالة:', error);
         }
         
-        // انتظار 1.5 ثانية قبل المحاولة التالية
         await new Promise(resolve => setTimeout(resolve, 1500));
         attempts++;
     }
@@ -616,6 +626,7 @@ async function pollProcessingStatus(sessionId) {
     }
     
     console.error('⏰ انتهى وقت المعالجة');
+    showProgressError('⏰ انتهى وقت المعالجة. يرجى المحاولة مرة أخرى.');
     throw new Error('انتهى وقت المعالجة. يرجى المحاولة مرة أخرى.');
 }
 
@@ -626,6 +637,7 @@ async function generateVideoFromPrompt(prompt) {
     showProgress('جاري توليد الفيديو...', 5, 'تحليل الطلب', 'جاري تحليل الطلب');
     updateLoadingVideoInfo('جاري التوليد...', '—', '—', '—');
     hideProgressWarning();
+    hideProgressError();
     
     try {
         const response = await fetch('/api/v1/projects/video/generate', {
@@ -721,6 +733,7 @@ async function pollGenerationStatus(sessionId) {
             
             if (status.completed) {
                 if (status.error) {
+                    showProgressError('❌ ' + status.error);
                     throw new Error(status.error);
                 }
                 
@@ -747,6 +760,7 @@ async function pollGenerationStatus(sessionId) {
             }
             
             if (status.status === 'failed') {
+                showProgressError('❌ ' + (status.detail || 'فشل التوليد'));
                 throw new Error(status.detail || 'فشل التوليد');
             }
             
@@ -767,6 +781,7 @@ async function pollGenerationStatus(sessionId) {
     }
     
     console.error('⏰ انتهى وقت التوليد');
+    showProgressError('⏰ انتهى وقت التوليد. يرجى المحاولة مرة أخرى.');
     throw new Error('انتهى وقت التوليد. يرجى المحاولة مرة أخرى.');
 }
 
@@ -784,8 +799,8 @@ function showProgress(title, percent = 0, step = '', detail = '') {
     document.getElementById('progress-detail').textContent = detail || 'في انتظار بدء المعالجة...';
     document.getElementById('video-info-loading').classList.remove('hidden');
     
-    // إخفاء أي تحذيرات سابقة
     hideProgressWarning();
+    hideProgressError();
     
     state.processing = true;
     state.cancelProcessing = false;
@@ -803,6 +818,16 @@ function showProgressWarning(message) {
 
 function hideProgressWarning() {
     document.getElementById('progress-warning').classList.add('hidden');
+}
+
+function showProgressError(message) {
+    const error = document.getElementById('progress-error');
+    error.classList.remove('hidden');
+    document.getElementById('progress-error-text').textContent = message;
+}
+
+function hideProgressError() {
+    document.getElementById('progress-error').classList.add('hidden');
 }
 
 function updateElapsedTime() {
@@ -1166,6 +1191,10 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 function showToast(message, type = 'info') {
+    // إزالة التوستات القديمة
+    const oldToasts = document.querySelectorAll('.toast-message');
+    oldToasts.forEach(t => t.remove());
+    
     const toast = document.createElement('div');
     const colors = {
         success: 'bg-green-600',
@@ -1173,7 +1202,7 @@ function showToast(message, type = 'info') {
         warning: 'bg-yellow-600',
         info: 'bg-blue-600'
     };
-    toast.className = `fixed bottom-4 right-4 ${colors[type] || colors.info} text-white px-6 py-3 rounded-lg shadow-lg z-50 transition-all duration-300 transform translate-y-full opacity-0 max-w-md`;
+    toast.className = `toast-message fixed bottom-4 right-4 ${colors[type] || colors.info} text-white px-6 py-3 rounded-lg shadow-lg z-50 transition-all duration-300 transform translate-y-full opacity-0 max-w-md`;
     toast.textContent = message;
     document.body.appendChild(toast);
     
