@@ -12,7 +12,6 @@ from fastapi.staticfiles import StaticFiles
 
 from config.settings import settings, ensure_dirs, validate_config
 from infrastructure.database.session import create_all_tables
-from infrastructure.database.supabase_client import supabase_db
 from plugins.registry import PluginRegistry, PluginLoader
 from interfaces.api.router import api_router
 from interfaces.api.oauth import router as oauth_router
@@ -48,28 +47,21 @@ async def lifespan(app: FastAPI):
 
     # ── Database Setup ──────────────────────────────────────────────────────
     if settings.using_supabase_db:
-        # استخدام Supabase كقاعدة بيانات
-        logger.info("Using Supabase as database")
+        # استخدام Supabase كقاعدة بيانات عبر SQLAlchemy
+        logger.info("Using Supabase as database (via SQLAlchemy)")
         try:
-            # اختبار الاتصال بـ Supabase
-            if settings.supabase_configured:
-                # محاولة جلب بيانات للاختبار
-                test_result = await supabase_db.get_videos(limit=1)
-                logger.info("✅ Supabase connection successful!")
-                logger.info(f"Supabase Public Key: {'✅ Configured' if settings.supabase_public_key_value else '❌ Missing'}")
-                logger.info(f"Supabase Secret Key: {'✅ Configured' if settings.supabase_secret_key_value else '⚠️ Not set (some operations limited)'}")
-            else:
-                logger.warning("⚠️ Supabase is not properly configured. Check your environment variables.")
-                logger.warning("Required: SUPABASE_URL, SUPABASE_PUBLIC_KEY or SUPABASE_SECRET_KEY")
-                
-                if settings.is_production:
-                    raise RuntimeError("Supabase configuration is required in production!")
+            # إنشاء الجداول (إذا كانت PostgreSQL)
+            await create_all_tables()
+            logger.info("✅ Database tables ready")
+            
+            # عرض معلومات الاتصال
+            logger.info(f"Supabase URL: {settings.SUPABASE_URL}")
+            logger.info(f"Supabase Public Key: {'✅ Configured' if settings.supabase_public_key_value else '❌ Missing'}")
+            logger.info(f"Supabase Secret Key: {'✅ Configured' if settings.supabase_secret_key_value else '⚠️ Not set'}")
         except Exception as e:
-            logger.error(f"❌ Supabase connection failed: {e}")
+            logger.error(f"❌ Database setup failed: {e}")
             if settings.is_production:
                 raise
-            else:
-                logger.warning("⚠️ Continuing with limited functionality (development mode)")
     else:
         # استخدام PostgreSQL أو SQLite
         logger.info("Using PostgreSQL/SQLite as database")
@@ -100,81 +92,13 @@ async def lifespan(app: FastAPI):
 
     # ── Shutdown ──────────────────────────────────────────────────────────────
     logger.info("🛑 Shutting down platform...")
-    
-    # Cleanup Supabase client if needed
-    if hasattr(supabase_db, 'close'):
-        await supabase_db.close()
 
 
 async def _seed_initial_data() -> None:
     """
     Insert default platform records if not present.
-    Uses Supabase if configured, otherwise falls back to SQLAlchemy.
+    Uses SQLAlchemy for both Supabase and PostgreSQL.
     """
-    # إذا كان يستخدم Supabase، استخدم Supabase Client
-    if settings.using_supabase_db and settings.supabase_configured:
-        logger.info("Seeding initial data via Supabase...")
-        try:
-            # التحقق من وجود البيانات
-            response = supabase_db.client.table('publishing_platforms')\
-                .select('id')\
-                .eq('name', 'youtube')\
-                .limit(1)\
-                .execute()
-            
-            if response.data:
-                logger.info("✅ Initial data already exists in Supabase")
-                return
-            
-            # إضافة البيانات الأولية
-            default_platforms = [
-                {
-                    "name": "youtube",
-                    "display_name": "YouTube",
-                    "plugin": "youtube",
-                    "constraints": {
-                        "max_duration": 43200,
-                        "max_file_size": 137438953472,
-                        "supported_formats": ["mp4", "mov", "avi", "webm"],
-                        "supported_aspect_ratios": ["16:9", "9:16", "1:1"],
-                    },
-                    "is_active": True,
-                },
-                {
-                    "name": "twitter",
-                    "display_name": "Twitter/X",
-                    "plugin": "twitter",
-                    "constraints": {
-                        "max_duration": 140,
-                        "max_file_size": 512 * 1024 * 1024,
-                        "supported_formats": ["mp4", "mov"],
-                    },
-                    "is_active": True,
-                },
-                {
-                    "name": "facebook",
-                    "display_name": "Facebook",
-                    "plugin": "facebook",
-                    "constraints": {
-                        "max_duration": 240,
-                        "max_file_size": 10 * 1024 * 1024 * 1024,
-                        "supported_formats": ["mp4", "mov", "avi"],
-                    },
-                    "is_active": True,
-                },
-            ]
-            
-            for platform in default_platforms:
-                supabase_db.client.table('publishing_platforms').insert(platform).execute()
-            
-            logger.info(f"✅ Seeded {len(default_platforms)} default platforms in Supabase")
-            
-        except Exception as e:
-            logger.error(f"❌ Failed to seed data in Supabase: {e}")
-            raise
-        return
-    
-    # ── Fallback: SQLAlchemy (PostgreSQL/SQLite) ──────────────────────
     try:
         from infrastructure.database.session import get_session_factory
         from infrastructure.database.models.publishing_model import PublishingPlatformModel
@@ -186,7 +110,7 @@ async def _seed_initial_data() -> None:
             q = select(PublishingPlatformModel).where(PublishingPlatformModel.name == "youtube")
             result = await session.execute(q)
             if result.scalar_one_or_none():
-                logger.info("✅ Initial data already exists in SQL database")
+                logger.info("✅ Initial data already exists")
                 return
             
             # Add default platforms
@@ -225,6 +149,30 @@ async def _seed_initial_data() -> None:
                     },
                     "is_active": True,
                 },
+                {
+                    "name": "instagram",
+                    "display_name": "Instagram",
+                    "plugin": "instagram",
+                    "constraints": {
+                        "max_duration": 60,
+                        "max_file_size": 100 * 1024 * 1024,
+                        "supported_formats": ["mp4", "mov"],
+                        "supported_aspect_ratios": ["1:1", "4:5", "16:9"],
+                    },
+                    "is_active": True,
+                },
+                {
+                    "name": "tiktok",
+                    "display_name": "TikTok",
+                    "plugin": "tiktok",
+                    "constraints": {
+                        "max_duration": 180,
+                        "max_file_size": 287 * 1024 * 1024,
+                        "supported_formats": ["mp4", "mov"],
+                        "supported_aspect_ratios": ["9:16", "1:1"],
+                    },
+                    "is_active": True,
+                },
             ]
             
             for platform_data in default_platforms:
@@ -232,10 +180,10 @@ async def _seed_initial_data() -> None:
                 session.add(platform)
             
             await session.commit()
-            logger.info(f"✅ Seeded {len(default_platforms)} default platforms in SQL database")
+            logger.info(f"✅ Seeded {len(default_platforms)} default platforms")
             
     except Exception as e:
-        logger.error(f"❌ Failed to seed data in SQL database: {e}")
+        logger.error(f"❌ Failed to seed initial data: {e}")
         raise
 
 
