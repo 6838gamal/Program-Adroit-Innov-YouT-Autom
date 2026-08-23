@@ -116,7 +116,7 @@
                     {% endif %}
                 </span>
                 <span class="text-slate-500 text-xs">{{ project.created_at.strftime('%Y-%m-%d %H:%M') if project.created_at else '—' }}</span>
-                <span class="text-slate-500 text-xs">🆔 {{ project.id[:8] }}...</span>
+                <span class="text-slate-500 text-xs">🆔 {{ project.id|string|truncate(10, True, '') }}...</span>
             </div>
             
             {% if project.description %}
