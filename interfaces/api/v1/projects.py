@@ -9,6 +9,7 @@ import re
 import json
 import subprocess
 import os
+import shutil
 from urllib.parse import urlparse
 
 from pydantic import BaseModel
@@ -49,6 +50,17 @@ class VideoGenerateRequest(BaseModel):
     prompt: str
     session_id: Optional[str] = None
     links: Optional[List[str]] = []
+
+
+# ============================================
+# التحقق من وجود yt-dlp
+# ============================================
+
+def is_ytdlp_available() -> bool:
+    """
+    التحقق من وجود yt-dlp في النظام
+    """
+    return shutil.which("yt-dlp") is not None
 
 
 # ============================================
@@ -143,9 +155,12 @@ async def process_video(
     background_tasks: BackgroundTasks,
 ):
     """
-    معالجة رابط فيديو من الإنترنت باستخدام yt-dlp
+    معالجة رابط فيديو من الإنترنت
     """
     session_id = request.session_id or str(uuid.uuid4())
+    
+    # التحقق من وجود yt-dlp
+    ytdlp_available = is_ytdlp_available()
     
     # تهيئة حالة المعالجة
     processing_sessions[session_id] = {
@@ -169,7 +184,8 @@ async def process_video(
         "like_count": None,
         "error": None,
         "started_at": datetime.now().isoformat(),
-        "url": request.url
+        "url": request.url,
+        "ytdlp_available": ytdlp_available
     }
     
     # بدء المعالجة في الخلفية
@@ -213,7 +229,8 @@ async def get_processing_status(session_id: str):
         "like_count": session.get("like_count"),
         "error": session.get("error"),
         "started_at": session.get("started_at"),
-        "updated_at": datetime.now().isoformat()
+        "updated_at": datetime.now().isoformat(),
+        "ytdlp_available": session.get("ytdlp_available", False)
     }
 
 
@@ -302,33 +319,23 @@ async def video_health_check():
         "status": "ok",
         "message": "Video processing service is running",
         "active_sessions": len(processing_sessions),
+        "ytdlp_available": is_ytdlp_available(),
         "timestamp": datetime.now().isoformat()
     }
 
 
 # ============================================
-# وظائف استخدام yt-dlp
+# وظائف استخراج معلومات الفيديو (مع دعم yt-dlp)
 # ============================================
 
 async def extract_video_info_with_ytdlp(url: str) -> Dict[str, Any]:
     """
-    استخراج معلومات الفيديو باستخدام yt-dlp
+    استخراج معلومات الفيديو باستخدام yt-dlp (مع التحقق من وجوده)
     """
-    info = {
-        "title": None,
-        "duration": None,
-        "format": None,
-        "size": None,
-        "size_bytes": None,
-        "dimensions": None,
-        "thumbnail": None,
-        "uploader": None,
-        "description": None,
-        "view_count": None,
-        "like_count": None,
-        "platform": None,
-        "formats": []
-    }
+    # التحقق من وجود yt-dlp
+    if not is_ytdlp_available():
+        print("⚠️ yt-dlp غير مثبت، استخدام الطريقة اليدوية")
+        return extract_video_info_manual(url)
     
     try:
         # استخدام yt-dlp لجلب معلومات الفيديو
@@ -337,6 +344,7 @@ async def extract_video_info_with_ytdlp(url: str) -> Dict[str, Any]:
             "--dump-json",
             "--no-playlist",
             "--skip-download",
+            "--no-warnings",
             url
         ]
         
@@ -351,20 +359,27 @@ async def extract_video_info_with_ytdlp(url: str) -> Dict[str, Any]:
         if process.returncode != 0:
             error_msg = stderr.decode('utf-8', errors='ignore')
             print(f"yt-dlp error: {error_msg}")
-            # إذا فشل yt-dlp، نستخدم معلومات افتراضية
-            return get_fallback_info(url)
+            # إذا فشل yt-dlp، نستخدم الطريقة اليدوية
+            return extract_video_info_manual(url)
         
         # تحليل الناتج JSON
         data = json.loads(stdout.decode('utf-8', errors='ignore'))
         
         # استخراج المعلومات
-        info["title"] = data.get("title", "فيديو بدون عنوان")
-        info["duration"] = data.get("duration")
-        info["thumbnail"] = data.get("thumbnail")
-        info["uploader"] = data.get("uploader")
-        info["description"] = data.get("description", "")[:500]  # تحديد الطول
-        info["view_count"] = data.get("view_count")
-        info["like_count"] = data.get("like_count")
+        info = {
+            "title": data.get("title", "فيديو بدون عنوان"),
+            "duration": data.get("duration"),
+            "thumbnail": data.get("thumbnail"),
+            "uploader": data.get("uploader"),
+            "description": data.get("description", "")[:500],
+            "view_count": data.get("view_count"),
+            "like_count": data.get("like_count"),
+            "platform": "unknown",
+            "format": "mp4",
+            "size": None,
+            "size_bytes": None,
+            "dimensions": "1280x720"
+        }
         
         # تحديد المنصة
         webpage_url = data.get("webpage_url", "")
@@ -384,8 +399,6 @@ async def extract_video_info_with_ytdlp(url: str) -> Dict[str, Any]:
         # استخراج معلومات الصيغ
         if "formats" in data:
             formats = data["formats"]
-            info["formats"] = formats
-            
             # اختيار أفضل صيغة
             best_format = None
             for fmt in formats:
@@ -395,7 +408,8 @@ async def extract_video_info_with_ytdlp(url: str) -> Dict[str, Any]:
             
             if best_format:
                 info["format"] = best_format.get("ext", "mp4")
-                info["dimensions"] = f"{best_format.get('width', '?')}x{best_format.get('height', '?')}"
+                if best_format.get("width") and best_format.get("height"):
+                    info["dimensions"] = f"{best_format.get('width')}x{best_format.get('height')}"
                 if best_format.get("filesize"):
                     size_bytes = best_format.get("filesize")
                     info["size_bytes"] = size_bytes
@@ -404,77 +418,139 @@ async def extract_video_info_with_ytdlp(url: str) -> Dict[str, Any]:
                     size_bytes = best_format.get("filesize_approx")
                     info["size_bytes"] = size_bytes
                     info["size"] = format_file_size(size_bytes) + " (تقريباً)"
-            else:
-                info["format"] = "mp4"
-                info["dimensions"] = "1280x720"
-        else:
-            info["format"] = "mp4"
-            info["dimensions"] = "1280x720"
         
         # إذا لم نحصل على حجم، نستخدم قيمة افتراضية
         if not info["size"]:
             duration = info["duration"] or 60
-            # تقدير الحجم بناءً على المدة (تقريباً 5MB لكل دقيقة بجودة متوسطة)
-            estimated_size = max(duration * 5, 5)  # 5MB لكل دقيقة، بحد أدنى 5MB
+            estimated_size = max(duration * 5, 5)
             info["size_bytes"] = estimated_size * 1024 * 1024
             info["size"] = f"~{estimated_size:.1f} MB"
         
-        print(f"✅ تم استخراج معلومات الفيديو بنجاح: {info['title']}")
+        print(f"✅ تم استخراج معلومات الفيديو بنجاح باستخدام yt-dlp: {info['title']}")
+        return info
         
     except json.JSONDecodeError as e:
         print(f"JSON decode error: {e}")
-        return get_fallback_info(url)
+        return extract_video_info_manual(url)
     except Exception as e:
-        print(f"Error extracting video info: {e}")
-        return get_fallback_info(url)
-    
-    return info
+        print(f"Error extracting video info with yt-dlp: {e}")
+        return extract_video_info_manual(url)
 
 
-def get_fallback_info(url: str) -> Dict[str, Any]:
+def extract_video_info_manual(url: str) -> Dict[str, Any]:
     """
-    معلومات افتراضية في حالة فشل yt-dlp
+    استخراج معلومات الفيديو يدوياً (بدون yt-dlp)
     """
     parsed_url = urlparse(url)
     domain = parsed_url.netloc.lower()
     
-    # تحديد المنصة من الرابط
-    if "youtube.com" in domain or "youtu.be" in domain:
-        platform = "youtube"
-        title = "فيديو يوتيوب"
-        duration = 120
-        thumbnail = None
-    elif "tiktok.com" in domain:
-        platform = "tiktok"
-        title = "فيديو تيك توك"
-        duration = 60
-        thumbnail = None
-    elif "vimeo.com" in domain:
-        platform = "vimeo"
-        title = "فيديو Vimeo"
-        duration = 180
-        thumbnail = None
-    else:
-        platform = "generic"
-        title = "فيديو مستورد"
-        duration = 90
-        thumbnail = None
-    
-    return {
-        "title": title,
-        "duration": duration,
+    info = {
+        "title": None,
+        "duration": None,
         "format": "mp4",
-        "size": "~30.0 MB",
-        "size_bytes": 30 * 1024 * 1024,
+        "size": None,
+        "size_bytes": None,
         "dimensions": "1280x720",
-        "thumbnail": thumbnail,
+        "thumbnail": None,
         "uploader": None,
         "description": None,
         "view_count": None,
         "like_count": None,
-        "platform": platform,
-        "formats": []
+        "platform": "generic"
     }
+    
+    # تحديد المنصة من الرابط
+    if "youtube.com" in domain or "youtu.be" in domain:
+        info["platform"] = "youtube"
+        info["title"] = "فيديو يوتيوب"
+        info["duration"] = 120
+        info["size"] = "~45.6 MB"
+        info["size_bytes"] = 45.6 * 1024 * 1024
+        
+        # محاولة استخراج معرف الفيديو للحصول على الصورة المصغرة
+        video_id = extract_youtube_id(url)
+        if video_id:
+            info["thumbnail"] = f"https://img.youtube.com/vi/{video_id}/hqdefault.jpg"
+            info["title"] = f"فيديو يوتيوب (ID: {video_id[:8]}...)"
+            
+    elif "tiktok.com" in domain:
+        info["platform"] = "tiktok"
+        info["title"] = "فيديو تيك توك"
+        info["duration"] = 60
+        info["size"] = "~15.2 MB"
+        info["size_bytes"] = 15.2 * 1024 * 1024
+        info["dimensions"] = "1080x1920"
+        
+    elif "vimeo.com" in domain:
+        info["platform"] = "vimeo"
+        info["title"] = "فيديو Vimeo"
+        info["duration"] = 180
+        info["size"] = "~89.3 MB"
+        info["size_bytes"] = 89.3 * 1024 * 1024
+        
+    elif "facebook.com" in domain:
+        info["platform"] = "facebook"
+        info["title"] = "فيديو فيسبوك"
+        info["duration"] = 120
+        info["size"] = "~35.0 MB"
+        info["size_bytes"] = 35 * 1024 * 1024
+        
+    elif "instagram.com" in domain:
+        info["platform"] = "instagram"
+        info["title"] = "فيديو إنستغرام"
+        info["duration"] = 60
+        info["size"] = "~20.0 MB"
+        info["size_bytes"] = 20 * 1024 * 1024
+        
+    else:
+        info["platform"] = "generic"
+        info["title"] = f"فيديو من {domain}"
+        info["duration"] = 90
+        info["size"] = "~30.0 MB"
+        info["size_bytes"] = 30 * 1024 * 1024
+        info["format"] = detect_video_format(url)
+    
+    print(f"ℹ️ تم استخراج معلومات الفيديو يدوياً (بدون yt-dlp): {info['title']}")
+    return info
+
+
+def extract_youtube_id(url: str) -> Optional[str]:
+    """
+    استخراج معرف الفيديو من رابط يوتيوب
+    """
+    patterns = [
+        r'(?:youtube\.com\/watch\?v=)([\w-]+)',
+        r'(?:youtu\.be\/)([\w-]+)',
+        r'(?:youtube\.com\/embed\/)([\w-]+)',
+        r'(?:youtube\.com\/shorts\/)([\w-]+)',
+        r'(?:youtube\.com\/v\/)([\w-]+)'
+    ]
+    
+    for pattern in patterns:
+        match = re.search(pattern, url)
+        if match:
+            return match.group(1)
+    return None
+
+
+def detect_video_format(url: str) -> str:
+    """
+    اكتشاف صيغة الفيديو من الرابط
+    """
+    extensions = {
+        '.mp4': 'mp4',
+        '.webm': 'webm',
+        '.avi': 'avi',
+        '.mov': 'mov',
+        '.mkv': 'mkv',
+        '.flv': 'flv',
+        '.wmv': 'wmv'
+    }
+    
+    for ext, format_name in extensions.items():
+        if ext in url.lower():
+            return format_name
+    return 'mp4'
 
 
 def format_file_size(bytes_size: int) -> str:
@@ -491,57 +567,25 @@ def format_file_size(bytes_size: int) -> str:
         return f"{bytes_size / (1024 * 1024 * 1024):.2f} GB"
 
 
-async def download_video_with_ytdlp(url: str, output_path: str) -> Optional[str]:
-    """
-    تحميل الفيديو باستخدام yt-dlp
-    """
-    try:
-        cmd = [
-            "yt-dlp",
-            "-f", "best[ext=mp4]",
-            "--no-playlist",
-            "-o", output_path,
-            url
-        ]
-        
-        process = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
-        )
-        
-        stdout, stderr = await process.communicate()
-        
-        if process.returncode != 0:
-            print(f"Download error: {stderr.decode('utf-8', errors='ignore')}")
-            return None
-        
-        return output_path
-        
-    except Exception as e:
-        print(f"Download error: {e}")
-        return None
-
-
 # ============================================
 # وظائف الخلفية مع تحديث التقدم
 # ============================================
 
 async def process_video_background(session_id: str, url: str):
     """
-    معالجة الفيديو في الخلفية باستخدام yt-dlp
+    معالجة الفيديو في الخلفية
     """
     try:
-        # خطوة 1: تحليل الرابط (0% -> 15%)
+        # خطوة 1: تحليل الرابط
         processing_sessions[session_id].update({
             "status": "analyzing",
             "progress": 10,
-            "detail": "جاري تحليل الرابط باستخدام yt-dlp...",
+            "detail": "جاري تحليل الرابط...",
             "step": "تحليل الرابط"
         })
         await asyncio.sleep(1)
         
-        # خطوة 2: استخراج معلومات الفيديو (15% -> 40%)
+        # خطوة 2: استخراج معلومات الفيديو
         processing_sessions[session_id].update({
             "status": "extracting",
             "progress": 25,
@@ -549,7 +593,16 @@ async def process_video_background(session_id: str, url: str):
             "step": "استخراج المعلومات"
         })
         
-        # استخراج معلومات الفيديو باستخدام yt-dlp
+        # التحقق من وجود yt-dlp
+        ytdlp_available = is_ytdlp_available()
+        processing_sessions[session_id]["ytdlp_available"] = ytdlp_available
+        
+        if ytdlp_available:
+            processing_sessions[session_id]["detail"] = "جاري استخراج معلومات الفيديو باستخدام yt-dlp..."
+        else:
+            processing_sessions[session_id]["detail"] = "جاري استخراج معلومات الفيديو (طريقة يدوية)..."
+        
+        # استخراج معلومات الفيديو
         video_info = await extract_video_info_with_ytdlp(url)
         
         # تحديث بمعلومات الفيديو المستخرجة
@@ -569,7 +622,7 @@ async def process_video_background(session_id: str, url: str):
         })
         await asyncio.sleep(1.5)
         
-        # خطوة 3: التحقق من الرابط (40% -> 55%)
+        # خطوة 3: التحقق من الرابط
         processing_sessions[session_id].update({
             "status": "verifying",
             "progress": 45,
@@ -578,7 +631,7 @@ async def process_video_background(session_id: str, url: str):
         })
         await asyncio.sleep(1)
         
-        # خطوة 4: معالجة الفيديو (55% -> 75%)
+        # خطوة 4: معالجة الفيديو
         processing_sessions[session_id].update({
             "status": "processing",
             "progress": 60,
@@ -587,7 +640,7 @@ async def process_video_background(session_id: str, url: str):
         })
         await asyncio.sleep(1.5)
         
-        # خطوة 5: تحليل المحتوى (75% -> 88%)
+        # خطوة 5: تحليل المحتوى
         processing_sessions[session_id].update({
             "status": "analyzing_content",
             "progress": 80,
@@ -596,7 +649,7 @@ async def process_video_background(session_id: str, url: str):
         })
         await asyncio.sleep(1)
         
-        # خطوة 6: تجهيز الفيديو (88% -> 95%)
+        # خطوة 6: تجهيز الفيديو
         processing_sessions[session_id].update({
             "status": "finalizing",
             "progress": 92,
@@ -608,12 +661,11 @@ async def process_video_background(session_id: str, url: str):
         # اكتمال المعالجة
         video_url = url
         
-        # إذا كان الرابط من يوتيوب، نستخدم رابط مباشر للفيديو
-        if video_info.get("platform") == "youtube":
-            # يمكننا استخدام yt-dlp لتحميل الفيديو أو استخدام فيديو تجريبي
+        # إذا كان الرابط من يوتيوب و yt-dlp غير متوفر، استخدم فيديو تجريبي
+        if video_info.get("platform") == "youtube" and not ytdlp_available:
             video_url = "https://sample-videos.com/video321/mp4/240/big_buck_bunny_240p_1mb.mp4"
+            processing_sessions[session_id]["detail"] = "تم استخدام فيديو تجريبي للعرض (yt-dlp غير متوفر)"
         
-        # تحديث معلومات إضافية عن الفيديو
         processing_sessions[session_id].update({
             "status": "completed",
             "progress": 100,
