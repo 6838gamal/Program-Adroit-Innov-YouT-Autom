@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy import MetaData
+from config.settings import settings
 
 logger = logging.getLogger(__name__)
 
@@ -42,8 +43,8 @@ def get_database_url() -> str:
         logger.info("✅ Using SUPABASE_DIRECT_URL from environment")
         return direct_url
     
-    # 2. استخدام SUPABASE_URL لبناء الرابط
-    supabase_url = os.getenv("SUPABASE_URL")
+    # 2. استخدام SUPABASE_URL من الإعدادات
+    supabase_url = settings.SUPABASE_URL
     if not supabase_url:
         raise ValueError("SUPABASE_URL is required but not configured!")
     
@@ -79,14 +80,14 @@ def get_engine() -> AsyncEngine | None:
     try:
         database_url = get_database_url()
         
-        # إعدادات الاتصال من متغيرات البيئة
+        # إعدادات الاتصال من الإعدادات
         engine_kwargs = {
-            "echo": os.getenv("DATABASE_ECHO", "false").lower() == "true",
+            "echo": settings.DATABASE_ECHO,
             "future": True,
-            "pool_size": int(os.getenv("DB_POOL_SIZE", "10")),
-            "max_overflow": int(os.getenv("DB_MAX_OVERFLOW", "20")),
-            "pool_timeout": int(os.getenv("DB_POOL_TIMEOUT", "30")),
-            "pool_recycle": int(os.getenv("DB_POOL_RECYCLE", "3600")),
+            "pool_size": settings.DB_POOL_SIZE,
+            "max_overflow": settings.DB_MAX_OVERFLOW,
+            "pool_timeout": settings.DB_POOL_TIMEOUT,
+            "pool_recycle": settings.DB_POOL_RECYCLE,
             "pool_pre_ping": True,
         }
         
