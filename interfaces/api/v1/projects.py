@@ -5,6 +5,7 @@ from typing import Optional, List, Dict, Any
 import asyncio
 import uuid
 from datetime import datetime
+import json
 
 # إضافة استيراد BaseModel من pydantic
 from pydantic import BaseModel
@@ -130,7 +131,7 @@ async def delete_project(
 
 
 # ============================================
-# نقاط النهاية لمعالجة الفيديو
+# نقاط النهاية لمعالجة الفيديو مع دعم التقدم
 # ============================================
 
 @router.post("/video/process")
@@ -139,18 +140,30 @@ async def process_video(
     background_tasks: BackgroundTasks,
 ):
     """
-    معالجة رابط فيديو من الإنترنت
+    معالجة رابط فيديو من الإنترنت مع تحديث التقدم
     """
     session_id = request.session_id or str(uuid.uuid4())
     
+    # تهيئة حالة المعالجة مع معلومات مفصلة
     processing_sessions[session_id] = {
+        "session_id": session_id,
         "status": "initializing",
         "progress": 0,
         "detail": "جاري تهيئة المعالجة...",
+        "step": "تهيئة",
         "completed": False,
-        "session_id": session_id
+        "video_url": None,
+        "title": None,
+        "duration": None,
+        "format": None,
+        "size": None,
+        "dimensions": None,
+        "thumbnail": None,
+        "error": None,
+        "started_at": datetime.now().isoformat()
     }
     
+    # بدء المعالجة في الخلفية
     background_tasks.add_task(process_video_background, session_id, request.url)
     
     return {
@@ -163,11 +176,32 @@ async def process_video(
 @router.get("/video/process/{session_id}/status")
 async def get_processing_status(session_id: str):
     """
-    الحصول على حالة معالجة الفيديو
+    الحصول على حالة معالجة الفيديو مع التقدم
     """
     if session_id not in processing_sessions:
         raise HTTPException(status_code=404, detail="Session not found")
-    return processing_sessions[session_id]
+    
+    session = processing_sessions[session_id]
+    
+    # بناء استجابة مفصلة
+    return {
+        "session_id": session_id,
+        "status": session.get("status", "unknown"),
+        "progress": session.get("progress", 0),
+        "detail": session.get("detail", ""),
+        "step": session.get("step", ""),
+        "completed": session.get("completed", False),
+        "video_url": session.get("video_url"),
+        "title": session.get("title"),
+        "duration": session.get("duration"),
+        "format": session.get("format"),
+        "size": session.get("size"),
+        "dimensions": session.get("dimensions"),
+        "thumbnail": session.get("thumbnail"),
+        "error": session.get("error"),
+        "started_at": session.get("started_at"),
+        "updated_at": datetime.now().isoformat()
+    }
 
 
 @router.post("/video/generate")
@@ -176,18 +210,32 @@ async def generate_video(
     background_tasks: BackgroundTasks,
 ):
     """
-    توليد فيديو من برومبت باستخدام الذكاء الاصطناعي
+    توليد فيديو من برومبت مع تحديث التقدم
     """
     session_id = request.session_id or str(uuid.uuid4())
     
+    # تهيئة حالة التوليد
     processing_sessions[session_id] = {
+        "session_id": session_id,
         "status": "initializing",
         "progress": 0,
         "detail": "جاري تهيئة التوليد...",
+        "step": "تهيئة",
         "completed": False,
-        "session_id": session_id
+        "video_url": None,
+        "title": None,
+        "duration": None,
+        "format": None,
+        "size": None,
+        "dimensions": None,
+        "thumbnail": None,
+        "error": None,
+        "started_at": datetime.now().isoformat(),
+        "prompt": request.prompt,
+        "links": request.links or []
     }
     
+    # بدء التوليد في الخلفية
     background_tasks.add_task(
         generate_video_background, 
         session_id, 
@@ -205,11 +253,31 @@ async def generate_video(
 @router.get("/video/generate/{session_id}/status")
 async def get_generation_status(session_id: str):
     """
-    الحصول على حالة توليد الفيديو
+    الحصول على حالة توليد الفيديو مع التقدم
     """
     if session_id not in processing_sessions:
         raise HTTPException(status_code=404, detail="Session not found")
-    return processing_sessions[session_id]
+    
+    session = processing_sessions[session_id]
+    
+    return {
+        "session_id": session_id,
+        "status": session.get("status", "unknown"),
+        "progress": session.get("progress", 0),
+        "detail": session.get("detail", ""),
+        "step": session.get("step", ""),
+        "completed": session.get("completed", False),
+        "video_url": session.get("video_url"),
+        "title": session.get("title"),
+        "duration": session.get("duration"),
+        "format": session.get("format"),
+        "size": session.get("size"),
+        "dimensions": session.get("dimensions"),
+        "thumbnail": session.get("thumbnail"),
+        "error": session.get("error"),
+        "started_at": session.get("started_at"),
+        "updated_at": datetime.now().isoformat()
+    }
 
 
 @router.get("/video/health")
@@ -223,6 +291,214 @@ async def video_health_check():
         "active_sessions": len(processing_sessions),
         "timestamp": datetime.now().isoformat()
     }
+
+
+# ============================================
+# وظائف الخلفية مع تحديث التقدم
+# ============================================
+
+async def process_video_background(session_id: str, url: str):
+    """
+    معالجة الفيديو في الخلفية مع تحديث التقدم خطوة بخطوة
+    """
+    try:
+        # خطوة 1: تحليل الرابط
+        processing_sessions[session_id].update({
+            "status": "analyzing",
+            "progress": 10,
+            "detail": "جاري تحليل الرابط...",
+            "step": "تحليل الرابط"
+        })
+        await asyncio.sleep(1.5)
+        
+        # خطوة 2: استخراج معلومات الفيديو
+        processing_sessions[session_id].update({
+            "status": "extracting",
+            "progress": 25,
+            "detail": "جاري استخراج معلومات الفيديو...",
+            "step": "استخراج المعلومات"
+        })
+        await asyncio.sleep(2)
+        
+        # محاكاة استخراج معلومات الفيديو
+        video_info = {
+            "title": f"فيديو مستورد - {datetime.now().strftime('%H:%M')}",
+            "duration": 120,
+            "format": "mp4",
+            "size": "45.6 MB",
+            "dimensions": "1920x1080"
+        }
+        
+        # تحديث بمعلومات الفيديو
+        processing_sessions[session_id].update({
+            "title": video_info["title"],
+            "duration": video_info["duration"],
+            "format": video_info["format"],
+            "size": video_info["size"],
+            "dimensions": video_info["dimensions"]
+        })
+        
+        # خطوة 3: تحميل الفيديو
+        processing_sessions[session_id].update({
+            "status": "downloading",
+            "progress": 45,
+            "detail": "جاري تحميل الفيديو...",
+            "step": "تحميل الفيديو"
+        })
+        await asyncio.sleep(2)
+        
+        # خطوة 4: معالجة المحتوى
+        processing_sessions[session_id].update({
+            "status": "processing",
+            "progress": 65,
+            "detail": "جاري معالجة المحتوى...",
+            "step": "معالجة المحتوى"
+        })
+        await asyncio.sleep(2)
+        
+        # خطوة 5: تحليل المشاهد
+        processing_sessions[session_id].update({
+            "status": "analyzing_content",
+            "progress": 80,
+            "detail": "جاري تحليل المشاهد...",
+            "step": "تحليل المشاهد"
+        })
+        await asyncio.sleep(1.5)
+        
+        # خطوة 6: تجهيز الفيديو
+        processing_sessions[session_id].update({
+            "status": "finalizing",
+            "progress": 95,
+            "detail": "جاري تجهيز الفيديو...",
+            "step": "تجهيز الفيديو"
+        })
+        await asyncio.sleep(1)
+        
+        # اكتمال المعالجة
+        # استخدام فيديو تجريبي (في الواقع سيكون الفيديو المعالج)
+        video_url = "https://sample-videos.com/video321/mp4/240/big_buck_bunny_240p_1mb.mp4"
+        
+        processing_sessions[session_id].update({
+            "status": "completed",
+            "progress": 100,
+            "detail": "اكتملت المعالجة!",
+            "step": "اكتمل",
+            "completed": True,
+            "video_url": video_url,
+            "title": video_info["title"],
+            "duration": video_info["duration"],
+            "format": video_info["format"],
+            "size": video_info["size"],
+            "dimensions": video_info["dimensions"]
+        })
+        
+    except Exception as e:
+        processing_sessions[session_id].update({
+            "status": "failed",
+            "progress": 0,
+            "detail": f"فشل المعالجة: {str(e)}",
+            "step": "فشل",
+            "completed": True,
+            "error": str(e)
+        })
+
+
+async def generate_video_background(session_id: str, prompt: str, links: List[str]):
+    """
+    توليد فيديو في الخلفية مع تحديث التقدم خطوة بخطوة
+    """
+    try:
+        # خطوة 1: تحليل الطلب
+        processing_sessions[session_id].update({
+            "status": "analyzing_prompt",
+            "progress": 5,
+            "detail": "تحليل الطلب...",
+            "step": "تحليل الطلب"
+        })
+        await asyncio.sleep(1.5)
+        
+        # خطوة 2: صياغة السكريبت
+        processing_sessions[session_id].update({
+            "status": "writing_script",
+            "progress": 15,
+            "detail": "صياغة النص السكريبت...",
+            "step": "صياغة السكريبت"
+        })
+        await asyncio.sleep(2)
+        
+        # خطوة 3: توليد المشاهد
+        processing_sessions[session_id].update({
+            "status": "generating_scenes",
+            "progress": 30,
+            "detail": "توليد المشاهد...",
+            "step": "توليد المشاهد"
+        })
+        await asyncio.sleep(2)
+        
+        # خطوة 4: معالجة الوسائط
+        processing_sessions[session_id].update({
+            "status": "processing_media",
+            "progress": 50,
+            "detail": "معالجة الصوت والصورة...",
+            "step": "معالجة الوسائط"
+        })
+        await asyncio.sleep(2)
+        
+        # خطوة 5: تجميع الفيديو
+        processing_sessions[session_id].update({
+            "status": "compiling",
+            "progress": 70,
+            "detail": "تجميع الفيديو...",
+            "step": "تجميع الفيديو"
+        })
+        await asyncio.sleep(2)
+        
+        # خطوة 6: تحسين الجودة
+        processing_sessions[session_id].update({
+            "status": "optimizing",
+            "progress": 85,
+            "detail": "تحسين الجودة...",
+            "step": "تحسين الجودة"
+        })
+        await asyncio.sleep(1.5)
+        
+        # خطوة 7: تجهيز الفيديو
+        processing_sessions[session_id].update({
+            "status": "finalizing",
+            "progress": 95,
+            "detail": "تجهيز الفيديو...",
+            "step": "تجهيز الفيديو"
+        })
+        await asyncio.sleep(1)
+        
+        # اكتمال التوليد
+        # استخدام فيديو تجريبي (في الواقع سيكون فيديو مولد)
+        video_url = "https://sample-videos.com/video321/mp4/240/big_buck_bunny_240p_1mb.mp4"
+        
+        processing_sessions[session_id].update({
+            "status": "completed",
+            "progress": 100,
+            "detail": "اكتمل التوليد!",
+            "step": "اكتمل",
+            "completed": True,
+            "video_url": video_url,
+            "title": prompt[:50] + ("..." if len(prompt) > 50 else ""),
+            "duration": 180,
+            "format": "mp4",
+            "size": "68.2 MB",
+            "dimensions": "1920x1080",
+            "generated": True
+        })
+        
+    except Exception as e:
+        processing_sessions[session_id].update({
+            "status": "failed",
+            "progress": 0,
+            "detail": f"فشل التوليد: {str(e)}",
+            "step": "فشل",
+            "completed": True,
+            "error": str(e)
+        })
 
 
 # ============================================
@@ -335,123 +611,3 @@ async def render_project(
         raise HTTPException(status_code=404, detail="Project not found")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-
-# ============================================
-# وظائف الخلفية
-# ============================================
-
-async def process_video_background(session_id: str, url: str):
-    """
-    معالجة الفيديو في الخلفية مع تحديث التقدم
-    """
-    try:
-        steps = [
-            (10, "جاري تحليل الرابط..."),
-            (25, "جاري تحميل الفيديو..."),
-            (40, "جاري معالجة المحتوى..."),
-            (60, "جاري تحليل المشاهد..."),
-            (80, "جاري استخراج الصورة المصغرة..."),
-            (95, "جاري تجهيز الفيديو..."),
-        ]
-        
-        for progress, detail in steps:
-            await asyncio.sleep(1.5)
-            if session_id in processing_sessions:
-                processing_sessions[session_id].update({
-                    "progress": progress,
-                    "detail": detail,
-                    "status": "processing"
-                })
-        
-        # اكتمال المعالجة
-        if session_id in processing_sessions:
-            processing_sessions[session_id].update({
-                "status": "completed",
-                "progress": 100,
-                "detail": "اكتملت المعالجة!",
-                "completed": True,
-                "video_url": url,
-                "title": f"فيديو معالج - {datetime.now().strftime('%Y-%m-%d %H:%M')}",
-                "duration": 120,
-                "thumbnail": None
-            })
-        
-    except Exception as e:
-        if session_id in processing_sessions:
-            processing_sessions[session_id].update({
-                "status": "failed",
-                "detail": str(e),
-                "completed": True,
-                "error": str(e)
-            })
-
-
-async def generate_video_background(session_id: str, prompt: str, links: List[str]):
-    """
-    توليد فيديو في الخلفية مع تحديث التقدم
-    """
-    try:
-        steps = [
-            (5, "تحليل الطلب..."),
-            (15, "صياغة النص السكريبت..."),
-            (30, "توليد المشاهد..."),
-            (50, "معالجة الصوت والصورة..."),
-            (70, "تجميع الفيديو..."),
-            (85, "تحسين الجودة..."),
-            (95, "تجهيز الفيديو..."),
-        ]
-        
-        for progress, detail in steps:
-            await asyncio.sleep(2)
-            if session_id in processing_sessions:
-                processing_sessions[session_id].update({
-                    "progress": progress,
-                    "detail": detail,
-                    "status": "generating"
-                })
-        
-        # اكتمال التوليد - استخدام فيديو تجريبي
-        video_url = "https://sample-videos.com/video321/mp4/240/big_buck_bunny_240p_1mb.mp4"
-        
-        if session_id in processing_sessions:
-            processing_sessions[session_id].update({
-                "status": "completed",
-                "progress": 100,
-                "detail": "اكتمل التوليد!",
-                "completed": True,
-                "video_url": video_url,
-                "title": prompt[:50] + ("..." if len(prompt) > 50 else ""),
-                "description": prompt,
-                "duration": 180,
-                "thumbnail": None,
-                "generated": True
-            })
-        
-    except Exception as e:
-        if session_id in processing_sessions:
-            processing_sessions[session_id].update({
-                "status": "failed",
-                "detail": str(e),
-                "completed": True,
-                "error": str(e)
-            })
-
-
-# ============================================
-# تنظيف الجلسات القديمة (اختياري)
-# ============================================
-async def cleanup_old_sessions():
-    """
-    تنظيف الجلسات القديمة بشكل دوري
-    """
-    while True:
-        await asyncio.sleep(3600)  # كل ساعة
-        to_remove = []
-        for sid, sess in processing_sessions.items():
-            if sess.get("completed"):
-                to_remove.append(sid)
-        
-        for sid in to_remove:
-            if sid in processing_sessions:
-                del processing_sessions[sid]
