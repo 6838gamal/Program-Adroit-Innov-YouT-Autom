@@ -185,7 +185,8 @@ async def process_video(
         "error": None,
         "started_at": datetime.now().isoformat(),
         "url": request.url,
-        "ytdlp_available": ytdlp_available
+        "ytdlp_available": ytdlp_available,
+        "ytdlp_error": None
     }
     
     # بدء المعالجة في الخلفية
@@ -230,7 +231,8 @@ async def get_processing_status(session_id: str):
         "error": session.get("error"),
         "started_at": session.get("started_at"),
         "updated_at": datetime.now().isoformat(),
-        "ytdlp_available": session.get("ytdlp_available", False)
+        "ytdlp_available": session.get("ytdlp_available", False),
+        "ytdlp_error": session.get("ytdlp_error")
     }
 
 
@@ -325,12 +327,12 @@ async def video_health_check():
 
 
 # ============================================
-# وظائف استخراج معلومات الفيديو (مع دعم yt-dlp)
+# وظائف استخراج معلومات الفيديو المحسنة
 # ============================================
 
 async def extract_video_info_with_ytdlp(url: str) -> Dict[str, Any]:
     """
-    استخراج معلومات الفيديو باستخدام yt-dlp (مع التحقق من وجوده)
+    استخراج معلومات الفيديو باستخدام yt-dlp مع معالجة أخطاء يوتيوب
     """
     # التحقق من وجود yt-dlp
     if not is_ytdlp_available():
@@ -338,13 +340,15 @@ async def extract_video_info_with_ytdlp(url: str) -> Dict[str, Any]:
         return extract_video_info_manual(url)
     
     try:
-        # استخدام yt-dlp لجلب معلومات الفيديو
+        # استخدام yt-dlp مع خيارات إضافية لتجنب مشاكل التحقق من البوت
         cmd = [
             "yt-dlp",
             "--dump-json",
             "--no-playlist",
             "--skip-download",
             "--no-warnings",
+            "--extractor-args", "youtube:player_client=android,web",  # استخدام عميل أندرويد لتجنب الحظر
+            "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             url
         ]
         
@@ -359,7 +363,15 @@ async def extract_video_info_with_ytdlp(url: str) -> Dict[str, Any]:
         if process.returncode != 0:
             error_msg = stderr.decode('utf-8', errors='ignore')
             print(f"yt-dlp error: {error_msg}")
-            # إذا فشل yt-dlp، نستخدم الطريقة اليدوية
+            
+            # التحقق من أنواع الأخطاء الشائعة
+            if "Sign in to confirm" in error_msg or "bot" in error_msg.lower():
+                print("⚠️ يوتيوب يطلب التحقق من البوت، استخدام الطريقة اليدوية")
+                return extract_video_info_manual(url, youtube_auth_error=True)
+            elif "video unavailable" in error_msg.lower():
+                print("⚠️ الفيديو غير متاح، استخدام الطريقة اليدوية")
+                return extract_video_info_manual(url, video_unavailable=True)
+            
             return extract_video_info_manual(url)
         
         # تحليل الناتج JSON
@@ -371,30 +383,16 @@ async def extract_video_info_with_ytdlp(url: str) -> Dict[str, Any]:
             "duration": data.get("duration"),
             "thumbnail": data.get("thumbnail"),
             "uploader": data.get("uploader"),
+            "uploader_id": data.get("uploader_id"),
             "description": data.get("description", "")[:500],
             "view_count": data.get("view_count"),
             "like_count": data.get("like_count"),
-            "platform": "unknown",
+            "platform": "youtube" if "youtube.com" in data.get("webpage_url", "") else "unknown",
             "format": "mp4",
             "size": None,
             "size_bytes": None,
             "dimensions": "1280x720"
         }
-        
-        # تحديد المنصة
-        webpage_url = data.get("webpage_url", "")
-        if "youtube.com" in webpage_url or "youtu.be" in webpage_url:
-            info["platform"] = "youtube"
-        elif "tiktok.com" in webpage_url:
-            info["platform"] = "tiktok"
-        elif "vimeo.com" in webpage_url:
-            info["platform"] = "vimeo"
-        elif "facebook.com" in webpage_url:
-            info["platform"] = "facebook"
-        elif "instagram.com" in webpage_url:
-            info["platform"] = "instagram"
-        else:
-            info["platform"] = "generic"
         
         # استخراج معلومات الصيغ
         if "formats" in data:
@@ -437,7 +435,7 @@ async def extract_video_info_with_ytdlp(url: str) -> Dict[str, Any]:
         return extract_video_info_manual(url)
 
 
-def extract_video_info_manual(url: str) -> Dict[str, Any]:
+def extract_video_info_manual(url: str, youtube_auth_error: bool = False, video_unavailable: bool = False) -> Dict[str, Any]:
     """
     استخراج معلومات الفيديو يدوياً (بدون yt-dlp)
     """
@@ -456,22 +454,38 @@ def extract_video_info_manual(url: str) -> Dict[str, Any]:
         "description": None,
         "view_count": None,
         "like_count": None,
-        "platform": "generic"
+        "platform": "generic",
+        "ytdlp_error": None
     }
     
     # تحديد المنصة من الرابط
     if "youtube.com" in domain or "youtu.be" in domain:
         info["platform"] = "youtube"
-        info["title"] = "فيديو يوتيوب"
-        info["duration"] = 120
-        info["size"] = "~45.6 MB"
-        info["size_bytes"] = 45.6 * 1024 * 1024
+        
+        if video_unavailable:
+            info["title"] = "فيديو يوتيوب (غير متاح)"
+            info["duration"] = 60
+            info["size"] = "~30.0 MB"
+            info["size_bytes"] = 30 * 1024 * 1024
+            info["ytdlp_error"] = "video_unavailable"
+        elif youtube_auth_error:
+            info["title"] = "فيديو يوتيوب (يتطلب تسجيل الدخول)"
+            info["duration"] = 120
+            info["size"] = "~45.6 MB"
+            info["size_bytes"] = 45.6 * 1024 * 1024
+            info["ytdlp_error"] = "auth_required"
+        else:
+            info["title"] = "فيديو يوتيوب"
+            info["duration"] = 120
+            info["size"] = "~45.6 MB"
+            info["size_bytes"] = 45.6 * 1024 * 1024
         
         # محاولة استخراج معرف الفيديو للحصول على الصورة المصغرة
         video_id = extract_youtube_id(url)
         if video_id:
             info["thumbnail"] = f"https://img.youtube.com/vi/{video_id}/hqdefault.jpg"
-            info["title"] = f"فيديو يوتيوب (ID: {video_id[:8]}...)"
+            if not youtube_auth_error and not video_unavailable:
+                info["title"] = f"فيديو يوتيوب (ID: {video_id[:8]}...)"
             
     elif "tiktok.com" in domain:
         info["platform"] = "tiktok"
@@ -523,7 +537,8 @@ def extract_youtube_id(url: str) -> Optional[str]:
         r'(?:youtu\.be\/)([\w-]+)',
         r'(?:youtube\.com\/embed\/)([\w-]+)',
         r'(?:youtube\.com\/shorts\/)([\w-]+)',
-        r'(?:youtube\.com\/v\/)([\w-]+)'
+        r'(?:youtube\.com\/v\/)([\w-]+)',
+        r'(?:youtube\.com\/watch\?.*?v=)([\w-]+)'
     ]
     
     for pattern in patterns:
@@ -618,8 +633,16 @@ async def process_video_background(session_id: str, url: str):
             "description": video_info.get("description"),
             "view_count": video_info.get("view_count"),
             "like_count": video_info.get("like_count"),
-            "platform": video_info.get("platform", "generic")
+            "platform": video_info.get("platform", "generic"),
+            "ytdlp_error": video_info.get("ytdlp_error")
         })
+        
+        # إذا كان هناك خطأ في yt-dlp، نضيف ملاحظة في التفاصيل
+        if video_info.get("ytdlp_error") == "auth_required":
+            processing_sessions[session_id]["detail"] = "⚠️ يوتيوب يطلب تسجيل الدخول، تم استخدام معلومات تقديرية"
+        elif video_info.get("ytdlp_error") == "video_unavailable":
+            processing_sessions[session_id]["detail"] = "⚠️ الفيديو غير متاح، تم استخدام معلومات تقديرية"
+        
         await asyncio.sleep(1.5)
         
         # خطوة 3: التحقق من الرابط
@@ -661,15 +684,17 @@ async def process_video_background(session_id: str, url: str):
         # اكتمال المعالجة
         video_url = url
         
-        # إذا كان الرابط من يوتيوب و yt-dlp غير متوفر، استخدم فيديو تجريبي
-        if video_info.get("platform") == "youtube" and not ytdlp_available:
+        # استخدام فيديو تجريبي للعرض إذا كان الرابط من يوتيوب
+        if video_info.get("platform") == "youtube":
+            # استخدم فيديو تجريبي للعرض
             video_url = "https://sample-videos.com/video321/mp4/240/big_buck_bunny_240p_1mb.mp4"
-            processing_sessions[session_id]["detail"] = "تم استخدام فيديو تجريبي للعرض (yt-dlp غير متوفر)"
+            if not processing_sessions[session_id].get("detail") or "⚠️" not in processing_sessions[session_id].get("detail", ""):
+                processing_sessions[session_id]["detail"] = "تم استخدام فيديو تجريبي للعرض (بديل ليوتيوب)"
         
         processing_sessions[session_id].update({
             "status": "completed",
             "progress": 100,
-            "detail": "اكتملت المعالجة! ✅",
+            "detail": processing_sessions[session_id].get("detail", "اكتملت المعالجة! ✅"),
             "step": "اكتمل",
             "completed": True,
             "video_url": video_url,
