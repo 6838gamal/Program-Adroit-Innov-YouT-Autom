@@ -11,7 +11,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from config.settings import settings, ensure_dirs, validate_config
-from infrastructure.database.session import create_all_tables
+from infrastructure.database.session import (
+    create_all_tables, 
+    check_connection, 
+    is_database_available,
+    get_db_status,
+    get_db_error
+)
 from plugins.registry import PluginRegistry, PluginLoader
 from interfaces.api.router import api_router
 from interfaces.api.oauth import router as oauth_router
@@ -32,41 +38,41 @@ async def lifespan(app: FastAPI):
     # ── Startup ───────────────────────────────────────────────────────────────
     logger.info("Starting %s v%s", settings.APP_NAME, settings.APP_VERSION)
     logger.info("Environment: %s", settings.ENVIRONMENT)
-    logger.info("Database Type: %s", "Supabase" if settings.using_supabase_db else "PostgreSQL/SQLite")
+    logger.info("Database Type: Supabase")
 
     # Validate configuration
     try:
         validate_config()
+        logger.info("✅ Configuration validated")
     except Exception as e:
-        logger.error(f"Configuration validation failed: {e}")
+        logger.error(f"❌ Configuration validation failed: {e}")
         if settings.is_production:
             raise
 
     # Ensure required directories exist
     ensure_dirs()
+    logger.info("✅ Directories created")
 
     # ── Database Setup ──────────────────────────────────────────────────────
-    if settings.using_supabase_db:
-        # استخدام Supabase كقاعدة بيانات عبر SQLAlchemy
-        logger.info("Using Supabase as database (via SQLAlchemy)")
-        try:
-            # إنشاء الجداول (إذا كانت PostgreSQL)
-            await create_all_tables()
-            logger.info("✅ Database tables ready")
-            
-            # عرض معلومات الاتصال
-            logger.info(f"Supabase URL: {settings.SUPABASE_URL}")
-            logger.info(f"Supabase Public Key: {'✅ Configured' if settings.supabase_public_key_value else '❌ Missing'}")
-            logger.info(f"Supabase Secret Key: {'✅ Configured' if settings.supabase_secret_key_value else '⚠️ Not set'}")
-        except Exception as e:
-            logger.error(f"❌ Database setup failed: {e}")
-            if settings.is_production:
-                raise
-    else:
-        # استخدام PostgreSQL أو SQLite
-        logger.info("Using PostgreSQL/SQLite as database")
+    logger.info("Connecting to Supabase database...")
+    try:
+        # محاولة إنشاء الجداول (لن تتعطل إذا فشلت)
         await create_all_tables()
-        logger.info("✅ Database tables ready")
+        
+        # التحقق من الاتصال
+        if await check_connection():
+            logger.info("✅ Supabase database connected successfully!")
+        else:
+            logger.warning("⚠️ Supabase database connection failed - running in limited mode")
+            logger.warning(f"   Error: {get_db_error()}")
+            
+    except Exception as e:
+        logger.warning(f"⚠️ Database setup warning: {e}")
+        logger.warning("⚠️ Continuing without database - some features will be unavailable")
+    
+    # عرض حالة قاعدة البيانات
+    status = get_db_status()
+    logger.info(f"📊 Database status: Available={status['available']}")
 
     # ── Load Plugins ────────────────────────────────────────────────────────
     try:
@@ -79,14 +85,27 @@ async def lifespan(app: FastAPI):
         logger.warning(f"⚠️ Failed to load plugins: {e}")
 
     # ── Seed initial data ──────────────────────────────────────────────────
-    try:
-        await _seed_initial_data()
-    except Exception as e:
-        logger.warning(f"⚠️ Failed to seed initial data: {e}")
-        # Not critical for startup
+    if is_database_available():
+        try:
+            await _seed_initial_data()
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to seed initial data: {e}")
+    else:
+        logger.warning("⚠️ Skipping data seeding: Database not available")
 
+    # ── Startup Complete ──────────────────────────────────────────────────
     logger.info("🚀 Platform ready at http://%s:%s", settings.HOST, settings.PORT)
     logger.info("📚 API Docs: http://%s:%s/docs", settings.HOST, settings.PORT)
+    
+    if not is_database_available():
+        logger.warning("⚠️ ════════════════════════════════════════════════════")
+        logger.warning("⚠️  RUNNING IN LIMITED MODE - Database is not available")
+        logger.warning("⚠️  Some features will not work properly")
+        logger.warning("⚠️  Check your Supabase configuration:")
+        logger.warning("⚠️    - SUPABASE_URL: %s", settings.SUPABASE_URL)
+        logger.warning("⚠️    - POSTGRES_PASSWORD: %s", "Set" if settings.POSTGRES_PASSWORD else "Missing")
+        logger.warning("⚠️  Error: %s", get_db_error())
+        logger.warning("⚠️ ════════════════════════════════════════════════════")
 
     yield
 
@@ -99,12 +118,20 @@ async def _seed_initial_data() -> None:
     Insert default platform records if not present.
     Uses SQLAlchemy for both Supabase and PostgreSQL.
     """
+    if not is_database_available():
+        logger.warning("⚠️ Skipping data seeding: Database not available")
+        return
+    
     try:
         from infrastructure.database.session import get_session_factory
         from infrastructure.database.models.publishing_model import PublishingPlatformModel
         from sqlalchemy import select
         
         factory = get_session_factory()
+        if factory is None:
+            logger.warning("⚠️ Cannot get session factory - database not available")
+            return
+            
         async with factory() as session:
             # Check if YouTube platform exists
             q = select(PublishingPlatformModel).where(PublishingPlatformModel.name == "youtube")
@@ -227,13 +254,38 @@ def create_app() -> FastAPI:
     @app.get("/health")
     async def health_check():
         """Health check endpoint."""
-        return {
+        status = {
             "status": "healthy",
             "app": settings.APP_NAME,
             "version": settings.APP_VERSION,
             "environment": settings.ENVIRONMENT,
-            "database": "supabase" if settings.using_supabase_db else "postgresql/sqlite",
-            "supabase_configured": settings.supabase_configured if settings.using_supabase_db else None,
+            "database": "supabase"
+        }
+        
+        # إضافة حالة قاعدة البيانات
+        db_status = get_db_status()
+        status["database_status"] = db_status
+        
+        return status
+
+    # ── Status Endpoint ──────────────────────────────────────────────────
+    @app.get("/status")
+    async def system_status():
+        """System status endpoint with detailed database info."""
+        db_info = {
+            "available": is_database_available(),
+            "error": get_db_error(),
+            "engine_initialized": get_db_status()["engine_initialized"]
+        }
+        
+        return {
+            "app": settings.APP_NAME,
+            "version": settings.APP_VERSION,
+            "environment": settings.ENVIRONMENT,
+            "database": db_info,
+            "plugins_loaded": hasattr(app.state, 'plugin_registry'),
+            "supabase_configured": settings.supabase_configured,
+            "supabase_url": settings.SUPABASE_URL,
         }
 
     return app
