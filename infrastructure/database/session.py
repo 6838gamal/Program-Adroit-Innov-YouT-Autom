@@ -9,12 +9,10 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy import MetaData
-from infrastructure.database.supabase_client import supabase_client
 
 logger = logging.getLogger(__name__)
 
 
-# تعريف قاعدة البيانات مع تسمية توافقية
 class Base(DeclarativeBase):
     metadata = MetaData(
         naming_convention={
@@ -31,7 +29,7 @@ _engine: AsyncEngine | None = None
 _session_factory: async_sessionmaker | None = None
 _db_available: bool = False
 _db_error: str | None = None
-_use_supabase_client: bool = False
+_use_supabase_client: bool = False  # دائمًا False بعد تعطيل العميل
 
 
 def get_database_url() -> str | None:
@@ -40,20 +38,22 @@ def get_database_url() -> str | None:
     Returns None if not configured.
     """
     # 1. استخدام الرابط المباشر إذا كان موجوداً
-    direct_url = os.getenv("SUPABASE_DIRECT_URL")
+    direct_url = os.getenv("DATABASE_URL") or os.getenv("SUPABASE_DIRECT_URL")
     if direct_url:
-        logger.info("✅ Using SUPABASE_DIRECT_URL from environment")
+        logger.info("✅ Using DATABASE_URL from environment")
         return direct_url
     
     # 2. استخدام SUPABASE_URL لبناء الرابط
     supabase_url = os.getenv("SUPABASE_URL")
     if not supabase_url:
+        logger.warning("⚠️ SUPABASE_URL not found")
         return None
     
     try:
         # استخراج project_ref من SUPABASE_URL
         match = re.search(r'https?://([^.]+)\.supabase\.co', supabase_url)
         if not match:
+            logger.warning("⚠️ Could not extract project reference from SUPABASE_URL")
             return None
         
         project_ref = match.group(1)
@@ -74,14 +74,7 @@ def get_database_url() -> str | None:
 
 def get_engine() -> AsyncEngine | None:
     """Get database engine for Supabase. Returns None if connection fails."""
-    global _engine, _db_available, _db_error, _use_supabase_client
-    
-    # إذا كان Supabase Client متاحاً، استخدمه بدلاً من SQLAlchemy
-    if supabase_client.is_available():
-        _use_supabase_client = True
-        _db_available = True
-        logger.info("✅ Using Supabase Client (REST API) instead of direct connection")
-        return None
+    global _engine, _db_available, _db_error
     
     if _engine is not None:
         return _engine
@@ -90,6 +83,7 @@ def get_engine() -> AsyncEngine | None:
         database_url = get_database_url()
         if not database_url:
             logger.warning("⚠️ No database URL configured")
+            _db_available = False
             return None
         
         # إعدادات الاتصال من متغيرات البيئة
@@ -103,13 +97,15 @@ def get_engine() -> AsyncEngine | None:
             "pool_pre_ping": True,
         }
         
-        logger.info("Creating Supabase database engine...")
+        logger.info("Creating database engine...")
         _engine = create_async_engine(
             database_url,
             **engine_kwargs
         )
         
         _db_available = True
+        _db_error = None
+        logger.info("✅ Database engine created successfully!")
         return _engine
         
     except Exception as e:
@@ -153,13 +149,6 @@ async def get_db() -> AsyncSession:
             detail="Database is currently unavailable. Please try again later."
         )
     
-    # إذا كان يستخدم Supabase Client، ارفع استثناء (يجب استخدام supabase_client مباشرة)
-    if _use_supabase_client:
-        raise HTTPException(
-            status_code=503,
-            detail="Database is using Supabase Client. Use supabase_client directly."
-        )
-    
     factory = get_session_factory()
     if factory is None:
         raise HTTPException(
@@ -180,11 +169,6 @@ async def get_db() -> AsyncSession:
 
 async def create_all_tables() -> None:
     """Create all tables on startup."""
-    # إذا كان يستخدم Supabase Client، لا نحتاج لإنشاء جداول
-    if _use_supabase_client:
-        logger.info("✅ Using Supabase Client - tables are managed via Supabase Dashboard")
-        return
-    
     engine = get_engine()
     if engine is None:
         logger.warning("⚠️ Skipping table creation: Database engine not available")
@@ -205,14 +189,11 @@ async def create_all_tables() -> None:
         _db_error = str(e)
         _db_available = False
         logger.error(f"❌ Failed to create tables: {e}")
+        logger.warning("⚠️ Continuing without database tables - some features will be unavailable")
 
 
 async def drop_all_tables() -> None:
     """Drop all tables (for testing only)."""
-    if _use_supabase_client:
-        logger.warning("⚠️ Cannot drop tables with Supabase Client. Use Supabase Dashboard.")
-        return
-    
     engine = get_engine()
     if engine is None:
         logger.warning("⚠️ Skipping table drop: Database engine not available")
@@ -225,15 +206,7 @@ async def drop_all_tables() -> None:
 
 async def check_connection() -> bool:
     """Check database connection."""
-    global _db_available, _db_error, _use_supabase_client
-    
-    # إذا كان Supabase Client متاحاً
-    if supabase_client.is_available():
-        _use_supabase_client = True
-        _db_available = True
-        _db_error = None
-        logger.info("✅ Supabase Client connection successful!")
-        return True
+    global _db_available, _db_error
     
     engine = get_engine()
     if engine is None:
@@ -245,26 +218,22 @@ async def check_connection() -> bool:
             await conn.execute("SELECT 1")
         _db_available = True
         _db_error = None
-        logger.info("✅ Supabase connection successful!")
+        logger.info("✅ Database connection successful!")
         return True
     except Exception as e:
         _db_available = False
         _db_error = str(e)
-        logger.error(f"❌ Supabase connection failed: {e}")
+        logger.error(f"❌ Database connection failed: {e}")
         return False
 
 
 def is_database_available() -> bool:
     """Check if database is available."""
-    global _db_available, _use_supabase_client
-    if _use_supabase_client:
-        return supabase_client.is_available()
     return _db_available and _engine is not None
 
 
 def get_db_error() -> str | None:
     """Get the last database error."""
-    global _db_error
     return _db_error
 
 
@@ -302,13 +271,6 @@ async def table_exists(table_name: str) -> bool:
     """Check if a table exists in the database."""
     if not is_database_available():
         return False
-    
-    if _use_supabase_client:
-        try:
-            response = supabase_client.client.table(table_name).select('id').limit(1).execute()
-            return True
-        except:
-            return False
     
     engine = get_engine()
     if engine is None:
