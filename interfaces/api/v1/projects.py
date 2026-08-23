@@ -186,7 +186,8 @@ async def process_video(
         "started_at": datetime.now().isoformat(),
         "url": request.url,
         "ytdlp_available": ytdlp_available,
-        "ytdlp_error": None
+        "ytdlp_error": None,
+        "platform": None
     }
     
     # بدء المعالجة في الخلفية
@@ -232,7 +233,8 @@ async def get_processing_status(session_id: str):
         "started_at": session.get("started_at"),
         "updated_at": datetime.now().isoformat(),
         "ytdlp_available": session.get("ytdlp_available", False),
-        "ytdlp_error": session.get("ytdlp_error")
+        "ytdlp_error": session.get("ytdlp_error"),
+        "platform": session.get("platform")
     }
 
 
@@ -347,8 +349,10 @@ async def extract_video_info_with_ytdlp(url: str) -> Dict[str, Any]:
             "--no-playlist",
             "--skip-download",
             "--no-warnings",
-            "--extractor-args", "youtube:player_client=android,web",  # استخدام عميل أندرويد لتجنب الحظر
+            "--extractor-args", "youtube:player_client=android,web",
             "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "--socket-timeout", "30",
+            "--retries", "3",
             url
         ]
         
@@ -368,16 +372,19 @@ async def extract_video_info_with_ytdlp(url: str) -> Dict[str, Any]:
             if "Sign in to confirm" in error_msg or "bot" in error_msg.lower():
                 print("⚠️ يوتيوب يطلب التحقق من البوت، استخدام الطريقة اليدوية")
                 return extract_video_info_manual(url, youtube_auth_error=True)
-            elif "video unavailable" in error_msg.lower():
-                print("⚠️ الفيديو غير متاح، استخدام الطريقة اليدوية")
+            elif "video unavailable" in error_msg.lower() or "private" in error_msg.lower():
+                print("⚠️ الفيديو غير متاح أو خاص، استخدام الطريقة اليدوية")
                 return extract_video_info_manual(url, video_unavailable=True)
+            elif "rate limit" in error_msg.lower():
+                print("⚠️ تم تجاوز حد الطلبات، استخدام الطريقة اليدوية")
+                return extract_video_info_manual(url)
             
             return extract_video_info_manual(url)
         
         # تحليل الناتج JSON
         data = json.loads(stdout.decode('utf-8', errors='ignore'))
         
-        # استخراج المعلومات
+        # استخراج المعلومات الأساسية
         info = {
             "title": data.get("title", "فيديو بدون عنوان"),
             "duration": data.get("duration"),
@@ -391,13 +398,14 @@ async def extract_video_info_with_ytdlp(url: str) -> Dict[str, Any]:
             "format": "mp4",
             "size": None,
             "size_bytes": None,
-            "dimensions": "1280x720"
+            "dimensions": "1280x720",
+            "ytdlp_error": None
         }
         
         # استخراج معلومات الصيغ
         if "formats" in data:
             formats = data["formats"]
-            # اختيار أفضل صيغة
+            # اختيار أفضل صيغة (mp4 مع أعلى دقة)
             best_format = None
             for fmt in formats:
                 if fmt.get("ext") == "mp4" and fmt.get("height"):
@@ -420,7 +428,7 @@ async def extract_video_info_with_ytdlp(url: str) -> Dict[str, Any]:
         # إذا لم نحصل على حجم، نستخدم قيمة افتراضية
         if not info["size"]:
             duration = info["duration"] or 60
-            estimated_size = max(duration * 5, 5)
+            estimated_size = max(duration * 5, 5)  # 5MB لكل دقيقة
             info["size_bytes"] = estimated_size * 1024 * 1024
             info["size"] = f"~{estimated_size:.1f} MB"
         
@@ -429,6 +437,9 @@ async def extract_video_info_with_ytdlp(url: str) -> Dict[str, Any]:
         
     except json.JSONDecodeError as e:
         print(f"JSON decode error: {e}")
+        return extract_video_info_manual(url)
+    except asyncio.TimeoutError:
+        print("⏰ انتهى وقت استخراج المعلومات، استخدام الطريقة اليدوية")
         return extract_video_info_manual(url)
     except Exception as e:
         print(f"Error extracting video info with yt-dlp: {e}")
@@ -462,30 +473,37 @@ def extract_video_info_manual(url: str, youtube_auth_error: bool = False, video_
     if "youtube.com" in domain or "youtu.be" in domain:
         info["platform"] = "youtube"
         
+        # محاولة استخراج معرف الفيديو للحصول على الصورة المصغرة
+        video_id = extract_youtube_id(url)
+        
         if video_unavailable:
-            info["title"] = "فيديو يوتيوب (غير متاح)"
+            info["title"] = f"فيديو يوتيوب (غير متاح - ID: {video_id[:8] if video_id else '???'})"
             info["duration"] = 60
             info["size"] = "~30.0 MB"
             info["size_bytes"] = 30 * 1024 * 1024
             info["ytdlp_error"] = "video_unavailable"
+            if video_id:
+                info["thumbnail"] = f"https://img.youtube.com/vi/{video_id}/hqdefault.jpg"
         elif youtube_auth_error:
-            info["title"] = "فيديو يوتيوب (يتطلب تسجيل الدخول)"
+            info["title"] = f"فيديو يوتيوب (يتطلب تسجيل الدخول - ID: {video_id[:8] if video_id else '???'})"
             info["duration"] = 120
             info["size"] = "~45.6 MB"
             info["size_bytes"] = 45.6 * 1024 * 1024
             info["ytdlp_error"] = "auth_required"
+            if video_id:
+                info["thumbnail"] = f"https://img.youtube.com/vi/{video_id}/hqdefault.jpg"
         else:
-            info["title"] = "فيديو يوتيوب"
+            info["title"] = f"فيديو يوتيوب (ID: {video_id[:8] if video_id else '???'})"
             info["duration"] = 120
             info["size"] = "~45.6 MB"
             info["size_bytes"] = 45.6 * 1024 * 1024
+            if video_id:
+                info["thumbnail"] = f"https://img.youtube.com/vi/{video_id}/hqdefault.jpg"
         
-        # محاولة استخراج معرف الفيديو للحصول على الصورة المصغرة
-        video_id = extract_youtube_id(url)
+        # إضافة تفاصيل إضافية عن رابط يوتيوب
         if video_id:
-            info["thumbnail"] = f"https://img.youtube.com/vi/{video_id}/hqdefault.jpg"
-            if not youtube_auth_error and not video_unavailable:
-                info["title"] = f"فيديو يوتيوب (ID: {video_id[:8]}...)"
+            info["description"] = f"فيديو من يوتيوب - المعرف: {video_id}"
+            info["uploader"] = "YouTube"
             
     elif "tiktok.com" in domain:
         info["platform"] = "tiktok"
@@ -494,6 +512,7 @@ def extract_video_info_manual(url: str, youtube_auth_error: bool = False, video_
         info["size"] = "~15.2 MB"
         info["size_bytes"] = 15.2 * 1024 * 1024
         info["dimensions"] = "1080x1920"
+        info["uploader"] = "TikTok"
         
     elif "vimeo.com" in domain:
         info["platform"] = "vimeo"
@@ -501,6 +520,7 @@ def extract_video_info_manual(url: str, youtube_auth_error: bool = False, video_
         info["duration"] = 180
         info["size"] = "~89.3 MB"
         info["size_bytes"] = 89.3 * 1024 * 1024
+        info["uploader"] = "Vimeo"
         
     elif "facebook.com" in domain:
         info["platform"] = "facebook"
@@ -508,6 +528,7 @@ def extract_video_info_manual(url: str, youtube_auth_error: bool = False, video_
         info["duration"] = 120
         info["size"] = "~35.0 MB"
         info["size_bytes"] = 35 * 1024 * 1024
+        info["uploader"] = "Facebook"
         
     elif "instagram.com" in domain:
         info["platform"] = "instagram"
@@ -515,6 +536,7 @@ def extract_video_info_manual(url: str, youtube_auth_error: bool = False, video_
         info["duration"] = 60
         info["size"] = "~20.0 MB"
         info["size_bytes"] = 20 * 1024 * 1024
+        info["uploader"] = "Instagram"
         
     else:
         info["platform"] = "generic"
@@ -524,13 +546,13 @@ def extract_video_info_manual(url: str, youtube_auth_error: bool = False, video_
         info["size_bytes"] = 30 * 1024 * 1024
         info["format"] = detect_video_format(url)
     
-    print(f"ℹ️ تم استخراج معلومات الفيديو يدوياً (بدون yt-dlp): {info['title']}")
+    print(f"ℹ️ تم استخراج معلومات الفيديو يدوياً: {info['title']}")
     return info
 
 
 def extract_youtube_id(url: str) -> Optional[str]:
     """
-    استخراج معرف الفيديو من رابط يوتيوب
+    استخراج معرف الفيديو من رابط يوتيوب باستخدام أنماط متعددة
     """
     patterns = [
         r'(?:youtube\.com\/watch\?v=)([\w-]+)',
@@ -588,7 +610,7 @@ def format_file_size(bytes_size: int) -> str:
 
 async def process_video_background(session_id: str, url: str):
     """
-    معالجة الفيديو في الخلفية
+    معالجة الفيديو في الخلفية مع تحديث التقدم
     """
     try:
         # خطوة 1: تحليل الرابط
@@ -686,7 +708,6 @@ async def process_video_background(session_id: str, url: str):
         
         # استخدام فيديو تجريبي للعرض إذا كان الرابط من يوتيوب
         if video_info.get("platform") == "youtube":
-            # استخدم فيديو تجريبي للعرض
             video_url = "https://sample-videos.com/video321/mp4/240/big_buck_bunny_240p_1mb.mp4"
             if not processing_sessions[session_id].get("detail") or "⚠️" not in processing_sessions[session_id].get("detail", ""):
                 processing_sessions[session_id]["detail"] = "تم استخدام فيديو تجريبي للعرض (بديل ليوتيوب)"
@@ -709,7 +730,8 @@ async def process_video_background(session_id: str, url: str):
             "description": video_info.get("description"),
             "view_count": video_info.get("view_count"),
             "like_count": video_info.get("like_count"),
-            "platform": video_info.get("platform")
+            "platform": video_info.get("platform"),
+            "ytdlp_error": video_info.get("ytdlp_error")
         })
         
     except Exception as e:
