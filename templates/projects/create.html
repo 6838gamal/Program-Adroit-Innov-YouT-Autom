@@ -62,6 +62,7 @@
                     </div>
                 </div>
                 
+                <!-- معلومات الفيديو التفصيلية -->
                 <div id="video-info" class="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
                     <div class="bg-slate-800/50 rounded-lg p-2 text-center">
                         <span class="text-slate-500 block">📹 الصيغة</span>
@@ -78,6 +79,30 @@
                     <div class="bg-slate-800/50 rounded-lg p-2 text-center">
                         <span class="text-slate-500 block">📐 الأبعاد</span>
                         <span id="video-dimensions" class="text-slate-300">—</span>
+                    </div>
+                </div>
+                
+                <!-- معلومات إضافية من yt-dlp -->
+                <div id="video-extra-info" class="mt-2 grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs hidden">
+                    <div class="bg-slate-800/30 rounded-lg p-2 text-center">
+                        <span class="text-slate-500 block">👤 الناشر</span>
+                        <span id="video-uploader" class="text-slate-300">—</span>
+                    </div>
+                    <div class="bg-slate-800/30 rounded-lg p-2 text-center">
+                        <span class="text-slate-500 block">👁️ المشاهدات</span>
+                        <span id="video-views" class="text-slate-300">—</span>
+                    </div>
+                    <div class="bg-slate-800/30 rounded-lg p-2 text-center">
+                        <span class="text-slate-500 block">👍 الإعجابات</span>
+                        <span id="video-likes" class="text-slate-300">—</span>
+                    </div>
+                </div>
+                
+                <!-- وصف الفيديو -->
+                <div id="video-description" class="mt-2 hidden">
+                    <div class="bg-slate-800/30 rounded-lg p-2">
+                        <span class="text-xs text-slate-500 block mb-1">📝 الوصف:</span>
+                        <p id="video-description-text" class="text-xs text-slate-300 line-clamp-3"></p>
                     </div>
                 </div>
             </div>
@@ -175,6 +200,17 @@
                             <span id="loading-dimensions" class="text-slate-300 text-xs">—</span>
                         </div>
                     </div>
+                    <!-- معلومات إضافية أثناء التحميل -->
+                    <div id="loading-extra-info" class="grid grid-cols-2 gap-2 mt-2 hidden">
+                        <div class="bg-slate-800/30 rounded p-2 text-center">
+                            <span class="text-slate-500 block text-[10px]">👤 الناشر</span>
+                            <span id="loading-uploader" class="text-slate-300 text-xs">—</span>
+                        </div>
+                        <div class="bg-slate-800/30 rounded p-2 text-center">
+                            <span class="text-slate-500 block text-[10px]">👁️ المشاهدات</span>
+                            <span id="loading-views" class="text-slate-300 text-xs">—</span>
+                        </div>
+                    </div>
                 </div>
                 
                 <div class="mt-3 flex justify-end">
@@ -233,6 +269,12 @@
 }
 #video-preview::-webkit-media-controls-panel {
     background: rgba(0, 0, 0, 0.7);
+}
+.line-clamp-3 {
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
 }
 </style>
 {% endblock %}
@@ -375,7 +417,7 @@ function removeVideoLink(index) {
 // معالجة الفيديو مع عرض التقدم الفعلي
 // ============================================
 async function processVideoLink(url) {
-    showProgress('جاري تحليل رابط الفيديو...', 5, 'تحليل الرابط', 'جاري استخراج معلومات الفيديو');
+    showProgress('جاري تحليل رابط الفيديو...', 5, 'تحليل الرابط', 'جاري استخراج معلومات الفيديو باستخدام yt-dlp');
     updateLoadingVideoInfo('جاري التحليل...', '—', '—', '—');
     
     try {
@@ -436,7 +478,9 @@ async function pollProcessingStatus(sessionId) {
                 progress: status.progress,
                 step: status.step,
                 detail: status.detail,
-                completed: status.completed
+                completed: status.completed,
+                title: status.title,
+                uploader: status.uploader
             });
             
             if (status.progress !== undefined && status.progress !== lastProgress) {
@@ -448,6 +492,7 @@ async function pollProcessingStatus(sessionId) {
                     status.step || status.status || 'processing'
                 );
                 
+                // تحديث معلومات الفيديو الأساسية
                 if (status.format || status.size || status.duration || status.dimensions) {
                     updateLoadingVideoInfo(
                         status.format || 'جاري التحديد...',
@@ -456,6 +501,17 @@ async function pollProcessingStatus(sessionId) {
                         status.dimensions || '—'
                     );
                     document.getElementById('video-info-loading').classList.remove('hidden');
+                }
+                
+                // تحديث المعلومات الإضافية (الناشر، المشاهدات)
+                if (status.uploader || status.view_count) {
+                    document.getElementById('loading-extra-info').classList.remove('hidden');
+                    if (status.uploader) {
+                        document.getElementById('loading-uploader').textContent = status.uploader;
+                    }
+                    if (status.view_count) {
+                        document.getElementById('loading-views').textContent = formatNumber(status.view_count);
+                    }
                 }
                 
                 if (status.title) {
@@ -479,6 +535,11 @@ async function pollProcessingStatus(sessionId) {
                     format: status.format || 'mp4',
                     size: status.size || '—',
                     dimensions: status.dimensions || '—',
+                    uploader: status.uploader,
+                    view_count: status.view_count,
+                    like_count: status.like_count,
+                    description: status.description,
+                    thumbnail: status.thumbnail,
                     processed: true,
                     session_id: sessionId
                 });
@@ -720,7 +781,7 @@ function cancelProcessing() {
 }
 
 // ============================================
-// دالة مساعدة لتنسيق المدة
+// دوال مساعدة
 // ============================================
 function formatDuration(seconds) {
     if (!seconds || isNaN(seconds)) return '—';
@@ -729,8 +790,19 @@ function formatDuration(seconds) {
     return `${mins}:${String(secs).padStart(2, '0')}`;
 }
 
+function formatNumber(num) {
+    if (!num) return '—';
+    if (num >= 1000000) {
+        return (num / 1000000).toFixed(1) + 'M';
+    }
+    if (num >= 1000) {
+        return (num / 1000).toFixed(1) + 'K';
+    }
+    return num.toString();
+}
+
 // ============================================
-// عرض المعاينة مع استخراج معلومات الفيديو
+// عرض المعاينة مع معلومات yt-dlp الإضافية
 // ============================================
 function showPreviewWithInfo(videoUrl, videoData) {
     const previewArea = document.getElementById('preview-area');
@@ -748,10 +820,25 @@ function showPreviewWithInfo(videoUrl, videoData) {
     source.src = videoUrl;
     video.load();
     
+    // تحديث المعلومات الأساسية
     document.getElementById('video-format').textContent = videoData.format || 'mp4';
     document.getElementById('video-size').textContent = videoData.size || '—';
     document.getElementById('video-duration').textContent = videoData.duration ? formatDuration(videoData.duration) : '—';
     document.getElementById('video-dimensions').textContent = videoData.dimensions || '—';
+    
+    // تحديث المعلومات الإضافية
+    if (videoData.uploader || videoData.view_count || videoData.like_count) {
+        document.getElementById('video-extra-info').classList.remove('hidden');
+        document.getElementById('video-uploader').textContent = videoData.uploader || '—';
+        document.getElementById('video-views').textContent = videoData.view_count ? formatNumber(videoData.view_count) : '—';
+        document.getElementById('video-likes').textContent = videoData.like_count ? formatNumber(videoData.like_count) : '—';
+    }
+    
+    // عرض الوصف إذا كان موجوداً
+    if (videoData.description) {
+        document.getElementById('video-description').classList.remove('hidden');
+        document.getElementById('video-description-text').textContent = videoData.description;
+    }
     
     state.generatedVideo = {
         url: videoUrl,
@@ -835,6 +922,10 @@ async function confirmProject() {
             duration: state.generatedVideo.data.duration || 0,
             format: state.generatedVideo.data.format || 'mp4',
             dimensions: state.generatedVideo.data.dimensions || '',
+            uploader: state.generatedVideo.data.uploader || '',
+            view_count: state.generatedVideo.data.view_count || 0,
+            like_count: state.generatedVideo.data.like_count || 0,
+            description: state.generatedVideo.data.description || '',
             status: 'rendered',
             session_id: state.sessionId,
             thumbnail: state.generatedVideo.data.thumbnail || null
@@ -996,7 +1087,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initSession();
     checkConnection();
     setInterval(checkConnection, 30000);
-    console.log('🎬 AI Video Creator - Create Page initialized');
+    console.log('🎬 AI Video Creator - Create Page initialized with yt-dlp support');
 });
 
 function showToast(message, type = 'info') {
