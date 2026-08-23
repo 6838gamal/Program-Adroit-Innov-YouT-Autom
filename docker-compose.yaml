@@ -1,0 +1,82 @@
+# docker-compose.yml
+version: '3.8'
+
+services:
+  app:
+    build: .
+    container_name: video-platform-app
+    ports:
+      - "5000:5000"
+    environment:
+      - ENVIRONMENT=${ENVIRONMENT:-development}
+      - DEBUG=${DEBUG:-True}
+      - SECRET_KEY=${SECRET_KEY:-change-me-in-production}
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_PUBLIC_KEY=${SUPABASE_PUBLIC_KEY}
+      - SUPABASE_SECRET_KEY=${SUPABASE_SECRET_KEY}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - DB_POOL_SIZE=${DB_POOL_SIZE:-10}
+      - DB_MAX_OVERFLOW=${DB_MAX_OVERFLOW:-20}
+      - DB_POOL_TIMEOUT=${DB_POOL_TIMEOUT:-30}
+      - DB_POOL_RECYCLE=${DB_POOL_RECYCLE:-3600}
+      - DATABASE_ECHO=${DATABASE_ECHO:-False}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - API_DOCS_ENABLED=${API_DOCS_ENABLED:-True}
+      - PLUGINS_ENABLED=${PLUGINS_ENABLED:-True}
+      - SCHEDULER_ENABLED=${SCHEDULER_ENABLED:-True}
+      - CACHE_TYPE=${CACHE_TYPE:-simple}
+    volumes:
+      - ./media:/app/media
+      - ./temp:/app/temp
+      - ./exports:/app/exports
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./cache:/app/cache
+      - ./config:/app/config
+      - ./static:/app/static
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - video-network
+
+  # Redis للتخزين المؤقت (اختياري)
+  redis:
+    image: redis:7-alpine
+    container_name: video-platform-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - ./redis_data:/data
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    networks:
+      - video-network
+    profiles:
+      - redis
+
+  # PostgreSQL للتطوير المحلي (اختياري)
+  postgres:
+    image: postgres:15-alpine
+    container_name: video-platform-postgres
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=video_platform
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    networks:
+      - video-network
+    profiles:
+      - postgres
+
+networks:
+  video-network:
+    driver: bridge
