@@ -1,16 +1,16 @@
 {% extends "base.html" %}
-{% block title %}مشروع جديد - دردشة AI{% endblock %}
-{% block page_title %}إنشاء مشروع فيديو بالذكاء الاصطناعي{% endblock %}
+{% block title %}مشروع جديد - إنشاء فيديو بالذكاء الاصطناعي{% endblock %}
+{% block page_title %}إنشاء فيديو بالذكاء الاصطناعي{% endblock %}
 
 {% block content %}
-<div class="max-w-4xl mx-auto">
-    <!-- منطقة الدردشة -->
+<div class="max-w-5xl mx-auto">
+    <!-- واجهة الدردشة -->
     <div class="card mb-4 overflow-hidden">
         <div class="bg-slate-800/50 p-3 border-b border-slate-700 flex items-center justify-between">
             <div class="flex items-center gap-2">
-                <div class="w-3 h-3 bg-green-500 rounded-full animate-pulse"></div>
+                <div class="w-3 h-3 bg-green-500 rounded-full animate-pulse" id="connection-status"></div>
                 <span class="text-sm font-medium text-slate-300">AI Assistant</span>
-                <span class="text-xs text-slate-500">متصل</span>
+                <span class="text-xs text-slate-500" id="connection-text">متصل</span>
             </div>
             <button onclick="clearChat()" class="text-xs text-slate-500 hover:text-slate-300 transition">
                 مسح المحادثة
@@ -18,7 +18,7 @@
         </div>
         
         <!-- رسائل الدردشة -->
-        <div id="chat-messages" class="h-96 overflow-y-auto p-4 space-y-4 bg-slate-900/50">
+        <div id="chat-messages" class="h-80 overflow-y-auto p-4 space-y-4 bg-slate-900/50">
             <!-- رسالة ترحيب -->
             <div class="flex items-start gap-3">
                 <div class="w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center flex-shrink-0">
@@ -27,10 +27,40 @@
                     </svg>
                 </div>
                 <div class="flex-1 bg-slate-800 rounded-2xl rounded-tr-sm px-4 py-3">
-                    <p class="text-sm text-slate-300">مرحباً! 👋 أنا مساعدك الذكي لإنشاء فيديوهات. أخبرني عن فكرة الفيديو الذي ترغب في إنشائه، وسأساعدك في صياغة النص والنص السكريبت المناسب.</p>
-                    <p class="text-xs text-slate-500 mt-2">💡 يمكنك أيضاً إضافة رابط فيديو من الإنترنت لاستخدامه كمصدر إلهام</p>
+                    <p class="text-sm text-slate-300">مرحباً! 👋 أنا مساعدك الذكي لإنشاء فيديوهات. أخبرني عن فكرة الفيديو الذي ترغب في إنشائه، أو أضف رابط فيديو من الإنترنت لاستخدامه كمصدر إلهام.</p>
                 </div>
                 <span class="text-[10px] text-slate-600 flex-shrink-0">الآن</span>
+            </div>
+        </div>
+
+        <!-- منطقة معاينة الفيديو -->
+        <div id="preview-area" class="hidden border-t border-slate-700 bg-slate-900/50">
+            <div class="p-4">
+                <div class="flex items-center justify-between mb-3">
+                    <h4 class="text-sm font-medium text-slate-300">🎬 معاينة الفيديو</h4>
+                    <div class="flex gap-2">
+                        <button onclick="confirmProject()" id="confirm-btn" class="btn-success btn-sm">
+                            <svg class="w-4 h-4 inline ml-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                            </svg>
+                            تأكيد وإنشاء المشروع
+                        </button>
+                        <button onclick="cancelPreview()" class="btn-secondary btn-sm">إلغاء</button>
+                    </div>
+                </div>
+                <div class="relative bg-black rounded-lg overflow-hidden aspect-video" id="video-preview-container">
+                    <video id="video-preview" class="w-full h-full" controls>
+                        <source id="video-source" src="" type="video/mp4">
+                        متصفحك لا يدعم تشغيل الفيديو
+                    </video>
+                    <div id="loading-overlay" class="absolute inset-0 bg-black/70 flex items-center justify-center hidden">
+                        <div class="text-center">
+                            <div class="spinner mb-3"></div>
+                            <p class="text-sm text-slate-300" id="loading-text">جاري تحميل الفيديو...</p>
+                        </div>
+                    </div>
+                </div>
+                <div id="video-info" class="mt-2 text-xs text-slate-400"></div>
             </div>
         </div>
 
@@ -44,7 +74,6 @@
 
         <!-- منطقة إدخال الرسالة -->
         <div class="p-4 border-t border-slate-700 bg-slate-800/30">
-            <!-- أزرار الإجراءات السريعة -->
             <div class="flex flex-wrap gap-2 mb-3">
                 <button onclick="addSuggestion('فيديو تعليمي عن الذكاء الاصطناعي')" 
                         class="text-xs bg-slate-700 hover:bg-slate-600 text-slate-300 px-3 py-1 rounded-full transition">
@@ -97,41 +126,85 @@
         </div>
     </div>
 
-    <!-- ملخص المشروع -->
-    <div class="card bg-slate-800/30 border-slate-700">
-        <div class="flex items-center justify-between">
-            <div>
-                <h3 class="text-sm font-medium text-slate-300">📋 ملخص المشروع</h3>
-                <p class="text-xs text-slate-500 mt-1">سيتم توليد الفيديو بناءً على المحادثة مع AI والروابط المضافة</p>
+    <!-- شريط التقدم والحالة -->
+    <div id="progress-area" class="hidden card bg-slate-800/30 border-slate-700">
+        <div class="flex items-center gap-3">
+            <div class="spinner-sm"></div>
+            <div class="flex-1">
+                <div class="flex justify-between text-sm mb-1">
+                    <span id="progress-label" class="text-slate-300">جاري معالجة الفيديو...</span>
+                    <span id="progress-percent" class="text-slate-400">0%</span>
+                </div>
+                <div class="w-full bg-slate-700 rounded-full h-2 overflow-hidden">
+                    <div id="progress-bar" class="bg-gradient-to-r from-indigo-500 to-purple-500 h-full rounded-full transition-all duration-500" style="width: 0%"></div>
+                </div>
+                <p id="progress-detail" class="text-xs text-slate-500 mt-1">تهيئة...</p>
             </div>
-            <div class="flex gap-2">
-                <button onclick="generateFromChat()" 
-                        class="btn-primary text-sm px-4 py-2">
-                    <svg class="w-4 h-4 inline ml-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
-                    </svg>
-                    توليد الفيديو
-                </button>
-                <a href="/projects" class="btn-secondary text-sm px-4 py-2">إلغاء</a>
-            </div>
+            <button onclick="cancelProcessing()" class="btn-secondary btn-sm">إلغاء</button>
         </div>
     </div>
 </div>
+
+<style>
+.spinner {
+    width: 40px;
+    height: 40px;
+    border: 4px solid rgba(255,255,255,0.1);
+    border-top-color: #6366f1;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    margin: 0 auto;
+}
+
+.spinner-sm {
+    width: 24px;
+    height: 24px;
+    border: 3px solid rgba(255,255,255,0.1);
+    border-top-color: #6366f1;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    flex-shrink: 0;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+#chat-messages::-webkit-scrollbar {
+    width: 6px;
+}
+#chat-messages::-webkit-scrollbar-track {
+    background: transparent;
+}
+#chat-messages::-webkit-scrollbar-thumb {
+    background: #475569;
+    border-radius: 3px;
+}
+#chat-messages::-webkit-scrollbar-thumb:hover {
+    background: #64748b;
+}
+</style>
 {% endblock %}
 
 {% block scripts %}
 <script>
-// حالة الدردشة
-let chatHistory = [];
-let videoLinks = [];
-let projectData = {
-    title: '',
-    description: '',
-    script: '',
-    tags: []
+// ============================================
+// إدارة الحالة
+// ============================================
+let state = {
+    chatHistory: [],
+    videoLinks: [],
+    projectData: null,
+    processing: false,
+    cancelProcessing: false,
+    generatedVideo: null,
+    currentProjectId: null,
+    sessionId: null
 };
 
-// إضافة رسالة للدردشة
+// ============================================
+// وظائف الدردشة
+// ============================================
 function addMessage(role, content, timestamp = new Date()) {
     const container = document.getElementById('chat-messages');
     const timeStr = timestamp.toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' });
@@ -170,13 +243,30 @@ function addMessage(role, content, timestamp = new Date()) {
     container.appendChild(messageDiv);
     container.scrollTop = container.scrollHeight;
     
-    chatHistory.push({ role, content, timestamp });
+    state.chatHistory.push({ role, content, timestamp });
 }
 
-// إضافة رابط فيديو
+function clearChat() {
+    if (!confirm('هل أنت متأكد من مسح المحادثة؟')) return;
+    const container = document.getElementById('chat-messages');
+    container.innerHTML = '';
+    state.chatHistory = [];
+    
+    addMessage('assistant', 'مرحباً! 👋 أنا مساعدك الذكي لإنشاء فيديوهات. أخبرني عن فكرة الفيديو الذي ترغب في إنشائه، أو أضف رابط فيديو من الإنترنت لاستخدامه كمصدر إلهام.');
+}
+
+function addSuggestion(text) {
+    document.getElementById('chat-input').value = text;
+    document.getElementById('chat-input').focus();
+}
+
+// ============================================
+// إدارة الروابط
+// ============================================
 function addVideoLink() {
     const input = document.getElementById('url-input');
     const url = input.value.trim();
+    
     if (!url) {
         showToast('الرجاء إدخال رابط صحيح', 'warning');
         return;
@@ -187,61 +277,355 @@ function addVideoLink() {
         return;
     }
     
-    // استخراج اسم الموقع من الرابط
     let siteName = 'فيديو';
     try {
         const urlObj = new URL(url);
         siteName = urlObj.hostname.replace('www.', '').split('.')[0];
     } catch(e) {}
     
-    videoLinks.push(url);
+    state.videoLinks.push(url);
     updateVideoLinksUI();
     input.value = '';
     
-    // إضافة رسالة في الدردشة
     addMessage('user', `📎 أضفت رابط فيديو من ${siteName}: ${url}`);
-    addMessage('assistant', `تم استلام الرابط ✅ سأستخدم هذا الفيديو كمصدر إلهام لفيديو المشروع.`);
+    addMessage('assistant', `✅ تم استلام الرابط! جاري معالجة الفيديو...`);
     
-    showToast('تم إضافة الرابط بنجاح', 'success');
+    // معالجة الرابط عبر API
+    processVideoLink(url);
 }
 
-// تحديث واجهة الروابط
 function updateVideoLinksUI() {
     const container = document.getElementById('video-links-container');
     const list = document.getElementById('video-links-list');
     
-    if (videoLinks.length === 0) {
+    if (state.videoLinks.length === 0) {
         container.classList.add('hidden');
         return;
     }
     
     container.classList.remove('hidden');
-    list.innerHTML = videoLinks.map((url, index) => `
+    list.innerHTML = state.videoLinks.map((url, index) => `
         <span class="inline-flex items-center gap-1 bg-slate-700/50 rounded-full px-3 py-1 text-xs text-slate-300">
             🔗 ${url.length > 40 ? url.substring(0, 40) + '...' : url}
             <button onclick="removeVideoLink(${index})" class="text-slate-400 hover:text-red-400 transition">
                 <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                    <path stroke-linecap="line" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
                 </svg>
             </button>
         </span>
     `).join('');
 }
 
-// حذف رابط
 function removeVideoLink(index) {
-    videoLinks.splice(index, 1);
+    state.videoLinks.splice(index, 1);
     updateVideoLinksUI();
     showToast('تم حذف الرابط', 'info');
 }
 
-// إضافة اقتراح سريع
-function addSuggestion(text) {
-    document.getElementById('chat-input').value = text;
-    document.getElementById('chat-input').focus();
+// ============================================
+// معالجة الفيديو عبر API
+// ============================================
+async function processVideoLink(url) {
+    showProgress('جاري تحليل رابط الفيديو...', 10, 'جاري استخراج معلومات الفيديو');
+    
+    try {
+        // إرسال طلب معالجة الفيديو إلى الخادم
+        const response = await fetch('/api/v1/video/process', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url: url, session_id: state.sessionId })
+        });
+        
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'فشل معالجة الفيديو');
+        }
+        
+        // قراءة التقدم عبر Server-Sent Events أو WebSocket
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let progress = 10;
+        
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            
+            const chunk = decoder.decode(value);
+            const data = JSON.parse(chunk);
+            
+            if (data.error) {
+                throw new Error(data.error);
+            }
+            
+            progress = data.progress || progress;
+            updateProgress(data.status || 'جاري المعالجة...', progress, data.detail || '');
+            
+            if (data.completed) {
+                // عرض الفيديو المعالج
+                showPreview(data.video_url, {
+                    url: data.video_url,
+                    title: data.title || 'فيديو معالج',
+                    duration: data.duration || 0,
+                    processed: true,
+                    thumbnail: data.thumbnail || null
+                });
+                hideProgress();
+                showToast('✅ تم معالجة الفيديو بنجاح!', 'success');
+                addMessage('assistant', '🎬 تم معالجة الفيديو بنجاح! يمكنك معاينته أدناه. اضغط "تأكيد" لحفظ المشروع.');
+                break;
+            }
+        }
+        
+    } catch (error) {
+        hideProgress();
+        showToast('❌ فشل معالجة الفيديو: ' + error.message, 'error');
+        addMessage('assistant', '❌ عذراً، فشلت معالجة الفيديو. يرجى المحاولة مرة أخرى أو استخدام رابط آخر.');
+        console.error('Video processing error:', error);
+    }
 }
 
-// معالجة إرسال الرسالة
+// ============================================
+// توليد فيديو من البرومبت عبر API
+// ============================================
+async function generateVideoFromPrompt(prompt) {
+    showProgress('جاري توليد الفيديو...', 5, 'تحليل الطلب');
+    
+    try {
+        // إرسال طلب توليد الفيديو إلى الخادم
+        const response = await fetch('/api/v1/video/generate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                prompt: prompt,
+                session_id: state.sessionId,
+                links: state.videoLinks
+            })
+        });
+        
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'فشل توليد الفيديو');
+        }
+        
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let progress = 5;
+        
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            
+            const chunk = decoder.decode(value);
+            const data = JSON.parse(chunk);
+            
+            if (data.error) {
+                throw new Error(data.error);
+            }
+            
+            progress = data.progress || progress;
+            updateProgress(data.status || 'جاري التوليد...', progress, data.detail || '');
+            
+            if (data.completed) {
+                // عرض الفيديو المولد
+                showPreview(data.video_url, {
+                    url: data.video_url,
+                    title: data.title || prompt.substring(0, 50) + '...',
+                    description: prompt,
+                    duration: data.duration || 0,
+                    generated: true,
+                    thumbnail: data.thumbnail || null
+                });
+                hideProgress();
+                showToast('✅ تم توليد الفيديو بنجاح!', 'success');
+                addMessage('assistant', '🎬 تم توليد الفيديو بناءً على طلبك! يمكنك معاينته أدناه. اضغط "تأكيد" لحفظ المشروع.');
+                break;
+            }
+        }
+        
+    } catch (error) {
+        hideProgress();
+        showToast('❌ فشل توليد الفيديو: ' + error.message, 'error');
+        addMessage('assistant', '❌ عذراً، فشل توليد الفيديو. يرجى المحاولة مرة أخرى.');
+        console.error('Video generation error:', error);
+    }
+}
+
+// ============================================
+// عرض المعاينة
+// ============================================
+function showPreview(videoUrl, videoData) {
+    const previewArea = document.getElementById('preview-area');
+    const video = document.getElementById('video-preview');
+    const source = document.getElementById('video-source');
+    const info = document.getElementById('video-info');
+    const overlay = document.getElementById('loading-overlay');
+    
+    previewArea.classList.remove('hidden');
+    overlay.classList.remove('hidden');
+    
+    source.src = videoUrl;
+    video.load();
+    
+    let infoText = '';
+    if (videoData.title) infoText += `📹 ${videoData.title}`;
+    if (videoData.duration) infoText += ` • ⏱️ ${Math.floor(videoData.duration / 60)}:${String(videoData.duration % 60).padStart(2, '0')}`;
+    if (videoData.generated) infoText += ' • 🤖 مولّد بالذكاء الاصطناعي';
+    if (videoData.processed) infoText += ' • 🔄 معالج';
+    if (videoData.url) infoText += ' • 🔗 مستورد';
+    info.textContent = infoText;
+    
+    state.generatedVideo = {
+        url: videoUrl,
+        data: videoData,
+        links: state.videoLinks
+    };
+    
+    video.onloadeddata = () => {
+        overlay.classList.add('hidden');
+    };
+    
+    video.onerror = () => {
+        overlay.classList.add('hidden');
+        showToast('⚠️ تعذر تحميل معاينة الفيديو', 'warning');
+    };
+    
+    previewArea.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+function hidePreview() {
+    const previewArea = document.getElementById('preview-area');
+    previewArea.classList.add('hidden');
+    state.generatedVideo = null;
+}
+
+function cancelPreview() {
+    hidePreview();
+    showToast('تم إلغاء المعاينة', 'info');
+}
+
+// ============================================
+// تأكيد وإنشاء المشروع
+// ============================================
+async function confirmProject() {
+    if (!state.generatedVideo) {
+        showToast('⚠️ لا يوجد فيديو لتأكيده', 'warning');
+        return;
+    }
+    
+    const confirmBtn = document.getElementById('confirm-btn');
+    confirmBtn.disabled = true;
+    confirmBtn.innerHTML = '<div class="spinner-sm"></div> جاري الحفظ...';
+    
+    try {
+        const projectData = {
+            title: state.generatedVideo.data.title || 'فيديو جديد',
+            description: state.generatedVideo.data.description || 'تم إنشاؤه عبر الذكاء الاصطناعي',
+            script: buildScriptFromChat(),
+            tags: ['ai-generated', ...state.videoLinks.map(() => 'video-source')],
+            video_url: state.generatedVideo.url,
+            video_links: state.videoLinks,
+            duration: state.generatedVideo.data.duration || 0,
+            status: 'rendered',
+            session_id: state.sessionId
+        };
+        
+        const response = await fetch('/api/v1/projects', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(projectData)
+        });
+        
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'فشل إنشاء المشروع');
+        }
+        
+        const project = await response.json();
+        state.currentProjectId = project.id;
+        showToast('✅ تم إنشاء المشروع بنجاح!', 'success');
+        
+        // تحديث صفحة المشاريع (سيتم استدعاؤها من الملف الآخر)
+        window.dispatchEvent(new CustomEvent('projectCreated', { 
+            detail: { projectId: project.id, project: project }
+        }));
+        
+        setTimeout(() => {
+            window.location.href = `/projects/${project.id}`;
+        }, 1000);
+        
+    } catch (error) {
+        showToast('❌ ' + error.message, 'error');
+        console.error('Project creation error:', error);
+    } finally {
+        confirmBtn.disabled = false;
+        confirmBtn.innerHTML = `
+            <svg class="w-4 h-4 inline ml-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="line" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+            </svg>
+            تأكيد وإنشاء المشروع
+        `;
+    }
+}
+
+function buildScriptFromChat() {
+    let script = '';
+    const userMessages = state.chatHistory.filter(msg => msg.role === 'user');
+    
+    if (userMessages.length > 0) {
+        script = userMessages.map(msg => `🎬 طلب: ${msg.content}`).join('\n\n');
+    }
+    
+    if (state.videoLinks.length > 0) {
+        script += '\n\n--- مصادر إلهام ---\n';
+        state.videoLinks.forEach((url, i) => {
+            script += `${i+1}. ${url}\n`;
+        });
+    }
+    
+    return script || 'نص الفيديو المستند إلى المحادثة';
+}
+
+// ============================================
+// إدارة التقدم
+// ============================================
+function showProgress(label, percent = 0, detail = '') {
+    const area = document.getElementById('progress-area');
+    area.classList.remove('hidden');
+    
+    document.getElementById('progress-label').textContent = label;
+    document.getElementById('progress-percent').textContent = percent + '%';
+    document.getElementById('progress-bar').style.width = percent + '%';
+    document.getElementById('progress-detail').textContent = detail || label;
+    
+    state.processing = true;
+    state.cancelProcessing = false;
+}
+
+function updateProgress(label, percent, detail = '') {
+    document.getElementById('progress-label').textContent = label;
+    document.getElementById('progress-percent').textContent = percent + '%';
+    document.getElementById('progress-bar').style.width = percent + '%';
+    if (detail) {
+        document.getElementById('progress-detail').textContent = detail;
+    }
+}
+
+function hideProgress() {
+    document.getElementById('progress-area').classList.add('hidden');
+    state.processing = false;
+}
+
+function cancelProcessing() {
+    if (confirm('هل تريد إلغاء المعالجة الجارية؟')) {
+        state.cancelProcessing = true;
+        showToast('تم إلغاء المعالجة', 'warning');
+        hideProgress();
+    }
+}
+
+// ============================================
+// معالجة إرسال الدردشة
+// ============================================
 document.getElementById('chat-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const input = document.getElementById('chat-input');
@@ -253,112 +637,59 @@ document.getElementById('chat-form').addEventListener('submit', async (e) => {
     
     const btn = document.getElementById('send-btn');
     btn.disabled = true;
-    btn.innerHTML = '<svg class="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"/></svg>';
+    btn.innerHTML = '<div class="spinner-sm"></div>';
     
     try {
-        // محاكاة استجابة AI
-        await new Promise(resolve => setTimeout(resolve, 1500));
-        
-        const responses = [
-            'فكرة رائعة! 🎯 سأساعدك في تطوير هذا المفهوم إلى فيديو متكامل. هل لديك أي تفاصيل إضافية تريد إضافتها؟',
-            'ممتاز! 📝 سأقوم بتحليل طلبك واقتراح هيكل مناسب للفيديو. ما هو الجمهور المستهدف لهذا الفيديو؟',
-            'فهمت! 🎬 بناءً على طلبك، سأقترح سكريبت يحتوي على مقدمة جذابة، محتوى رئيسي، وخاتمة مؤثرة. هل تريد التركيز على جانب معين؟',
-            'خيار جيد! 💡 يمكنني مساعدتك في صياغة النص بشكل احترافي مع مراعاة أفضل ممارسات إنتاج الفيديو. هل لديك مدة زمنية محددة للفيديو؟'
-        ];
-        
-        const aiResponse = responses[Math.floor(Math.random() * responses.length)];
-        addMessage('assistant', aiResponse);
-        
-        // تحديث بيانات المشروع من المحادثة
-        if (chatHistory.length > 2) {
-            projectData.title = message.substring(0, 50) + (message.length > 50 ? '...' : '');
-            projectData.description = message;
-        }
-        
+        // توليد الفيديو من البرومبت
+        await generateVideoFromPrompt(message);
     } catch (error) {
-        showToast('حدث خطأ في الاتصال', 'error');
+        showToast('❌ حدث خطأ: ' + error.message, 'error');
+        console.error('Chat error:', error);
     } finally {
         btn.disabled = false;
-        btn.innerHTML = '<svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/></svg> إرسال';
+        btn.innerHTML = `
+            <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="line" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/>
+            </svg>
+            إرسال
+        `;
     }
 });
 
-// مسح المحادثة
-function clearChat() {
-    if (!confirm('هل أنت متأكد من مسح المحادثة؟')) return;
-    const container = document.getElementById('chat-messages');
-    container.innerHTML = '';
-    chatHistory = [];
+// ============================================
+// وظائف مساعدة
+// ============================================
+function showToast(message, type = 'info') {
+    const toast = document.createElement('div');
+    const colors = {
+        success: 'bg-green-600',
+        error: 'bg-red-600',
+        warning: 'bg-yellow-600',
+        info: 'bg-blue-600'
+    };
+    const icons = {
+        success: '✅',
+        error: '❌',
+        warning: '⚠️',
+        info: 'ℹ️'
+    };
+    toast.className = `fixed bottom-4 right-4 ${colors[type] || colors.info} text-white px-6 py-3 rounded-lg shadow-lg z-50 transition-all duration-300 transform translate-y-full opacity-0 max-w-md`;
+    toast.innerHTML = `${icons[type] || ''} ${message}`;
+    document.body.appendChild(toast);
     
-    // إعادة رسالة الترحيب
-    addMessage('assistant', 'مرحباً! 👋 أنا مساعدك الذكي لإنشاء فيديوهات. أخبرني عن فكرة الفيديو الذي ترغب في إنشائه، وسأساعدك في صياغة النص والنص السكريبت المناسب.\n\n💡 يمكنك أيضاً إضافة رابط فيديو من الإنترنت لاستخدامه كمصدر إلهام');
+    requestAnimationFrame(() => {
+        toast.classList.remove('translate-y-full', 'opacity-0');
+    });
+    
+    setTimeout(() => {
+        toast.classList.add('translate-y-full', 'opacity-0');
+        setTimeout(() => toast.remove(), 300);
+    }, 4000);
 }
 
-// توليد الفيديو من المحادثة
-async function generateFromChat() {
-    if (chatHistory.length < 2) {
-        showToast('يرجى إجراء محادثة مع AI أولاً', 'warning');
-        return;
-    }
-    
-    const btn = document.querySelector('.btn-primary:contains("توليد الفيديو")');
-    if (btn) {
-        btn.disabled = true;
-        btn.textContent = 'جاري التوليد...';
-    }
-    
-    try {
-        // بناء النص السكريبت من المحادثة
-        let script = '';
-        for (const msg of chatHistory) {
-            if (msg.role === 'user') {
-                script += `🎬 طلب: ${msg.content}\n\n`;
-            } else if (msg.role === 'assistant' && msg.content.includes('سأقوم')) {
-                script += `💡 اقتراح: ${msg.content}\n\n`;
-            }
-        }
-        
-        // إضافة الروابط كمصادر
-        if (videoLinks.length > 0) {
-            script += '\n--- مصادر إلهام ---\n';
-            videoLinks.forEach((url, i) => {
-                script += `${i+1}. ${url}\n`;
-            });
-        }
-        
-        const payload = {
-            title: projectData.title || 'فيديو جديد',
-            description: projectData.description || 'تم إنشاؤه عبر محادثة مع AI',
-            script: script || 'نص الفيديو المستند إلى المحادثة',
-            tags: ['ai-generated', 'chat-created', ...videoLinks.map(() => 'video-source')],
-            video_links: videoLinks
-        };
-        
-        const resp = await fetch('/api/v1/projects', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        });
-        
-        if (resp.ok) {
-            const project = await resp.json();
-            showToast('✅ تم إنشاء المشروع بنجاح! جاري التحويل...', 'success');
-            setTimeout(() => window.location.href = `/projects/${project.id}`, 800);
-        } else {
-            const err = await resp.json();
-            showToast(err.detail || 'فشل إنشاء المشروع', 'error');
-        }
-    } catch (e) {
-        showToast('خطأ في الاتصال بالخادم', 'error');
-    } finally {
-        if (btn) {
-            btn.disabled = false;
-            btn.innerHTML = '<svg class="w-4 h-4 inline ml-1" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg> توليد الفيديو';
-        }
-    }
-}
-
-// دعم مفتاح Enter + Shift للإرسال
+// ============================================
+// اختصارات لوحة المفاتيح
+// ============================================
 document.getElementById('chat-input').addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
@@ -366,7 +697,6 @@ document.getElementById('chat-input').addEventListener('keydown', (e) => {
     }
 });
 
-// دعم مفتاح Enter لإضافة رابط
 document.getElementById('url-input').addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
         e.preventDefault();
@@ -374,29 +704,23 @@ document.getElementById('url-input').addEventListener('keydown', (e) => {
     }
 });
 
-// تهيئة
-document.addEventListener('DOMContentLoaded', () => {
-    // إضافة دعم للمحتوى الطويل
-    const style = document.createElement('style');
-    style.textContent = `
-        #chat-messages::-webkit-scrollbar {
-            width: 6px;
-        }
-        #chat-messages::-webkit-scrollbar-track {
-            background: transparent;
-        }
-        #chat-messages::-webkit-scrollbar-thumb {
-            background: #475569;
-            border-radius: 3px;
-        }
-        #chat-messages::-webkit-scrollbar-thumb:hover {
-            background: #64748b;
-        }
-        .btn-primary:contains("توليد الفيديو") {
-            position: relative;
-        }
-    `;
-    document.head.appendChild(style);
+// ============================================
+// تهيئة الجلسة
+// ============================================
+function initSession() {
+    state.sessionId = 'session_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+}
+
+initSession();
+
+// ============================================
+// الاستماع لأحداث التكامل مع صفحة المشاريع
+// ============================================
+window.addEventListener('projectCreated', (event) => {
+    console.log('Project created:', event.detail);
+    // يمكن تحديث صفحة المشاريع إذا كانت مفتوحة
 });
+
+console.log('🎬 AI Video Creator - Create Page initialized');
 </script>
 {% endblock %}
