@@ -29,7 +29,7 @@ _engine: AsyncEngine | None = None
 _session_factory: async_sessionmaker | None = None
 _db_available: bool = False
 _db_error: str | None = None
-_use_supabase_client: bool = False  # دائمًا False بعد تعطيل العميل
+_use_supabase_client: bool = False
 
 
 def get_database_url() -> str | None:
@@ -38,9 +38,22 @@ def get_database_url() -> str | None:
     Returns None if not configured.
     """
     # 1. استخدام الرابط المباشر إذا كان موجوداً
-    direct_url = os.getenv("DATABASE_URL") or os.getenv("SUPABASE_DIRECT_URL")
+    direct_url = os.getenv("DATABASE_URL")
     if direct_url:
-        logger.info("✅ Using DATABASE_URL from environment")
+        # ✅ التأكد من أن الرابط يبدأ بـ postgresql:// وليس https://
+        if direct_url.startswith("https://"):
+            # تحويل https:// إلى postgresql+asyncpg://
+            direct_url = direct_url.replace("https://", "postgresql+asyncpg://")
+            logger.info("✅ Converted HTTPS URL to PostgreSQL URL")
+        elif direct_url.startswith("postgresql://"):
+            # ✅ تحويل postgresql:// إلى postgresql+asyncpg:// لاستخدام asyncpg
+            direct_url = direct_url.replace("postgresql://", "postgresql+asyncpg://")
+            logger.info("✅ Converted PostgreSQL URL to asyncpg URL")
+        elif direct_url.startswith("postgresql+asyncpg://"):
+            logger.info("✅ Using DATABASE_URL (already asyncpg format)")
+        else:
+            logger.warning(f"⚠️ Unknown URL format: {direct_url[:20]}...")
+        
         return direct_url
     
     # 2. استخدام SUPABASE_URL لبناء الرابط
