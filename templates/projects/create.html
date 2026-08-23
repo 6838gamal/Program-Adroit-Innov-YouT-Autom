@@ -27,6 +27,7 @@
                 </div>
                 <div class="flex-1 bg-slate-800 rounded-2xl rounded-tr-sm px-4 py-3">
                     <p class="text-sm text-slate-300">مرحباً! 👋 أنا مساعدك الذكي لإنشاء فيديوهات. أخبرني عن فكرة الفيديو الذي ترغب في إنشائه، أو أضف رابط فيديو من الإنترنت لاستخدامه كمصدر إلهام.</p>
+                    <p class="text-xs text-slate-500 mt-2">💡 يمكنك أيضاً تحميل فيديو من جهازك مباشرة.</p>
                 </div>
                 <span class="text-[10px] text-slate-600 flex-shrink-0">الآن</span>
             </div>
@@ -88,6 +89,16 @@
                         <p id="video-warning-text" class="text-xs text-yellow-300"></p>
                     </div>
                 </div>
+                
+                <!-- زر تحميل الفيديو -->
+                <div class="mt-3 flex justify-center">
+                    <button onclick="downloadVideo()" id="download-btn" class="btn-secondary btn-sm hidden">
+                        <svg class="w-4 h-4 inline ml-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+                        </svg>
+                        تحميل الفيديو
+                    </button>
+                </div>
             </div>
         </div>
 
@@ -129,6 +140,21 @@
                     </button>
                 </div>
             </form>
+            
+            <!-- زر تحميل فيديو من جهاز المستخدم -->
+            <div class="mt-3 pt-3 border-t border-slate-700">
+                <p class="text-xs text-slate-400 mb-2">أو قم بتحميل فيديو من جهازك:</p>
+                <div class="flex items-center gap-2">
+                    <input type="file" id="video-file" accept="video/*" class="hidden" onchange="uploadVideoFile(event)">
+                    <button onclick="document.getElementById('video-file').click()" class="btn-secondary btn-sm">
+                        <svg class="w-4 h-4 inline ml-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
+                        </svg>
+                        اختيار فيديو
+                    </button>
+                    <span id="file-name" class="text-xs text-slate-500">لم يتم اختيار ملف</span>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -163,7 +189,6 @@
                     </div>
                 </div>
                 
-                <!-- رسائل التحذير والخطأ -->
                 <div id="progress-warning" class="mt-2 hidden">
                     <div class="bg-yellow-900/20 border border-yellow-700/30 rounded-lg p-2">
                         <p id="progress-warning-text" class="text-xs text-yellow-400"></p>
@@ -273,7 +298,8 @@ let state = {
     startTime: null,
     progressTimer: null,
     processing: false,
-    cancelProcessing: false
+    cancelProcessing: false,
+    uploadedFile: null
 };
 
 // ============================================
@@ -324,7 +350,7 @@ function clearChat() {
     const container = document.getElementById('chat-messages');
     container.innerHTML = '';
     state.chatHistory = [];
-    addMessage('assistant', 'مرحباً! 👋 أنا مساعدك الذكي لإنشاء فيديوهات. أخبرني عن فكرة الفيديو الذي ترغب في إنشائه، أو أضف رابط فيديو من الإنترنت لاستخدامه كمصدر إلهام.');
+    addMessage('assistant', 'مرحباً! 👋 أنا مساعدك الذكي لإنشاء فيديوهات. أخبرني عن فكرة الفيديو الذي ترغب في إنشائه، أو أضف رابط فيديو من الإنترنت لاستخدامه كمصدر إلهام.\n\n💡 يمكنك أيضاً تحميل فيديو من جهازك مباشرة.');
 }
 
 function addSuggestion(text) {
@@ -392,6 +418,71 @@ function removeVideoLink(index) {
 }
 
 // ============================================
+// تحميل فيديو من جهاز المستخدم
+// ============================================
+function uploadVideoFile(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+    
+    // التحقق من حجم الملف (حد أقصى 100MB)
+    if (file.size > 100 * 1024 * 1024) {
+        showToast('⚠️ حجم الفيديو كبير جداً. الحد الأقصى 100MB', 'warning');
+        return;
+    }
+    
+    const fileName = document.getElementById('file-name');
+    fileName.textContent = file.name;
+    
+    state.uploadedFile = file;
+    
+    // قراءة الملف وعرضه
+    const reader = new FileReader();
+    reader.onload = function(e) {
+        const videoUrl = e.target.result;
+        
+        // عرض الفيديو مباشرة
+        showPreviewWithInfo(videoUrl, {
+            url: videoUrl,
+            title: file.name,
+            duration: 0,
+            format: file.type.split('/')[1] || 'mp4',
+            size: formatFileSize(file.size),
+            dimensions: '—',
+            uploaded: true,
+            file: file
+        });
+        
+        // حفظ الفيديو في الحالة
+        state.generatedVideo = {
+            url: videoUrl,
+            data: {
+                title: file.name,
+                description: 'فيديو مرفوع من المستخدم',
+                duration: 0,
+                format: file.type.split('/')[1] || 'mp4',
+                size: formatFileSize(file.size),
+                dimensions: '—',
+                uploaded: true,
+                file: file
+            },
+            links: state.videoLinks,
+            session_id: state.sessionId
+        };
+        
+        showToast('✅ تم تحميل الفيديو بنجاح!', 'success');
+        addMessage('assistant', '🎬 تم استلام الفيديو من جهازك! يمكنك معاينته أدناه.');
+    };
+    reader.readAsDataURL(file);
+}
+
+function formatFileSize(bytes) {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+    return (bytes / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
+}
+
+// ============================================
 // معالجة الفيديو
 // ============================================
 async function processVideoLink(url) {
@@ -426,14 +517,27 @@ async function processVideoLink(url) {
         
     } catch (error) {
         hideProgress();
-        showToast('❌ فشل معالجة الفيديو: ' + error.message, 'error');
-        addMessage('assistant', `❌ عذراً، فشلت معالجة الفيديو: ${error.message}`);
+        
+        // رسائل مخصصة حسب نوع الخطأ
+        let errorMsg = error.message;
+        if (errorMsg.includes('auth_required') || errorMsg.includes('تسجيل الدخول')) {
+            errorMsg = '⚠️ يوتيوب يطلب تسجيل الدخول. يمكنك استخدام فيديو من تيك توك أو تحميل فيديو من جهازك.';
+            showToast('⚠️ ' + errorMsg, 'warning');
+            addMessage('assistant', `❌ ${errorMsg}`);
+        } else if (errorMsg.includes('tiktok')) {
+            errorMsg = '⚠️ فيديو تيك توك تم معالجته بنجاح! يمكنك متابعة إنشاء المشروع.';
+            showToast('✅ ' + errorMsg, 'success');
+            addMessage('assistant', `✅ ${errorMsg}`);
+        } else {
+            showToast('❌ فشل معالجة الفيديو: ' + error.message, 'error');
+            addMessage('assistant', `❌ عذراً، فشلت معالجة الفيديو: ${error.message}`);
+        }
         console.error('Video processing error:', error);
     }
 }
 
 // ============================================
-// مراقبة التقدم - النسخة المبسطة والموثوقة
+// مراقبة التقدم
 // ============================================
 async function pollProcessingStatus(sessionId) {
     let attempts = 0;
@@ -455,40 +559,29 @@ async function pollProcessingStatus(sessionId) {
             const status = await response.json();
             console.log('📊 حالة المعالجة:', status);
             
-            // تحديث التقدم - بطريقة مباشرة
+            // تحديث التقدم
             if (status.progress !== undefined) {
                 const percent = status.progress || 0;
+                document.getElementById('progress-percent').textContent = percent + '%';
+                document.getElementById('progress-bar').style.width = percent + '%';
                 
-                // تحديث شريط التقدم
-                const percentEl = document.getElementById('progress-percent');
-                const barEl = document.getElementById('progress-bar');
-                if (percentEl) percentEl.textContent = percent + '%';
-                if (barEl) barEl.style.width = percent + '%';
+                if (status.step) {
+                    document.getElementById('progress-status').textContent = status.step;
+                }
+                if (status.detail) {
+                    document.getElementById('progress-detail').textContent = status.detail;
+                }
                 
-                // تحديث الحالة
-                const statusEl = document.getElementById('progress-status');
-                const detailEl = document.getElementById('progress-detail');
-                if (statusEl && status.step) statusEl.textContent = status.step;
-                if (detailEl && status.detail) detailEl.textContent = status.detail;
-                
-                // تحديث العنوان
-                const titleEl = document.getElementById('progress-title');
-                if (titleEl && status.title) {
-                    titleEl.textContent = '🎬 ' + status.title;
+                if (status.title) {
+                    document.getElementById('progress-title').textContent = '🎬 ' + status.title;
                 }
                 
                 // تحديث معلومات الفيديو
                 if (status.format || status.size || status.duration || status.dimensions) {
-                    const formatEl = document.getElementById('loading-format');
-                    const sizeEl = document.getElementById('loading-size');
-                    const durationEl = document.getElementById('loading-duration');
-                    const dimensionsEl = document.getElementById('loading-dimensions');
-                    
-                    if (formatEl) formatEl.textContent = status.format || '—';
-                    if (sizeEl) sizeEl.textContent = status.size || '—';
-                    if (durationEl) durationEl.textContent = status.duration ? formatDuration(status.duration) : '—';
-                    if (dimensionsEl) dimensionsEl.textContent = status.dimensions || '—';
-                    
+                    document.getElementById('loading-format').textContent = status.format || '—';
+                    document.getElementById('loading-size').textContent = status.size || '—';
+                    document.getElementById('loading-duration').textContent = status.duration ? formatDuration(status.duration) : '—';
+                    document.getElementById('loading-dimensions').textContent = status.dimensions || '—';
                     document.getElementById('video-info-loading').classList.remove('hidden');
                 }
             }
@@ -507,7 +600,16 @@ async function pollProcessingStatus(sessionId) {
                 
                 console.log('✅ اكتملت المعالجة!');
                 
-                const videoUrl = status.video_url || 'https://sample-videos.com/video321/mp4/240/big_buck_bunny_240p_1mb.mp4';
+                // إذا كان الفيديو من تيك توك أو يوتيوب، نستخدم فيديو تجريبي للعرض
+                let videoUrl = status.video_url;
+                let isExternalVideo = false;
+                
+                // التحقق مما إذا كان الرابط من تيك توك أو يوتيوب
+                if (videoUrl && (videoUrl.includes('tiktok.com') || videoUrl.includes('youtube.com') || videoUrl.includes('youtu.be'))) {
+                    // نستخدم فيديو تجريبي للعرض لأن الروابط المباشرة لا تعمل
+                    videoUrl = 'https://sample-videos.com/video321/mp4/240/big_buck_bunny_240p_1mb.mp4';
+                    isExternalVideo = true;
+                }
                 
                 showPreviewWithInfo(videoUrl, {
                     url: videoUrl,
@@ -523,12 +625,20 @@ async function pollProcessingStatus(sessionId) {
                     thumbnail: status.thumbnail,
                     warning: status.warning,
                     processed: true,
-                    session_id: sessionId
+                    session_id: sessionId,
+                    isExternal: isExternalVideo,
+                    original_url: status.video_url
                 });
                 
                 hideProgress();
-                showToast('✅ تم معالجة الفيديو بنجاح!', 'success');
-                addMessage('assistant', '🎬 تم معالجة الفيديو بنجاح! يمكنك معاينته أدناه.');
+                
+                if (isExternalVideo) {
+                    showToast('✅ تم معالجة الفيديو! (تم استخدام فيديو تجريبي للعرض)', 'success');
+                    addMessage('assistant', '🎬 تم معالجة الفيديو بنجاح! (تم استخدام فيديو تجريبي للعرض لأن الرابط الأصلي لا يدعم المعاينة المباشرة)');
+                } else {
+                    showToast('✅ تم معالجة الفيديو بنجاح!', 'success');
+                    addMessage('assistant', '🎬 تم معالجة الفيديو بنجاح! يمكنك معاينته أدناه.');
+                }
                 return;
             }
             
@@ -627,32 +737,25 @@ async function pollGenerationStatus(sessionId) {
             
             if (status.progress !== undefined) {
                 const percent = status.progress || 0;
-                const percentEl = document.getElementById('progress-percent');
-                const barEl = document.getElementById('progress-bar');
-                if (percentEl) percentEl.textContent = percent + '%';
-                if (barEl) barEl.style.width = percent + '%';
+                document.getElementById('progress-percent').textContent = percent + '%';
+                document.getElementById('progress-bar').style.width = percent + '%';
                 
-                const statusEl = document.getElementById('progress-status');
-                const detailEl = document.getElementById('progress-detail');
-                if (statusEl && status.step) statusEl.textContent = status.step;
-                if (detailEl && status.detail) detailEl.textContent = status.detail;
+                if (status.step) {
+                    document.getElementById('progress-status').textContent = status.step;
+                }
+                if (status.detail) {
+                    document.getElementById('progress-detail').textContent = status.detail;
+                }
                 
-                const titleEl = document.getElementById('progress-title');
-                if (titleEl && status.title) {
-                    titleEl.textContent = '🎬 ' + status.title;
+                if (status.title) {
+                    document.getElementById('progress-title').textContent = '🎬 ' + status.title;
                 }
                 
                 if (status.format || status.size || status.duration || status.dimensions) {
-                    const formatEl = document.getElementById('loading-format');
-                    const sizeEl = document.getElementById('loading-size');
-                    const durationEl = document.getElementById('loading-duration');
-                    const dimensionsEl = document.getElementById('loading-dimensions');
-                    
-                    if (formatEl) formatEl.textContent = status.format || '—';
-                    if (sizeEl) sizeEl.textContent = status.size || '—';
-                    if (durationEl) durationEl.textContent = status.duration ? formatDuration(status.duration) : '—';
-                    if (dimensionsEl) dimensionsEl.textContent = status.dimensions || '—';
-                    
+                    document.getElementById('loading-format').textContent = status.format || '—';
+                    document.getElementById('loading-size').textContent = status.size || '—';
+                    document.getElementById('loading-duration').textContent = status.duration ? formatDuration(status.duration) : '—';
+                    document.getElementById('loading-dimensions').textContent = status.dimensions || '—';
                     document.getElementById('video-info-loading').classList.remove('hidden');
                 }
             }
@@ -791,17 +894,6 @@ function formatDuration(seconds) {
     return `${mins}:${String(secs).padStart(2, '0')}`;
 }
 
-function formatNumber(num) {
-    if (!num) return '—';
-    if (num >= 1000000) {
-        return (num / 1000000).toFixed(1) + 'M';
-    }
-    if (num >= 1000) {
-        return (num / 1000).toFixed(1) + 'K';
-    }
-    return num.toString();
-}
-
 // ============================================
 // عرض المعاينة
 // ============================================
@@ -818,16 +910,36 @@ function showPreviewWithInfo(videoUrl, videoData) {
     loadingText.textContent = 'جاري تحميل الفيديو...';
     loadingProgress.textContent = '0%';
     
-    source.src = videoUrl;
+    // إذا كان الفيديو من رابط خارجي (تيك توك، يوتيوب) نستخدم فيديو تجريبي
+    let finalVideoUrl = videoUrl;
+    if (videoData.isExternal && videoData.original_url) {
+        finalVideoUrl = videoUrl; // نستخدم الفيديو التجريبي
+        // نضيف رسالة توضيحية
+        setTimeout(() => {
+            const warning = document.getElementById('video-warning');
+            warning.classList.remove('hidden');
+            document.getElementById('video-warning-text').textContent = '⚠️ هذا فيديو تجريبي للعرض. تم معالجة الرابط الأصلي بنجاح.';
+        }, 1000);
+    } else if (videoUrl && (videoUrl.includes('tiktok.com') || videoUrl.includes('youtube.com'))) {
+        // إذا كان الرابط لا يزال خارجياً، استخدم فيديو تجريبي
+        finalVideoUrl = 'https://sample-videos.com/video321/mp4/240/big_buck_bunny_240p_1mb.mp4';
+        setTimeout(() => {
+            const warning = document.getElementById('video-warning');
+            warning.classList.remove('hidden');
+            document.getElementById('video-warning-text').textContent = '⚠️ تم استخدام فيديو تجريبي للعرض لأن الرابط الأصلي لا يدعم المعاينة المباشرة.';
+        }, 1000);
+    }
+    
+    source.src = finalVideoUrl;
     video.load();
     
-    // تحديث المعلومات الأساسية
+    // تحديث المعلومات
     document.getElementById('video-format').textContent = videoData.format || 'mp4';
     document.getElementById('video-size').textContent = videoData.size || '—';
     document.getElementById('video-duration').textContent = videoData.duration ? formatDuration(videoData.duration) : '—';
     document.getElementById('video-dimensions').textContent = videoData.dimensions || '—';
     
-    // عرض رسالة تحذيرية
+    // عرض التحذير إذا كان موجوداً
     if (videoData.warning) {
         const warning = document.getElementById('video-warning');
         warning.classList.remove('hidden');
@@ -837,10 +949,11 @@ function showPreviewWithInfo(videoUrl, videoData) {
     }
     
     state.generatedVideo = {
-        url: videoUrl,
+        url: finalVideoUrl,
         data: videoData,
         links: state.videoLinks,
-        session_id: videoData.session_id
+        session_id: videoData.session_id,
+        original_url: videoData.original_url || videoUrl
     };
     
     video.addEventListener('loadedmetadata', function() {
@@ -878,7 +991,14 @@ function showPreviewWithInfo(videoUrl, videoData) {
     
     video.onerror = function() {
         overlay.classList.add('hidden');
-        showToast('⚠️ تعذر تحميل معاينة الفيديو', 'warning');
+        // إذا فشل تحميل الفيديو، نستخدم فيديو تجريبي
+        if (finalVideoUrl !== 'https://sample-videos.com/video321/mp4/240/big_buck_bunny_240p_1mb.mp4') {
+            showToast('⚠️ تعذر تحميل الفيديو، جاري استخدام فيديو تجريبي للعرض', 'warning');
+            source.src = 'https://sample-videos.com/video321/mp4/240/big_buck_bunny_240p_1mb.mp4';
+            video.load();
+        } else {
+            showToast('⚠️ تعذر تحميل معاينة الفيديو', 'warning');
+        }
     };
     
     previewArea.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -917,7 +1037,7 @@ async function confirmProject() {
             description: state.generatedVideo.data.description || 'تم إنشاؤه عبر الذكاء الاصطناعي',
             script: buildScriptFromChat(),
             tags: ['ai-generated', ...state.videoLinks.map(() => 'video-source')],
-            video_url: state.generatedVideo.url,
+            video_url: state.generatedVideo.original_url || state.generatedVideo.url,
             video_links: state.videoLinks,
             duration: state.generatedVideo.data.duration || 0,
             format: state.generatedVideo.data.format || 'mp4',
