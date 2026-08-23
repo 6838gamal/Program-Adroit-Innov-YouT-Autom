@@ -40,7 +40,7 @@ class Settings(BaseSettings):
     
     # 1. SUPABASE_URL: رابط مشروع Supabase
     SUPABASE_URL: Optional[str] = Field(
-        default=None,
+        default="https://nyotevucyflkqaqkutjn.supabase.co",
         description="Supabase project URL (e.g., https://project.supabase.co)"
     )
     
