@@ -474,7 +474,7 @@ async function processVideoLink(url) {
 }
 
 // ============================================
-// مراقبة التقدم مع تحديث مستمر
+// مراقبة التقدم مع تحديث مستمر - النسخة المحسنة
 // ============================================
 async function pollProcessingStatus(sessionId) {
     let attempts = 0;
@@ -500,41 +500,37 @@ async function pollProcessingStatus(sessionId) {
                 step: status.step,
                 detail: status.detail,
                 completed: status.completed,
-                title: status.title,
-                uploader: status.uploader,
-                ytdlp_error: status.ytdlp_error
+                title: status.title
             });
             
-            // عرض رسالة تحذيرية إذا كان هناك خطأ في yt-dlp
-            if (status.ytdlp_error) {
-                let warningMsg = '';
-                if (status.ytdlp_error === 'auth_required') {
-                    warningMsg = '⚠️ يوتيوب يطلب تسجيل الدخول. تم استخدام معلومات تقديرية للفيديو.';
-                } else if (status.ytdlp_error === 'video_unavailable') {
-                    warningMsg = '⚠️ الفيديو غير متاح. تم استخدام معلومات تقديرية.';
-                } else {
-                    warningMsg = '⚠️ تعذر الحصول على معلومات دقيقة للفيديو. تم استخدام معلومات تقديرية.';
+            // ============================================
+            // تحديث التقدم - الجزء المهم
+            // ============================================
+            if (status.progress !== undefined) {
+                // تحديث شريط التقدم
+                const progressPercent = status.progress || 0;
+                document.getElementById('progress-percent').textContent = progressPercent + '%';
+                document.getElementById('progress-bar').style.width = progressPercent + '%';
+                
+                // تحديث الحالة
+                if (status.step) {
+                    document.getElementById('progress-status').textContent = status.step;
                 }
-                showProgressWarning(warningMsg);
-            }
-            
-            if (status.progress !== undefined && status.progress !== lastProgress) {
-                lastProgress = status.progress;
+                if (status.detail) {
+                    document.getElementById('progress-detail').textContent = status.detail;
+                }
                 
-                updateProgress(
-                    status.detail || 'جاري المعالجة...',
-                    status.progress || 0,
-                    status.step || status.status || 'processing'
-                );
+                // تحديث العنوان إذا تغير
+                if (status.title && status.title !== document.getElementById('progress-title').textContent.replace('🎬 ', '')) {
+                    document.getElementById('progress-title').textContent = '🎬 ' + status.title;
+                }
                 
-                // تحديث معلومات الفيديو الأساسية
+                // تحديث معلومات الفيديو أثناء التحميل
                 if (status.format || status.size || status.duration || status.dimensions) {
-                    updateLoadingVideoInfo(
-                        status.format || 'جاري التحديد...',
-                        status.size || '—',
-                        status.duration ? formatDuration(status.duration) : '—',
-                        status.dimensions || '—'
-                    );
+                    document.getElementById('loading-format').textContent = status.format || '—';
+                    document.getElementById('loading-size').textContent = status.size || '—';
+                    document.getElementById('loading-duration').textContent = status.duration ? formatDuration(status.duration) : '—';
+                    document.getElementById('loading-dimensions').textContent = status.dimensions || '—';
                     document.getElementById('video-info-loading').classList.remove('hidden');
                 }
                 
@@ -549,11 +545,23 @@ async function pollProcessingStatus(sessionId) {
                     }
                 }
                 
-                if (status.title) {
-                    document.getElementById('progress-title').textContent = '🎬 ' + status.title;
+                // عرض رسالة تحذيرية إذا كان هناك خطأ في yt-dlp
+                if (status.ytdlp_error) {
+                    let warningMsg = '';
+                    if (status.ytdlp_error === 'auth_required') {
+                        warningMsg = '⚠️ يوتيوب يطلب تسجيل الدخول. تم استخدام معلومات تقديرية للفيديو.';
+                    } else if (status.ytdlp_error === 'video_unavailable') {
+                        warningMsg = '⚠️ الفيديو غير متاح. تم استخدام معلومات تقديرية.';
+                    } else {
+                        warningMsg = '⚠️ تعذر الحصول على معلومات دقيقة للفيديو. تم استخدام معلومات تقديرية.';
+                    }
+                    showProgressWarning(warningMsg);
                 }
+                
+                lastProgress = status.progress;
             }
             
+            // التحقق من الاكتمال
             if (status.completed) {
                 if (status.error) {
                     throw new Error(status.error);
@@ -597,6 +605,7 @@ async function pollProcessingStatus(sessionId) {
             console.warn('⚠️ خطأ في جلب الحالة:', error);
         }
         
+        // انتظار 1.5 ثانية قبل المحاولة التالية
         await new Promise(resolve => setTimeout(resolve, 1500));
         attempts++;
     }
@@ -654,6 +663,9 @@ async function generateVideoFromPrompt(prompt) {
     }
 }
 
+// ============================================
+// مراقبة حالة التوليد
+// ============================================
 async function pollGenerationStatus(sessionId) {
     let attempts = 0;
     const maxAttempts = 90;
@@ -680,28 +692,31 @@ async function pollGenerationStatus(sessionId) {
                 completed: status.completed
             });
             
-            if (status.progress !== undefined && status.progress !== lastProgress) {
-                lastProgress = status.progress;
+            if (status.progress !== undefined) {
+                const progressPercent = status.progress || 0;
+                document.getElementById('progress-percent').textContent = progressPercent + '%';
+                document.getElementById('progress-bar').style.width = progressPercent + '%';
                 
-                updateProgress(
-                    status.detail || 'جاري التوليد...',
-                    status.progress || 0,
-                    status.step || status.status || 'generating'
-                );
+                if (status.step) {
+                    document.getElementById('progress-status').textContent = status.step;
+                }
+                if (status.detail) {
+                    document.getElementById('progress-detail').textContent = status.detail;
+                }
+                
+                if (status.title && status.title !== document.getElementById('progress-title').textContent.replace('🎬 ', '')) {
+                    document.getElementById('progress-title').textContent = '🎬 ' + status.title;
+                }
                 
                 if (status.format || status.size || status.duration || status.dimensions) {
-                    updateLoadingVideoInfo(
-                        status.format || 'جاري التحديد...',
-                        status.size || '—',
-                        status.duration ? formatDuration(status.duration) : '—',
-                        status.dimensions || '—'
-                    );
+                    document.getElementById('loading-format').textContent = status.format || '—';
+                    document.getElementById('loading-size').textContent = status.size || '—';
+                    document.getElementById('loading-duration').textContent = status.duration ? formatDuration(status.duration) : '—';
+                    document.getElementById('loading-dimensions').textContent = status.dimensions || '—';
                     document.getElementById('video-info-loading').classList.remove('hidden');
                 }
                 
-                if (status.title) {
-                    document.getElementById('progress-title').textContent = '🎬 ' + status.title;
-                }
+                lastProgress = status.progress;
             }
             
             if (status.completed) {
@@ -769,27 +784,15 @@ function showProgress(title, percent = 0, step = '', detail = '') {
     document.getElementById('progress-detail').textContent = detail || 'في انتظار بدء المعالجة...';
     document.getElementById('video-info-loading').classList.remove('hidden');
     
+    // إخفاء أي تحذيرات سابقة
+    hideProgressWarning();
+    
     state.processing = true;
     state.cancelProcessing = false;
     state.startTime = Date.now();
     
     if (state.progressTimer) clearInterval(state.progressTimer);
     state.progressTimer = setInterval(updateElapsedTime, 1000);
-}
-
-function updateProgress(title, percent, step = '', detail = '') {
-    document.getElementById('progress-title').textContent = title;
-    document.getElementById('progress-percent').textContent = percent + '%';
-    document.getElementById('progress-bar').style.width = percent + '%';
-    if (step) document.getElementById('progress-status').textContent = step;
-    if (detail) document.getElementById('progress-detail').textContent = detail;
-}
-
-function updateLoadingVideoInfo(format, size, duration, dimensions) {
-    document.getElementById('loading-format').textContent = format || '—';
-    document.getElementById('loading-size').textContent = size || '—';
-    document.getElementById('loading-duration').textContent = duration || '—';
-    document.getElementById('loading-dimensions').textContent = dimensions || '—';
 }
 
 function showProgressWarning(message) {
