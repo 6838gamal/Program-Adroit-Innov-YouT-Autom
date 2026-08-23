@@ -126,21 +126,42 @@
         </div>
     </div>
 
-    <!-- شريط التقدم والحالة -->
+    <!-- شريط التقدم المحسن -->
     <div id="progress-area" class="hidden card bg-slate-800/30 border-slate-700">
-        <div class="flex items-center gap-3">
-            <div class="spinner-sm"></div>
-            <div class="flex-1">
-                <div class="flex justify-between text-sm mb-1">
-                    <span id="progress-label" class="text-slate-300">جاري معالجة الفيديو...</span>
-                    <span id="progress-percent" class="text-slate-400">0%</span>
+        <div class="p-4">
+            <div class="flex items-center gap-4 mb-3">
+                <div class="spinner-sm"></div>
+                <div class="flex-1">
+                    <div class="flex justify-between text-sm mb-1">
+                        <span id="progress-label" class="text-slate-300 font-medium">جاري معالجة الفيديو...</span>
+                        <span id="progress-percent" class="text-indigo-400 font-bold">0%</span>
+                    </div>
+                    <div class="w-full bg-slate-700 rounded-full h-2.5 overflow-hidden">
+                        <div id="progress-bar" class="bg-gradient-to-r from-indigo-500 to-purple-500 h-full rounded-full transition-all duration-700 ease-out" style="width: 0%"></div>
+                    </div>
                 </div>
-                <div class="w-full bg-slate-700 rounded-full h-2 overflow-hidden">
-                    <div id="progress-bar" class="bg-gradient-to-r from-indigo-500 to-purple-500 h-full rounded-full transition-all duration-500" style="width: 0%"></div>
-                </div>
-                <p id="progress-detail" class="text-xs text-slate-500 mt-1">تهيئة...</p>
+                <button onclick="cancelProcessing()" class="btn-secondary btn-sm">إلغاء</button>
             </div>
-            <button onclick="cancelProcessing()" class="btn-secondary btn-sm">إلغاء</button>
+            
+            <!-- معلومات التقدم التفصيلية -->
+            <div id="progress-details" class="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-3 pt-3 border-t border-slate-700/50">
+                <div class="flex items-center gap-2 text-xs">
+                    <span class="text-slate-500">📋 الحالة:</span>
+                    <span id="progress-status" class="text-slate-300">جاري التهيئة...</span>
+                </div>
+                <div class="flex items-center gap-2 text-xs">
+                    <span class="text-slate-500">⏱️ الوقت المستغرق:</span>
+                    <span id="progress-time" class="text-slate-300">00:00</span>
+                </div>
+                <div class="flex items-center gap-2 text-xs col-span-1 sm:col-span-2">
+                    <span class="text-slate-500">📝 التفاصيل:</span>
+                    <span id="progress-detail" class="text-slate-400">تهيئة المعالجة...</span>
+                </div>
+                <div id="video-info-progress" class="flex items-center gap-2 text-xs col-span-1 sm:col-span-2 hidden">
+                    <span class="text-slate-500">🎬 معلومات الفيديو:</span>
+                    <span id="video-details-progress" class="text-slate-300"></span>
+                </div>
+            </div>
         </div>
     </div>
 </div>
@@ -183,6 +204,15 @@
 #chat-messages::-webkit-scrollbar-thumb:hover {
     background: #64748b;
 }
+
+.progress-pulse {
+    animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
 </style>
 {% endblock %}
 
@@ -200,7 +230,9 @@ let state = {
     generatedVideo: null,
     currentProjectId: null,
     sessionId: null,
-    processingSessionId: null
+    processingSessionId: null,
+    startTime: null,
+    progressTimer: null
 };
 
 // ============================================
@@ -323,10 +355,10 @@ function removeVideoLink(index) {
 }
 
 // ============================================
-// معالجة الفيديو عبر API
+// معالجة الفيديو عبر API مع تحسين التقدم
 // ============================================
 async function processVideoLink(url) {
-    showProgress('جاري تحليل رابط الفيديو...', 10, 'جاري استخراج معلومات الفيديو');
+    showProgress('جاري تحليل رابط الفيديو...', 5, 'جاري استخراج معلومات الفيديو', 'تحليل الرابط');
     
     try {
         const response = await fetch('/api/v1/projects/video/process', {
@@ -362,6 +394,9 @@ async function processVideoLink(url) {
     }
 }
 
+// ============================================
+// مراقبة حالة المعالجة مع تحديث التقدم
+// ============================================
 async function pollProcessingStatus(sessionId) {
     let attempts = 0;
     const maxAttempts = 60;
@@ -376,11 +411,18 @@ async function pollProcessingStatus(sessionId) {
             
             const status = await response.json();
             
-            updateProgress(
+            // تحديث التقدم مع تفاصيل إضافية
+            updateProgressWithDetails(
                 status.detail || 'جاري المعالجة...',
                 status.progress || 0,
-                status.detail || ''
+                status.detail || '',
+                status.status || 'processing'
             );
+            
+            // عرض معلومات الفيديو إذا كانت متوفرة
+            if (status.title) {
+                showVideoInfoInProgress(status.title, status.duration);
+            }
             
             if (status.completed) {
                 if (status.error) {
@@ -424,10 +466,10 @@ async function pollProcessingStatus(sessionId) {
 }
 
 // ============================================
-// توليد فيديو من البرومبت
+// توليد فيديو من البرومبت مع تحسين التقدم
 // ============================================
 async function generateVideoFromPrompt(prompt) {
-    showProgress('جاري توليد الفيديو...', 5, 'تحليل الطلب');
+    showProgress('جاري توليد الفيديو...', 5, 'تحليل الطلب', 'تحليل الطلب');
     
     try {
         const response = await fetch('/api/v1/projects/video/generate', {
@@ -464,6 +506,9 @@ async function generateVideoFromPrompt(prompt) {
     }
 }
 
+// ============================================
+// مراقبة حالة التوليد مع تحديث التقدم
+// ============================================
 async function pollGenerationStatus(sessionId) {
     let attempts = 0;
     const maxAttempts = 90;
@@ -478,11 +523,16 @@ async function pollGenerationStatus(sessionId) {
             
             const status = await response.json();
             
-            updateProgress(
+            updateProgressWithDetails(
                 status.detail || 'جاري التوليد...',
                 status.progress || 0,
-                status.detail || ''
+                status.detail || '',
+                status.status || 'generating'
             );
+            
+            if (status.title) {
+                showVideoInfoInProgress(status.title, status.duration);
+            }
             
             if (status.completed) {
                 if (status.error) {
@@ -524,6 +574,84 @@ async function pollGenerationStatus(sessionId) {
     }
     
     throw new Error('انتهى وقت التوليد. يرجى المحاولة مرة أخرى.');
+}
+
+// ============================================
+// عرض التقدم المحسن
+// ============================================
+function showProgress(label, percent = 0, detail = '', status = '') {
+    const area = document.getElementById('progress-area');
+    area.classList.remove('hidden');
+    
+    document.getElementById('progress-label').textContent = label;
+    document.getElementById('progress-percent').textContent = percent + '%';
+    document.getElementById('progress-bar').style.width = percent + '%';
+    document.getElementById('progress-detail').textContent = detail || label;
+    document.getElementById('progress-status').textContent = status || 'جاري التهيئة...';
+    
+    state.processing = true;
+    state.cancelProcessing = false;
+    state.startTime = Date.now();
+    
+    // بدء مؤقت الوقت
+    if (state.progressTimer) {
+        clearInterval(state.progressTimer);
+    }
+    state.progressTimer = setInterval(updateElapsedTime, 1000);
+    
+    // إخفاء معلومات الفيديو السابقة
+    document.getElementById('video-info-progress').classList.add('hidden');
+}
+
+function updateProgressWithDetails(label, percent, detail = '', status = '') {
+    document.getElementById('progress-label').textContent = label;
+    document.getElementById('progress-percent').textContent = percent + '%';
+    document.getElementById('progress-bar').style.width = percent + '%';
+    if (detail) {
+        document.getElementById('progress-detail').textContent = detail;
+    }
+    if (status) {
+        document.getElementById('progress-status').textContent = status;
+    }
+}
+
+function showVideoInfoInProgress(title, duration) {
+    const container = document.getElementById('video-info-progress');
+    const details = document.getElementById('video-details-progress');
+    
+    container.classList.remove('hidden');
+    let info = `📹 ${title}`;
+    if (duration) {
+        const mins = Math.floor(duration / 60);
+        const secs = duration % 60;
+        info += ` • ⏱️ ${mins}:${String(secs).padStart(2, '0')}`;
+    }
+    details.textContent = info;
+}
+
+function updateElapsedTime() {
+    if (!state.startTime) return;
+    const elapsed = Math.floor((Date.now() - state.startTime) / 1000);
+    const mins = String(Math.floor(elapsed / 60)).padStart(2, '0');
+    const secs = String(elapsed % 60).padStart(2, '0');
+    document.getElementById('progress-time').textContent = `${mins}:${secs}`;
+}
+
+function hideProgress() {
+    document.getElementById('progress-area').classList.add('hidden');
+    state.processing = false;
+    if (state.progressTimer) {
+        clearInterval(state.progressTimer);
+        state.progressTimer = null;
+    }
+}
+
+function cancelProcessing() {
+    if (confirm('هل تريد إلغاء المعالجة الجارية؟')) {
+        state.cancelProcessing = true;
+        showToast('تم إلغاء المعالجة', 'warning');
+        hideProgress();
+    }
 }
 
 // ============================================
@@ -666,44 +794,6 @@ function buildScriptFromChat() {
     }
     
     return script || 'نص الفيديو المستند إلى المحادثة';
-}
-
-// ============================================
-// إدارة التقدم
-// ============================================
-function showProgress(label, percent = 0, detail = '') {
-    const area = document.getElementById('progress-area');
-    area.classList.remove('hidden');
-    
-    document.getElementById('progress-label').textContent = label;
-    document.getElementById('progress-percent').textContent = percent + '%';
-    document.getElementById('progress-bar').style.width = percent + '%';
-    document.getElementById('progress-detail').textContent = detail || label;
-    
-    state.processing = true;
-    state.cancelProcessing = false;
-}
-
-function updateProgress(label, percent, detail = '') {
-    document.getElementById('progress-label').textContent = label;
-    document.getElementById('progress-percent').textContent = percent + '%';
-    document.getElementById('progress-bar').style.width = percent + '%';
-    if (detail) {
-        document.getElementById('progress-detail').textContent = detail;
-    }
-}
-
-function hideProgress() {
-    document.getElementById('progress-area').classList.add('hidden');
-    state.processing = false;
-}
-
-function cancelProcessing() {
-    if (confirm('هل تريد إلغاء المعالجة الجارية؟')) {
-        state.cancelProcessing = true;
-        showToast('تم إلغاء المعالجة', 'warning');
-        hideProgress();
-    }
 }
 
 // ============================================
