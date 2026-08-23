@@ -12,6 +12,11 @@
     .ruler { height:28px; background:#0f172a; border-bottom:1px solid #334155; display:flex; overflow:hidden; }
     .ruler-mark { flex-shrink:0; border-left:1px solid #334155; font-size:.6rem; color:#475569; padding:.25rem 0 0 .25rem; }
     .timeline-scroll { overflow-x:auto; overflow-y:hidden; }
+    .scene-block-video { background:#2563eb30; border:1px solid #2563eb80; color:#2563eb; }
+    .scene-block-audio { background:#05966930; border:1px solid #05966980; color:#059669; }
+    .scene-block-text { background:#d9770630; border:1px solid #d9770680; color:#d97706; }
+    .scene-block-music { background:#7c3aed30; border:1px solid #7c3aed80; color:#7c3aed; }
+    .scene-block-subtitle { background:#47556930; border:1px solid #47556980; color:#94a3b8; }
 </style>
 {% endblock %}
 
@@ -29,17 +34,27 @@
 {% endblock %}
 
 {% block content %}
-<!-- Project header -->
+<!-- رأس المشروع -->
 <div class="flex flex-wrap items-center gap-2 sm:gap-3 mb-4">
-    <span class="badge status-{{ project.status.value }}">{{ project.status.value }}</span>
+    <span class="badge status-{{ project.status.value }}">
+        {% if project.status.value == 'draft' %}📝 مسودة
+        {% elif project.status.value == 'in_production' %}⚙️ قيد الإنتاج
+        {% elif project.status.value == 'rendered' %}✅ تم الرندر
+        {% elif project.status.value == 'published' %}🚀 منشور
+        {% elif project.status.value == 'failed' %}❌ فشل
+        {% endif %}
+    </span>
     {% if project.tags %}
     {% for tag in project.tags[:3] %}
     <span class="text-xs bg-slate-700 text-slate-300 px-2 py-0.5 rounded-full">{{ tag }}</span>
     {% endfor %}
     {% endif %}
+    {% if project.duration %}
+    <span class="text-xs text-slate-500">⏱️ {{ project.duration|format_duration }}</span>
+    {% endif %}
 </div>
 
-<!-- Timeline toolbar -->
+<!-- شريط أدوات التايم لاين -->
 <div class="card mb-3 flex flex-wrap items-center gap-2 sm:gap-3 py-3">
     <div class="flex items-center gap-2">
         <label class="text-slate-400 text-xs">تكبير:</label>
@@ -59,18 +74,18 @@
     {% endif %}
 </div>
 
-<!-- Timeline viewer -->
+<!-- عارض التايم لاين -->
 {% if scenes %}
 <div class="card p-0 overflow-hidden">
     <div class="timeline-scroll" id="timeline-container">
         <div id="timeline-inner" style="--cell-w:80px; min-width: max-content;">
-            <!-- Ruler -->
+            <!-- المسطرة -->
             <div class="ruler" id="ruler">
                 <div class="track-label"></div>
                 <div class="flex flex-1" id="ruler-marks"></div>
             </div>
 
-            <!-- Video track -->
+            <!-- مسار الفيديو -->
             <div class="track-row">
                 <div class="track-label">
                     <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.069A1 1 0 0121 8.87v6.26a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
@@ -79,7 +94,7 @@
                 <div class="track-body" id="track-video"></div>
             </div>
 
-            <!-- Audio track -->
+            <!-- مسار الصوت -->
             <div class="track-row">
                 <div class="track-label">
                     <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"/></svg>
@@ -88,7 +103,7 @@
                 <div class="track-body" id="track-audio"></div>
             </div>
 
-            <!-- Text / overlay track -->
+            <!-- مسار النص -->
             <div class="track-row">
                 <div class="track-label">
                     <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h8m-8 6h16"/></svg>
@@ -97,7 +112,7 @@
                 <div class="track-body" id="track-text"></div>
             </div>
 
-            <!-- Music track -->
+            <!-- مسار الموسيقى -->
             <div class="track-row">
                 <div class="track-label">
                     <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2z"/></svg>
@@ -106,7 +121,7 @@
                 <div class="track-body" id="track-music"></div>
             </div>
 
-            <!-- Subtitle track -->
+            <!-- مسار الترجمة -->
             <div class="track-row">
                 <div class="track-label">
                     <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z"/></svg>
@@ -117,15 +132,22 @@
         </div>
     </div>
 
-    <!-- Playhead info -->
+    <!-- معلومات المؤشر -->
     <div class="p-3 border-t border-slate-700 flex items-center gap-4 text-xs text-slate-400">
         <span id="playhead-time">00:00:00</span>
         <span>|</span>
         <span id="total-duration"></span>
+        {% if project.video_url %}
+        <span>|</span>
+        <button onclick="previewVideo()" class="text-blue-400 hover:text-blue-300 text-xs flex items-center gap-1">
+            <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/></svg>
+            معاينة الفيديو
+        </button>
+        {% endif %}
     </div>
 </div>
 
-<!-- Scene list -->
+<!-- قائمة المشاهد -->
 <div class="mt-4 sm:mt-6">
     <h2 class="text-white font-semibold text-sm mb-3 flex items-center gap-2">
         <svg class="w-4 h-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 10h16M4 14h16M4 18h16"/></svg>
@@ -160,6 +182,27 @@
     {% endif %}
 </div>
 {% endif %}
+
+<!-- مودال معاينة الفيديو -->
+<div id="preview-modal" class="hidden fixed inset-0 bg-black/90 flex items-center justify-center z-50 p-4">
+    <div class="relative w-full max-w-4xl">
+        <button onclick="closePreview()" class="absolute -top-10 right-0 text-slate-400 hover:text-white">
+            <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+        </button>
+        <div class="bg-black rounded-lg overflow-hidden">
+            {% if project.video_url %}
+            <video id="preview-video" class="w-full" controls autoplay>
+                <source src="{{ project.video_url }}" type="video/mp4">
+                متصفحك لا يدعم تشغيل الفيديو
+            </video>
+            {% else %}
+            <div class="text-center py-20 text-slate-500">
+                <p>لا يوجد فيديو للمعاينة</p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
 {% endblock %}
 
 {% block scripts %}
@@ -168,12 +211,12 @@ const scenes = {{ scenes_json | safe }};
 let cellWidth = 80;
 
 function buildTimeline() {
-    if (!scenes.length) return;
+    if (!scenes || scenes.length === 0) return;
     const totalDuration = Math.max(...scenes.map(s => s.end_time), 10);
     const pxPerSec = cellWidth / 2;
     const totalWidth = totalDuration * pxPerSec + 120;
 
-    // Update ruler
+    // تحديث المسطرة
     const rulerEl = document.getElementById('ruler-marks');
     rulerEl.innerHTML = '';
     for (let t = 0; t <= totalDuration; t += 2) {
@@ -189,21 +232,23 @@ function buildTimeline() {
     const tracks = ['video','audio','text','music','subtitle'];
     tracks.forEach(t => {
         const el = document.getElementById(`track-${t}`);
-        el.style.width = totalWidth + 'px';
-        el.innerHTML = '';
+        if (el) {
+            el.style.width = totalWidth + 'px';
+            el.innerHTML = '';
+        }
     });
 
     scenes.forEach((scene, i) => {
         const left = scene.start_time * pxPerSec;
         const width = Math.max(scene.duration * pxPerSec - 2, 30);
-        const hue = i * 37 % 360;
         const label = scene.title || `مشهد ${i+1}`;
 
-        const makeBlock = (trackId, color) => {
+        const makeBlock = (trackId, colorClass) => {
             const el = document.getElementById(`track-${trackId}`);
+            if (!el) return;
             const block = document.createElement('div');
-            block.className = 'scene-block';
-            block.style.cssText = `left:${left}px;width:${width}px;background:${color}30;border:1px solid ${color}80;color:${color};`;
+            block.className = `scene-block scene-block-${trackId}`;
+            block.style.cssText = `left:${left}px;width:${width}px;`;
             block.innerHTML = `<span>${label}</span>`;
             block.title = `${label} (${scene.start_time.toFixed(1)}s – ${scene.end_time.toFixed(1)}s)`;
             block.onclick = () => seekTo(scene.start_time);
@@ -224,6 +269,23 @@ function seekTo(time) {
         `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}:${String(ms).padStart(2,'0')}`;
 }
 
+function previewVideo() {
+    const modal = document.getElementById('preview-modal');
+    modal.classList.remove('hidden');
+    const video = document.getElementById('preview-video');
+    if (video) {
+        video.currentTime = 0;
+        video.play();
+    }
+}
+
+function closePreview() {
+    const modal = document.getElementById('preview-modal');
+    modal.classList.add('hidden');
+    const video = document.getElementById('preview-video');
+    if (video) video.pause();
+}
+
 document.getElementById('zoom-slider').addEventListener('input', e => {
     cellWidth = parseInt(e.target.value);
     document.getElementById('zoom-val').textContent = cellWidth;
@@ -232,6 +294,13 @@ document.getElementById('zoom-slider').addEventListener('input', e => {
 
 buildTimeline();
 
+// إغلاق المودال بالضغط على ESC
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') {
+        closePreview();
+    }
+});
+
 async function startRender(projectId) {
     try {
         const resp = await fetch('/api/v1/production/render', {
@@ -239,9 +308,22 @@ async function startRender(projectId) {
             headers: {'Content-Type':'application/json'},
             body: JSON.stringify({ project_id: projectId })
         });
-        if (resp.ok) { showToast('بدأت عملية الرندر', 'success'); setTimeout(() => window.location.href = '/render-queue', 1000); }
-        else { const err = await resp.json(); showToast(err.detail || 'فشل', 'error'); }
+        if (resp.ok) { 
+            showToast('بدأت عملية الرندر', 'success'); 
+            setTimeout(() => window.location.href = '/render-queue', 1000); 
+        } else { 
+            const err = await resp.json(); 
+            showToast(err.detail || 'فشل', 'error'); 
+        }
     } catch(e) { showToast('خطأ في الاتصال', 'error'); }
+}
+
+// فلتر لتنسيق المدة
+function formatDuration(seconds) {
+    if (!seconds || isNaN(seconds)) return '—';
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${mins}:${String(secs).padStart(2, '0')}`;
 }
 </script>
 {% endblock %}
