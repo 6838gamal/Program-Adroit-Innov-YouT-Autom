@@ -16,8 +16,10 @@ from infrastructure.database.session import (
     check_connection, 
     is_database_available,
     get_db_status,
-    get_db_error
+    get_db_error,
+    _use_supabase_client
 )
+from infrastructure.database.supabase_client import supabase_client
 from plugins.registry import PluginRegistry, PluginLoader
 from interfaces.api.router import api_router
 from interfaces.api.oauth import router as oauth_router
@@ -62,6 +64,8 @@ async def lifespan(app: FastAPI):
         # التحقق من الاتصال
         if await check_connection():
             logger.info("✅ Supabase database connected successfully!")
+            if _use_supabase_client:
+                logger.info("📡 Using Supabase Client (REST API) - no direct database connection needed")
         else:
             logger.warning("⚠️ Supabase database connection failed - running in limited mode")
             logger.warning(f"   Error: {get_db_error()}")
@@ -72,7 +76,7 @@ async def lifespan(app: FastAPI):
     
     # عرض حالة قاعدة البيانات
     status = get_db_status()
-    logger.info(f"📊 Database status: Available={status['available']}")
+    logger.info(f"📊 Database status: Available={status['available']}, Using Client={status['using_supabase_client']}")
 
     # ── Load Plugins ────────────────────────────────────────────────────────
     try:
@@ -103,7 +107,8 @@ async def lifespan(app: FastAPI):
         logger.warning("⚠️  Some features will not work properly")
         logger.warning("⚠️  Check your Supabase configuration:")
         logger.warning("⚠️    - SUPABASE_URL: %s", settings.SUPABASE_URL)
-        logger.warning("⚠️    - POSTGRES_PASSWORD: %s", "Set" if settings.POSTGRES_PASSWORD else "Missing")
+        logger.warning("⚠️    - SUPABASE_PUBLIC_KEY: %s", "Set" if settings.supabase_public_key_value else "Missing")
+        logger.warning("⚠️    - SUPABASE_SECRET_KEY: %s", "Set" if settings.supabase_secret_key_value else "Missing")
         logger.warning("⚠️  Error: %s", get_db_error())
         logger.warning("⚠️ ════════════════════════════════════════════════════")
 
@@ -116,12 +121,99 @@ async def lifespan(app: FastAPI):
 async def _seed_initial_data() -> None:
     """
     Insert default platform records if not present.
-    Uses SQLAlchemy for both Supabase and PostgreSQL.
+    Uses Supabase Client if available, otherwise SQLAlchemy.
     """
     if not is_database_available():
         logger.warning("⚠️ Skipping data seeding: Database not available")
         return
     
+    # ── استخدام Supabase Client ────────────────────────────────────────
+    if _use_supabase_client and supabase_client.is_available():
+        try:
+            # التحقق من وجود البيانات
+            response = supabase_client.client.table('publishing_platforms')\
+                .select('id')\
+                .eq('name', 'youtube')\
+                .limit(1)\
+                .execute()
+            
+            if response.data:
+                logger.info("✅ Initial data already exists in Supabase")
+                return
+            
+            # إضافة البيانات
+            default_platforms = [
+                {
+                    "name": "youtube",
+                    "display_name": "YouTube",
+                    "plugin": "youtube",
+                    "constraints": {
+                        "max_duration": 43200,
+                        "max_file_size": 137438953472,
+                        "supported_formats": ["mp4", "mov", "avi", "webm"],
+                        "supported_aspect_ratios": ["16:9", "9:16", "1:1"],
+                    },
+                    "is_active": True,
+                },
+                {
+                    "name": "twitter",
+                    "display_name": "Twitter/X",
+                    "plugin": "twitter",
+                    "constraints": {
+                        "max_duration": 140,
+                        "max_file_size": 512 * 1024 * 1024,
+                        "supported_formats": ["mp4", "mov"],
+                    },
+                    "is_active": True,
+                },
+                {
+                    "name": "facebook",
+                    "display_name": "Facebook",
+                    "plugin": "facebook",
+                    "constraints": {
+                        "max_duration": 240,
+                        "max_file_size": 10 * 1024 * 1024 * 1024,
+                        "supported_formats": ["mp4", "mov", "avi"],
+                    },
+                    "is_active": True,
+                },
+                {
+                    "name": "instagram",
+                    "display_name": "Instagram",
+                    "plugin": "instagram",
+                    "constraints": {
+                        "max_duration": 60,
+                        "max_file_size": 100 * 1024 * 1024,
+                        "supported_formats": ["mp4", "mov"],
+                        "supported_aspect_ratios": ["1:1", "4:5", "16:9"],
+                    },
+                    "is_active": True,
+                },
+                {
+                    "name": "tiktok",
+                    "display_name": "TikTok",
+                    "plugin": "tiktok",
+                    "constraints": {
+                        "max_duration": 180,
+                        "max_file_size": 287 * 1024 * 1024,
+                        "supported_formats": ["mp4", "mov"],
+                        "supported_aspect_ratios": ["9:16", "1:1"],
+                    },
+                    "is_active": True,
+                },
+            ]
+            
+            for platform in default_platforms:
+                supabase_client.client.table('publishing_platforms').insert(platform).execute()
+            
+            logger.info(f"✅ Seeded {len(default_platforms)} default platforms via Supabase Client")
+            return
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to seed data with Supabase Client: {e}")
+            raise
+    
+    # ── Fallback: SQLAlchemy ──────────────────────────────────────────────
     try:
         from infrastructure.database.session import get_session_factory
         from infrastructure.database.models.publishing_model import PublishingPlatformModel
@@ -137,7 +229,7 @@ async def _seed_initial_data() -> None:
             q = select(PublishingPlatformModel).where(PublishingPlatformModel.name == "youtube")
             result = await session.execute(q)
             if result.scalar_one_or_none():
-                logger.info("✅ Initial data already exists")
+                logger.info("✅ Initial data already exists in SQL database")
                 return
             
             # Add default platforms
@@ -207,10 +299,10 @@ async def _seed_initial_data() -> None:
                 session.add(platform)
             
             await session.commit()
-            logger.info(f"✅ Seeded {len(default_platforms)} default platforms")
+            logger.info(f"✅ Seeded {len(default_platforms)} default platforms in SQL database")
             
     except Exception as e:
-        logger.error(f"❌ Failed to seed initial data: {e}")
+        logger.error(f"❌ Failed to seed data in SQL database: {e}")
         raise
 
 
@@ -275,7 +367,7 @@ def create_app() -> FastAPI:
         db_info = {
             "available": is_database_available(),
             "error": get_db_error(),
-            "engine_initialized": get_db_status()["engine_initialized"]
+            "using_supabase_client": _use_supabase_client
         }
         
         return {
