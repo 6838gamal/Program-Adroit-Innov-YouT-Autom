@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy import MetaData
+from sqlalchemy import text  # ✅ استيراد text
 
 logger = logging.getLogger(__name__)
 
@@ -32,49 +33,61 @@ _db_error: str | None = None
 _use_supabase_client: bool = False
 
 
+def normalize_database_url(url: str) -> str:
+    """
+    Convert various URL formats to postgresql+asyncpg:// format.
+    """
+    if not url:
+        return url
+    
+    if url.startswith("https://"):
+        url = url.replace("https://", "postgresql+asyncpg://")
+        logger.info("✅ Converted HTTPS URL to PostgreSQL asyncpg URL")
+        return url
+    
+    if url.startswith("postgresql://"):
+        url = url.replace("postgresql://", "postgresql+asyncpg://")
+        logger.info("✅ Converted PostgreSQL URL to asyncpg URL")
+        return url
+    
+    if url.startswith("postgresql+asyncpg://"):
+        logger.info("✅ URL already in asyncpg format")
+        return url
+    
+    if url.startswith("postgres://"):
+        url = url.replace("postgres://", "postgresql+asyncpg://")
+        logger.info("✅ Converted postgres:// URL to asyncpg URL")
+        return url
+    
+    logger.warning(f"⚠️ Unknown URL format: {url[:30]}...")
+    return url
+
+
 def get_database_url() -> str | None:
     """
     Build Supabase PostgreSQL connection URL from environment variables.
     Returns None if not configured.
     """
-    # 1. استخدام الرابط المباشر إذا كان موجوداً
     direct_url = os.getenv("DATABASE_URL")
     if direct_url:
-        # ✅ التأكد من أن الرابط يبدأ بـ postgresql:// وليس https://
-        if direct_url.startswith("https://"):
-            # تحويل https:// إلى postgresql+asyncpg://
-            direct_url = direct_url.replace("https://", "postgresql+asyncpg://")
-            logger.info("✅ Converted HTTPS URL to PostgreSQL URL")
-        elif direct_url.startswith("postgresql://"):
-            # ✅ تحويل postgresql:// إلى postgresql+asyncpg:// لاستخدام asyncpg
-            direct_url = direct_url.replace("postgresql://", "postgresql+asyncpg://")
-            logger.info("✅ Converted PostgreSQL URL to asyncpg URL")
-        elif direct_url.startswith("postgresql+asyncpg://"):
-            logger.info("✅ Using DATABASE_URL (already asyncpg format)")
-        else:
-            logger.warning(f"⚠️ Unknown URL format: {direct_url[:20]}...")
-        
-        return direct_url
+        return normalize_database_url(direct_url)
     
-    # 2. استخدام SUPABASE_URL لبناء الرابط
     supabase_url = os.getenv("SUPABASE_URL")
     if not supabase_url:
         logger.warning("⚠️ SUPABASE_URL not found")
         return None
     
     try:
-        # استخراج project_ref من SUPABASE_URL
         match = re.search(r'https?://([^.]+)\.supabase\.co', supabase_url)
         if not match:
             logger.warning("⚠️ Could not extract project reference from SUPABASE_URL")
             return None
         
         project_ref = match.group(1)
-        
-        # استخدام POSTGRES_PASSWORD من متغيرات البيئة
-        password = os.getenv("POSTGRES_PASSWORD", "postgres")
-        if password == "postgres":
-            logger.warning("⚠️ POSTGRES_PASSWORD is using default value. Please set a secure password in production!")
+        password = os.getenv("POSTGRES_PASSWORD")
+        if not password:
+            logger.warning("⚠️ POSTGRES_PASSWORD not set")
+            return None
         
         db_url = f"postgresql+asyncpg://postgres:{password}@db.{project_ref}.supabase.co:5432/postgres"
         logger.info(f"✅ Built Supabase PostgreSQL URL for project: {project_ref}")
@@ -99,7 +112,6 @@ def get_engine() -> AsyncEngine | None:
             _db_available = False
             return None
         
-        # إعدادات الاتصال من متغيرات البيئة
         engine_kwargs = {
             "echo": os.getenv("DATABASE_ECHO", "false").lower() == "true",
             "future": True,
@@ -228,7 +240,8 @@ async def check_connection() -> bool:
     
     try:
         async with engine.connect() as conn:
-            await conn.execute("SELECT 1")
+            # ✅ استخدام text() بشكل صحيح في SQLAlchemy 2.0
+            await conn.execute(text("SELECT 1"))
         _db_available = True
         _db_error = None
         logger.info("✅ Database connection successful!")
@@ -268,7 +281,7 @@ async def get_db_info() -> dict:
     try:
         async with engine.connect() as conn:
             result = await conn.execute(
-                "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'"
+                text("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'")
             )
             tables = result.scalars().all()
             info["tables"] = list(tables)
@@ -292,7 +305,7 @@ async def table_exists(table_name: str) -> bool:
     try:
         async with engine.connect() as conn:
             result = await conn.execute(
-                "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = :name)",
+                text("SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = :name)"),
                 {"name": table_name}
             )
             return result.scalar() or False
