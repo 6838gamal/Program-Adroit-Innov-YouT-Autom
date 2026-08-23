@@ -17,9 +17,9 @@ from infrastructure.database.session import (
     is_database_available,
     get_db_status,
     get_db_error,
+    get_session_factory,
     _use_supabase_client
 )
-from infrastructure.database.supabase_client import supabase_client
 from plugins.registry import PluginRegistry, PluginLoader
 from interfaces.api.router import api_router
 from interfaces.api.oauth import router as oauth_router
@@ -56,18 +56,16 @@ async def lifespan(app: FastAPI):
     logger.info("✅ Directories created")
 
     # ── Database Setup ──────────────────────────────────────────────────────
-    logger.info("Connecting to Supabase database...")
+    logger.info("Connecting to database...")
     try:
-        # محاولة إنشاء الجداول (لن تتعطل إذا فشلت)
+        # إنشاء الجداول
         await create_all_tables()
         
         # التحقق من الاتصال
         if await check_connection():
-            logger.info("✅ Supabase database connected successfully!")
-            if _use_supabase_client:
-                logger.info("📡 Using Supabase Client (REST API) - no direct database connection needed")
+            logger.info("✅ Database connected successfully!")
         else:
-            logger.warning("⚠️ Supabase database connection failed - running in limited mode")
+            logger.warning("⚠️ Database connection failed - running in limited mode")
             logger.warning(f"   Error: {get_db_error()}")
             
     except Exception as e:
@@ -76,7 +74,7 @@ async def lifespan(app: FastAPI):
     
     # عرض حالة قاعدة البيانات
     status = get_db_status()
-    logger.info(f"📊 Database status: Available={status['available']}, Using Client={status['using_supabase_client']}")
+    logger.info(f"📊 Database status: Available={status['available']}, Engine Initialized={status['engine_initialized']}")
 
     # ── Load Plugins ────────────────────────────────────────────────────────
     try:
@@ -105,10 +103,9 @@ async def lifespan(app: FastAPI):
         logger.warning("⚠️ ════════════════════════════════════════════════════")
         logger.warning("⚠️  RUNNING IN LIMITED MODE - Database is not available")
         logger.warning("⚠️  Some features will not work properly")
-        logger.warning("⚠️  Check your Supabase configuration:")
-        logger.warning("⚠️    - SUPABASE_URL: %s", settings.SUPABASE_URL)
-        logger.warning("⚠️    - SUPABASE_PUBLIC_KEY: %s", "Set" if settings.supabase_public_key_value else "Missing")
-        logger.warning("⚠️    - SUPABASE_SECRET_KEY: %s", "Set" if settings.supabase_secret_key_value else "Missing")
+        logger.warning("⚠️  Check your database configuration:")
+        logger.warning("⚠️    - DATABASE_URL or SUPABASE_URL: %s", "Set" if settings.SUPABASE_URL else "Missing")
+        logger.warning("⚠️    - POSTGRES_PASSWORD: %s", "Set" if os.getenv("POSTGRES_PASSWORD") else "Missing")
         logger.warning("⚠️  Error: %s", get_db_error())
         logger.warning("⚠️ ════════════════════════════════════════════════════")
 
@@ -121,101 +118,13 @@ async def lifespan(app: FastAPI):
 async def _seed_initial_data() -> None:
     """
     Insert default platform records if not present.
-    Uses Supabase Client if available, otherwise SQLAlchemy.
+    Uses SQLAlchemy directly.
     """
     if not is_database_available():
         logger.warning("⚠️ Skipping data seeding: Database not available")
         return
     
-    # ── استخدام Supabase Client ────────────────────────────────────────
-    if _use_supabase_client and supabase_client.is_available():
-        try:
-            # التحقق من وجود البيانات
-            response = supabase_client.client.table('publishing_platforms')\
-                .select('id')\
-                .eq('name', 'youtube')\
-                .limit(1)\
-                .execute()
-            
-            if response.data:
-                logger.info("✅ Initial data already exists in Supabase")
-                return
-            
-            # إضافة البيانات
-            default_platforms = [
-                {
-                    "name": "youtube",
-                    "display_name": "YouTube",
-                    "plugin": "youtube",
-                    "constraints": {
-                        "max_duration": 43200,
-                        "max_file_size": 137438953472,
-                        "supported_formats": ["mp4", "mov", "avi", "webm"],
-                        "supported_aspect_ratios": ["16:9", "9:16", "1:1"],
-                    },
-                    "is_active": True,
-                },
-                {
-                    "name": "twitter",
-                    "display_name": "Twitter/X",
-                    "plugin": "twitter",
-                    "constraints": {
-                        "max_duration": 140,
-                        "max_file_size": 512 * 1024 * 1024,
-                        "supported_formats": ["mp4", "mov"],
-                    },
-                    "is_active": True,
-                },
-                {
-                    "name": "facebook",
-                    "display_name": "Facebook",
-                    "plugin": "facebook",
-                    "constraints": {
-                        "max_duration": 240,
-                        "max_file_size": 10 * 1024 * 1024 * 1024,
-                        "supported_formats": ["mp4", "mov", "avi"],
-                    },
-                    "is_active": True,
-                },
-                {
-                    "name": "instagram",
-                    "display_name": "Instagram",
-                    "plugin": "instagram",
-                    "constraints": {
-                        "max_duration": 60,
-                        "max_file_size": 100 * 1024 * 1024,
-                        "supported_formats": ["mp4", "mov"],
-                        "supported_aspect_ratios": ["1:1", "4:5", "16:9"],
-                    },
-                    "is_active": True,
-                },
-                {
-                    "name": "tiktok",
-                    "display_name": "TikTok",
-                    "plugin": "tiktok",
-                    "constraints": {
-                        "max_duration": 180,
-                        "max_file_size": 287 * 1024 * 1024,
-                        "supported_formats": ["mp4", "mov"],
-                        "supported_aspect_ratios": ["9:16", "1:1"],
-                    },
-                    "is_active": True,
-                },
-            ]
-            
-            for platform in default_platforms:
-                supabase_client.client.table('publishing_platforms').insert(platform).execute()
-            
-            logger.info(f"✅ Seeded {len(default_platforms)} default platforms via Supabase Client")
-            return
-            
-        except Exception as e:
-            logger.error(f"❌ Failed to seed data with Supabase Client: {e}")
-            raise
-    
-    # ── Fallback: SQLAlchemy ──────────────────────────────────────────────
     try:
-        from infrastructure.database.session import get_session_factory
         from infrastructure.database.models.publishing_model import PublishingPlatformModel
         from sqlalchemy import select
         
@@ -225,14 +134,14 @@ async def _seed_initial_data() -> None:
             return
             
         async with factory() as session:
-            # Check if YouTube platform exists
+            # التحقق من وجود البيانات
             q = select(PublishingPlatformModel).where(PublishingPlatformModel.name == "youtube")
             result = await session.execute(q)
             if result.scalar_one_or_none():
-                logger.info("✅ Initial data already exists in SQL database")
+                logger.info("✅ Initial data already exists")
                 return
             
-            # Add default platforms
+            # إضافة البيانات الافتراضية
             default_platforms = [
                 {
                     "name": "youtube",
@@ -299,10 +208,10 @@ async def _seed_initial_data() -> None:
                 session.add(platform)
             
             await session.commit()
-            logger.info(f"✅ Seeded {len(default_platforms)} default platforms in SQL database")
+            logger.info(f"✅ Seeded {len(default_platforms)} default platforms")
             
     except Exception as e:
-        logger.error(f"❌ Failed to seed data in SQL database: {e}")
+        logger.error(f"❌ Failed to seed data: {e}")
         raise
 
 
@@ -376,8 +285,8 @@ def create_app() -> FastAPI:
             "environment": settings.ENVIRONMENT,
             "database": db_info,
             "plugins_loaded": hasattr(app.state, 'plugin_registry'),
-            "supabase_configured": settings.supabase_configured,
-            "supabase_url": settings.SUPABASE_URL,
+            "supabase_configured": settings.supabase_configured if hasattr(settings, 'supabase_configured') else False,
+            "supabase_url": settings.SUPABASE_URL if hasattr(settings, 'SUPABASE_URL') else None,
         }
 
     return app
@@ -389,10 +298,15 @@ app = create_app()
 
 if __name__ == "__main__":
     import uvicorn
+    import os
+    
+    # استخدام PORT من متغيرات البيئة أو الافتراضي 10000
+    port = int(os.getenv("PORT", 10000))
+    
     uvicorn.run(
         "main:app",
         host=settings.HOST,
-        port=settings.PORT,
+        port=port,
         reload=settings.is_development,
         log_level=settings.LOG_LEVEL.lower() if hasattr(settings, 'LOG_LEVEL') else "info",
     )
