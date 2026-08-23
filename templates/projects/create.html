@@ -183,12 +183,12 @@
                 </div>
                 
                 <!-- معلومات الفيديو أثناء التحميل -->
-                <div id="video-info-loading" class="hidden mt-3 pt-3 border-t border-slate-700/50">
+                <div id="video-info-loading" class="mt-3 pt-3 border-t border-slate-700/50">
                     <div class="text-xs text-slate-400 mb-2">🎬 معلومات الفيديو:</div>
                     <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
                         <div class="bg-slate-800/30 rounded p-2 text-center">
                             <span class="text-slate-500 block text-[10px]">الصيغة</span>
-                            <span id="loading-format" class="text-slate-300 text-xs">—</span>
+                            <span id="loading-format" class="text-slate-300 text-xs">جاري التحليل...</span>
                         </div>
                         <div class="bg-slate-800/30 rounded p-2 text-center">
                             <span class="text-slate-500 block text-[10px]">الحجم</span>
@@ -301,7 +301,7 @@ let state = {
 };
 
 // ============================================
-// وظائف الدردشة (مختصرة)
+// وظائف الدردشة
 // ============================================
 function addMessage(role, content, timestamp = new Date()) {
     const container = document.getElementById('chat-messages');
@@ -419,11 +419,11 @@ function removeVideoLink(index) {
 }
 
 // ============================================
-// معالجة الفيديو مع عرض التقدم والمعلومات
+// معالجة الفيديو مع عرض التقدم الفعلي
 // ============================================
 async function processVideoLink(url) {
     showProgress('جاري تحليل رابط الفيديو...', 5, 'تحليل الرابط', 'جاري استخراج معلومات الفيديو');
-    updateLoadingVideoInfo('—', '—', '—', '—');
+    updateLoadingVideoInfo('جاري التحليل...', '—', '—', '—');
     
     try {
         const response = await fetch('/api/v1/projects/video/process', {
@@ -449,51 +449,63 @@ async function processVideoLink(url) {
         const data = await response.json();
         state.processingSessionId = data.session_id;
         
+        // بدء مراقبة التقدم
         await pollProcessingStatus(state.processingSessionId);
         
     } catch (error) {
         hideProgress();
         showToast('❌ فشل معالجة الفيديو: ' + error.message, 'error');
-        addMessage('assistant', `❌ عذراً، فشلت معالجة الفيديو: ${error.message}. يرجى المحاولة مرة أخرى.`);
+        addMessage('assistant', `❌ عذراً، فشلت معالجة الفيديو: ${error.message}`);
         console.error('Video processing error:', error);
     }
 }
 
 // ============================================
-// مراقبة حالة المعالجة مع تحديث التقدم والمعلومات
+// مراقبة التقدم مع تحديث مستمر
 // ============================================
 async function pollProcessingStatus(sessionId) {
     let attempts = 0;
     const maxAttempts = 60;
+    let lastProgress = 0;
     
     while (attempts < maxAttempts && !state.cancelProcessing) {
         try {
             const response = await fetch(`/api/v1/projects/video/process/${sessionId}/status`);
             
             if (!response.ok) {
-                throw new Error('فشل الحصول على حالة المعالجة');
+                console.warn('فشل الحصول على الحالة، إعادة المحاولة...');
+                await new Promise(resolve => setTimeout(resolve, 2000));
+                attempts++;
+                continue;
             }
             
             const status = await response.json();
+            console.log('📊 حالة المعالجة:', status);
             
-            // تحديث التقدم
-            updateProgress(
-                status.detail || 'جاري المعالجة...',
-                status.progress || 0,
-                status.status || 'processing'
-            );
-            
-            // تحديث معلومات الفيديو إذا كانت متوفرة
-            if (status.video_info) {
-                updateLoadingVideoInfo(
-                    status.video_info.format || '—',
-                    status.video_info.size || '—',
-                    status.video_info.duration || '—',
-                    status.video_info.dimensions || '—'
+            // تحديث التقدم إذا تغير
+            if (status.progress !== undefined && status.progress !== lastProgress) {
+                lastProgress = status.progress;
+                
+                // تحديث شريط التقدم
+                updateProgress(
+                    status.detail || 'جاري المعالجة...',
+                    status.progress || 0,
+                    status.step || status.status || 'processing'
                 );
-                document.getElementById('video-info-loading').classList.remove('hidden');
+                
+                // تحديث معلومات الفيديو إذا كانت متوفرة
+                if (status.title || status.format || status.size || status.duration || status.dimensions) {
+                    updateLoadingVideoInfo(
+                        status.format || 'جاري التحديد...',
+                        status.size || '—',
+                        status.duration ? `${Math.floor(status.duration / 60)}:${String(status.duration % 60).padStart(2, '0')}` : '—',
+                        status.dimensions || '—'
+                    );
+                    document.getElementById('video-info-loading').classList.remove('hidden');
+                }
             }
             
+            // التحقق من الاكتمال
             if (status.completed) {
                 if (status.error) {
                     throw new Error(status.error);
@@ -514,7 +526,7 @@ async function pollProcessingStatus(sessionId) {
                 
                 hideProgress();
                 showToast('✅ تم معالجة الفيديو بنجاح!', 'success');
-                addMessage('assistant', '🎬 تم معالجة الفيديو بنجاح! يمكنك معاينته أدناه. اضغط "تأكيد" لحفظ المشروع.');
+                addMessage('assistant', '🎬 تم معالجة الفيديو بنجاح! يمكنك معاينته أدناه.');
                 return;
             }
             
@@ -523,12 +535,14 @@ async function pollProcessingStatus(sessionId) {
             }
             
         } catch (error) {
-            if (error.message !== 'فشل الحصول على حالة المعالجة') {
+            if (error.message && error.message.includes('فشل')) {
                 throw error;
             }
+            console.warn('خطأ في جلب الحالة:', error);
         }
         
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        // انتظار 1.5 ثانية قبل المحاولة التالية
+        await new Promise(resolve => setTimeout(resolve, 1500));
         attempts++;
     }
     
@@ -544,7 +558,7 @@ async function pollProcessingStatus(sessionId) {
 // ============================================
 async function generateVideoFromPrompt(prompt) {
     showProgress('جاري توليد الفيديو...', 5, 'تحليل الطلب', 'جاري تحليل الطلب');
-    updateLoadingVideoInfo('—', '—', '—', '—');
+    updateLoadingVideoInfo('جاري التوليد...', '—', '—', '—');
     
     try {
         const response = await fetch('/api/v1/projects/video/generate', {
@@ -576,39 +590,51 @@ async function generateVideoFromPrompt(prompt) {
     } catch (error) {
         hideProgress();
         showToast('❌ فشل توليد الفيديو: ' + error.message, 'error');
-        addMessage('assistant', `❌ عذراً، فشل توليد الفيديو: ${error.message}. يرجى المحاولة مرة أخرى.`);
+        addMessage('assistant', `❌ عذراً، فشل توليد الفيديو: ${error.message}`);
         console.error('Video generation error:', error);
     }
 }
 
+// ============================================
+// مراقبة حالة التوليد
+// ============================================
 async function pollGenerationStatus(sessionId) {
     let attempts = 0;
     const maxAttempts = 90;
+    let lastProgress = 0;
     
     while (attempts < maxAttempts && !state.cancelProcessing) {
         try {
             const response = await fetch(`/api/v1/projects/video/generate/${sessionId}/status`);
             
             if (!response.ok) {
-                throw new Error('فشل الحصول على حالة التوليد');
+                console.warn('فشل الحصول على حالة التوليد، إعادة المحاولة...');
+                await new Promise(resolve => setTimeout(resolve, 2000));
+                attempts++;
+                continue;
             }
             
             const status = await response.json();
+            console.log('📊 حالة التوليد:', status);
             
-            updateProgress(
-                status.detail || 'جاري التوليد...',
-                status.progress || 0,
-                status.status || 'generating'
-            );
-            
-            if (status.video_info) {
-                updateLoadingVideoInfo(
-                    status.video_info.format || '—',
-                    status.video_info.size || '—',
-                    status.video_info.duration || '—',
-                    status.video_info.dimensions || '—'
+            if (status.progress !== undefined && status.progress !== lastProgress) {
+                lastProgress = status.progress;
+                
+                updateProgress(
+                    status.detail || 'جاري التوليد...',
+                    status.progress || 0,
+                    status.step || status.status || 'generating'
                 );
-                document.getElementById('video-info-loading').classList.remove('hidden');
+                
+                if (status.title || status.format || status.size || status.duration || status.dimensions) {
+                    updateLoadingVideoInfo(
+                        status.format || 'جاري التحديد...',
+                        status.size || '—',
+                        status.duration ? `${Math.floor(status.duration / 60)}:${String(status.duration % 60).padStart(2, '0')}` : '—',
+                        status.dimensions || '—'
+                    );
+                    document.getElementById('video-info-loading').classList.remove('hidden');
+                }
             }
             
             if (status.completed) {
@@ -631,7 +657,7 @@ async function pollGenerationStatus(sessionId) {
                 
                 hideProgress();
                 showToast('✅ تم توليد الفيديو بنجاح!', 'success');
-                addMessage('assistant', '🎬 تم توليد الفيديو بناءً على طلبك! يمكنك معاينته أدناه. اضغط "تأكيد" لحفظ المشروع.');
+                addMessage('assistant', '🎬 تم توليد الفيديو بناءً على طلبك!');
                 return;
             }
             
@@ -640,12 +666,13 @@ async function pollGenerationStatus(sessionId) {
             }
             
         } catch (error) {
-            if (error.message !== 'فشل الحصول على حالة التوليد') {
+            if (error.message && error.message.includes('فشل')) {
                 throw error;
             }
+            console.warn('خطأ في جلب حالة التوليد:', error);
         }
         
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        await new Promise(resolve => setTimeout(resolve, 1500));
         attempts++;
     }
     
@@ -657,17 +684,20 @@ async function pollGenerationStatus(sessionId) {
 }
 
 // ============================================
-// عرض التقدم المحسن
+// عرض التقدم مع تفاصيل
 // ============================================
-function showProgress(title, percent = 0, status = '', detail = '') {
+function showProgress(title, percent = 0, step = '', detail = '') {
     const area = document.getElementById('progress-area');
     area.classList.remove('hidden');
     
     document.getElementById('progress-title').textContent = title;
     document.getElementById('progress-percent').textContent = percent + '%';
     document.getElementById('progress-bar').style.width = percent + '%';
-    document.getElementById('progress-status').textContent = status || 'جاري التهيئة...';
+    document.getElementById('progress-status').textContent = step || 'جاري التهيئة...';
     document.getElementById('progress-detail').textContent = detail || 'في انتظار بدء المعالجة...';
+    
+    // إظهار منطقة معلومات الفيديو
+    document.getElementById('video-info-loading').classList.remove('hidden');
     
     state.processing = true;
     state.cancelProcessing = false;
@@ -679,12 +709,12 @@ function showProgress(title, percent = 0, status = '', detail = '') {
     state.progressTimer = setInterval(updateElapsedTime, 1000);
 }
 
-function updateProgress(title, percent, status = '', detail = '') {
+function updateProgress(title, percent, step = '', detail = '') {
     document.getElementById('progress-title').textContent = title;
     document.getElementById('progress-percent').textContent = percent + '%';
     document.getElementById('progress-bar').style.width = percent + '%';
-    if (status) {
-        document.getElementById('progress-status').textContent = status;
+    if (step) {
+        document.getElementById('progress-status').textContent = step;
     }
     if (detail) {
         document.getElementById('progress-detail').textContent = detail;
@@ -692,10 +722,10 @@ function updateProgress(title, percent, status = '', detail = '') {
 }
 
 function updateLoadingVideoInfo(format, size, duration, dimensions) {
-    document.getElementById('loading-format').textContent = format;
-    document.getElementById('loading-size').textContent = size;
-    document.getElementById('loading-duration').textContent = duration;
-    document.getElementById('loading-dimensions').textContent = dimensions;
+    document.getElementById('loading-format').textContent = format || '—';
+    document.getElementById('loading-size').textContent = size || '—';
+    document.getElementById('loading-duration').textContent = duration || '—';
+    document.getElementById('loading-dimensions').textContent = dimensions || '—';
 }
 
 function updateElapsedTime() {
@@ -774,13 +804,11 @@ function showPreviewWithInfo(videoUrl, videoData) {
     
     video.onloadeddata = () => {
         overlay.classList.add('hidden');
-        // تحديث المدة الفعلية من الفيديو
         if (video.duration) {
             const mins = Math.floor(video.duration / 60);
             const secs = Math.floor(video.duration % 60);
             document.getElementById('video-duration').textContent = `${mins}:${String(secs).padStart(2, '0')}`;
         }
-        // تحديث الأبعاد الفعلية
         if (video.videoWidth && video.videoHeight) {
             document.getElementById('video-dimensions').textContent = `${video.videoWidth}×${video.videoHeight}`;
         }
@@ -866,7 +894,7 @@ async function confirmProject() {
     } catch (error) {
         showToast('❌ ' + error.message, 'error');
         console.error('Project creation error:', error);
-        addMessage('assistant', `❌ عذراً، فشل إنشاء المشروع: ${error.message}. يرجى المحاولة مرة أخرى.`);
+        addMessage('assistant', `❌ عذراً، فشل إنشاء المشروع: ${error.message}`);
     } finally {
         confirmBtn.disabled = false;
         confirmBtn.innerHTML = `
