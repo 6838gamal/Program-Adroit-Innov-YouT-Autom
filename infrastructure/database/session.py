@@ -1,3 +1,6 @@
+import os
+import re
+import logging
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -6,9 +9,6 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy import MetaData
-from config.settings import settings
-import re
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -34,22 +34,30 @@ _db_error: str | None = None
 
 def get_database_url() -> str:
     """
-    Build Supabase PostgreSQL connection URL from settings.
+    Build Supabase PostgreSQL connection URL from environment variables.
     """
-    if not settings.SUPABASE_URL:
+    # 1. استخدام الرابط المباشر إذا كان موجوداً
+    direct_url = os.getenv("SUPABASE_DIRECT_URL")
+    if direct_url:
+        logger.info("✅ Using SUPABASE_DIRECT_URL from environment")
+        return direct_url
+    
+    # 2. استخدام SUPABASE_URL لبناء الرابط
+    supabase_url = os.getenv("SUPABASE_URL")
+    if not supabase_url:
         raise ValueError("SUPABASE_URL is required but not configured!")
     
     try:
         # استخراج project_ref من SUPABASE_URL
-        match = re.search(r'https?://([^.]+)\.supabase\.co', settings.SUPABASE_URL)
+        match = re.search(r'https?://([^.]+)\.supabase\.co', supabase_url)
         if not match:
-            raise ValueError(f"Invalid SUPABASE_URL format: {settings.SUPABASE_URL}")
+            raise ValueError(f"Invalid SUPABASE_URL format: {supabase_url}")
         
         project_ref = match.group(1)
         
-        # استخدام POSTGRES_PASSWORD من الإعدادات
-        password = settings.POSTGRES_PASSWORD.get_secret_value()
-        if not password or password == "postgres":
+        # استخدام POSTGRES_PASSWORD من متغيرات البيئة
+        password = os.getenv("POSTGRES_PASSWORD", "postgres")
+        if password == "postgres":
             logger.warning("⚠️ POSTGRES_PASSWORD is using default value. Please set a secure password in production!")
         
         db_url = f"postgresql+asyncpg://postgres:{password}@db.{project_ref}.supabase.co:5432/postgres"
@@ -71,14 +79,14 @@ def get_engine() -> AsyncEngine | None:
     try:
         database_url = get_database_url()
         
-        # إعدادات الاتصال
+        # إعدادات الاتصال من متغيرات البيئة
         engine_kwargs = {
-            "echo": settings.DATABASE_ECHO,
+            "echo": os.getenv("DATABASE_ECHO", "false").lower() == "true",
             "future": True,
-            "pool_size": settings.DB_POOL_SIZE,
-            "max_overflow": settings.DB_MAX_OVERFLOW if hasattr(settings, 'DB_MAX_OVERFLOW') else 20,
-            "pool_timeout": settings.DB_POOL_TIMEOUT if hasattr(settings, 'DB_POOL_TIMEOUT') else 30,
-            "pool_recycle": settings.DB_POOL_RECYCLE if hasattr(settings, 'DB_POOL_RECYCLE') else 3600,
+            "pool_size": int(os.getenv("DB_POOL_SIZE", "10")),
+            "max_overflow": int(os.getenv("DB_MAX_OVERFLOW", "20")),
+            "pool_timeout": int(os.getenv("DB_POOL_TIMEOUT", "30")),
+            "pool_recycle": int(os.getenv("DB_POOL_RECYCLE", "3600")),
             "pool_pre_ping": True,
         }
         
@@ -126,7 +134,6 @@ async def get_db() -> AsyncSession:
     """
     from fastapi import HTTPException
     
-    # التحقق من توفر قاعدة البيانات
     if not is_database_available():
         raise HTTPException(
             status_code=503,
@@ -152,16 +159,13 @@ async def get_db() -> AsyncSession:
 
 
 async def create_all_tables() -> None:
-    """
-    Create all tables on startup.
-    """
+    """Create all tables on startup."""
     engine = get_engine()
     if engine is None:
         logger.warning("⚠️ Skipping table creation: Database engine not available")
         return
     
     try:
-        # استيراد النماذج لضمان تسجيلها
         import infrastructure.database.models  # noqa: F401
         
         async with engine.begin() as conn:
@@ -176,13 +180,10 @@ async def create_all_tables() -> None:
         _db_error = str(e)
         _db_available = False
         logger.error(f"❌ Failed to create tables: {e}")
-        # لا نرفع استثناء - نستمر بدون قاعدة بيانات
 
 
 async def drop_all_tables() -> None:
-    """
-    Drop all tables (for testing only).
-    """
+    """Drop all tables (for testing only)."""
     engine = get_engine()
     if engine is None:
         logger.warning("⚠️ Skipping table drop: Database engine not available")
@@ -194,12 +195,7 @@ async def drop_all_tables() -> None:
 
 
 async def check_connection() -> bool:
-    """
-    Check database connection.
-    
-    Returns:
-        bool: True if connected successfully
-    """
+    """Check database connection."""
     global _db_available, _db_error
     
     engine = get_engine()
@@ -234,12 +230,7 @@ def get_db_error() -> str | None:
 
 
 async def get_db_info() -> dict:
-    """
-    Get database information.
-    
-    Returns:
-        dict: Database information
-    """
+    """Get database information."""
     engine = get_engine()
     
     info = {
@@ -254,7 +245,6 @@ async def get_db_info() -> dict:
     
     try:
         async with engine.connect() as conn:
-            # جلب أسماء الجداول
             result = await conn.execute(
                 "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'"
             )
@@ -269,15 +259,7 @@ async def get_db_info() -> dict:
 
 
 async def table_exists(table_name: str) -> bool:
-    """
-    Check if a table exists in the database.
-    
-    Args:
-        table_name: Name of the table to check
-        
-    Returns:
-        bool: True if table exists
-    """
+    """Check if a table exists in the database."""
     if not is_database_available():
         return False
     
@@ -298,12 +280,7 @@ async def table_exists(table_name: str) -> bool:
 
 
 def get_db_status() -> dict:
-    """
-    Get database status without making async calls.
-    
-    Returns:
-        dict: Database status
-    """
+    """Get database status without making async calls."""
     return {
         "available": is_database_available(),
         "engine_initialized": _engine is not None,
