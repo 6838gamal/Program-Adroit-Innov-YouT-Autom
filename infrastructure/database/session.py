@@ -28,6 +28,8 @@ class Base(DeclarativeBase):
 
 _engine: AsyncEngine | None = None
 _session_factory: async_sessionmaker | None = None
+_db_available: bool = False
+_db_error: str | None = None
 
 
 def get_database_url() -> str:
@@ -39,7 +41,6 @@ def get_database_url() -> str:
     
     try:
         # استخراج project_ref من SUPABASE_URL
-        # مثال: https://nyotevucyflkqaqkutjn.supabase.co
         match = re.search(r'https?://([^.]+)\.supabase\.co', settings.SUPABASE_URL)
         if not match:
             raise ValueError(f"Invalid SUPABASE_URL format: {settings.SUPABASE_URL}")
@@ -60,11 +61,14 @@ def get_database_url() -> str:
         raise
 
 
-def get_engine() -> AsyncEngine:
-    """Get database engine for Supabase."""
-    global _engine
+def get_engine() -> AsyncEngine | None:
+    """Get database engine for Supabase. Returns None if connection fails."""
+    global _engine, _db_available, _db_error
     
-    if _engine is None:
+    if _engine is not None:
+        return _engine
+    
+    try:
         database_url = get_database_url()
         
         # إعدادات الاتصال
@@ -83,17 +87,29 @@ def get_engine() -> AsyncEngine:
             database_url,
             **engine_kwargs
         )
-    
-    return _engine
+        
+        _db_available = True
+        return _engine
+        
+    except Exception as e:
+        _db_error = str(e)
+        _db_available = False
+        logger.error(f"❌ Failed to create database engine: {e}")
+        logger.warning("⚠️ The application will continue in limited mode. Database features will be unavailable.")
+        return None
 
 
-def get_session_factory() -> async_sessionmaker:
-    """Get async session factory."""
+def get_session_factory() -> async_sessionmaker | None:
+    """Get async session factory. Returns None if engine is not available."""
     global _session_factory
+    
+    engine = get_engine()
+    if engine is None:
+        return None
     
     if _session_factory is None:
         _session_factory = async_sessionmaker(
-            bind=get_engine(),
+            bind=engine,
             class_=AsyncSession,
             expire_on_commit=False,
             autoflush=False,
@@ -106,8 +122,24 @@ def get_session_factory() -> async_sessionmaker:
 async def get_db() -> AsyncSession:
     """
     FastAPI dependency — yields an async DB session.
+    Raises HTTPException if database is not available.
     """
+    from fastapi import HTTPException
+    
+    # التحقق من توفر قاعدة البيانات
+    if not is_database_available():
+        raise HTTPException(
+            status_code=503,
+            detail="Database is currently unavailable. Please try again later."
+        )
+    
     factory = get_session_factory()
+    if factory is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Database is currently unavailable. Please try again later."
+        )
+    
     async with factory() as session:
         try:
             yield session
@@ -123,19 +155,28 @@ async def create_all_tables() -> None:
     """
     Create all tables on startup.
     """
+    engine = get_engine()
+    if engine is None:
+        logger.warning("⚠️ Skipping table creation: Database engine not available")
+        return
+    
     try:
         # استيراد النماذج لضمان تسجيلها
         import infrastructure.database.models  # noqa: F401
         
-        engine = get_engine()
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
         
         logger.info("✅ Database tables created/verified successfully!")
+        global _db_available
+        _db_available = True
         
     except Exception as e:
+        global _db_error
+        _db_error = str(e)
+        _db_available = False
         logger.error(f"❌ Failed to create tables: {e}")
-        raise
+        # لا نرفع استثناء - نستمر بدون قاعدة بيانات
 
 
 async def drop_all_tables() -> None:
@@ -143,6 +184,10 @@ async def drop_all_tables() -> None:
     Drop all tables (for testing only).
     """
     engine = get_engine()
+    if engine is None:
+        logger.warning("⚠️ Skipping table drop: Database engine not available")
+        return
+    
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
     logger.info("✅ All tables dropped")
@@ -155,15 +200,37 @@ async def check_connection() -> bool:
     Returns:
         bool: True if connected successfully
     """
+    global _db_available, _db_error
+    
+    engine = get_engine()
+    if engine is None:
+        _db_available = False
+        return False
+    
     try:
-        engine = get_engine()
         async with engine.connect() as conn:
             await conn.execute("SELECT 1")
+        _db_available = True
+        _db_error = None
         logger.info("✅ Supabase connection successful!")
         return True
     except Exception as e:
+        _db_available = False
+        _db_error = str(e)
         logger.error(f"❌ Supabase connection failed: {e}")
         return False
+
+
+def is_database_available() -> bool:
+    """Check if database is available."""
+    global _db_available
+    return _db_available and _engine is not None
+
+
+def get_db_error() -> str | None:
+    """Get the last database error."""
+    global _db_error
+    return _db_error
 
 
 async def get_db_info() -> dict:
@@ -173,19 +240,20 @@ async def get_db_info() -> dict:
     Returns:
         dict: Database information
     """
+    engine = get_engine()
+    
     info = {
         "type": "supabase",
-        "connected": False,
+        "available": is_database_available(),
+        "error": get_db_error(),
         "tables": []
     }
     
+    if not is_database_available() or engine is None:
+        return info
+    
     try:
-        engine = get_engine()
         async with engine.connect() as conn:
-            # اختبار الاتصال
-            await conn.execute("SELECT 1")
-            info["connected"] = True
-            
             # جلب أسماء الجداول
             result = await conn.execute(
                 "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'"
@@ -195,6 +263,7 @@ async def get_db_info() -> dict:
                 
     except Exception as e:
         logger.error(f"❌ Failed to get database info: {e}")
+        info["error"] = str(e)
     
     return info
 
@@ -209,8 +278,14 @@ async def table_exists(table_name: str) -> bool:
     Returns:
         bool: True if table exists
     """
+    if not is_database_available():
+        return False
+    
+    engine = get_engine()
+    if engine is None:
+        return False
+    
     try:
-        engine = get_engine()
         async with engine.connect() as conn:
             result = await conn.execute(
                 "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = :name)",
@@ -220,3 +295,18 @@ async def table_exists(table_name: str) -> bool:
     except Exception as e:
         logger.error(f"❌ Failed to check table existence: {e}")
         return False
+
+
+def get_db_status() -> dict:
+    """
+    Get database status without making async calls.
+    
+    Returns:
+        dict: Database status
+    """
+    return {
+        "available": is_database_available(),
+        "engine_initialized": _engine is not None,
+        "error": get_db_error(),
+        "using_supabase": True
+    }
