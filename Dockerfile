@@ -13,17 +13,17 @@ RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# تعيين مجلد العمل (بدون app)
+# تعيين مجلد العمل
 WORKDIR /app
 
-# نسخ ملفات المتطلبات أولاً (للاستفادة من caching)
+# نسخ ملفات المتطلبات أولاً
 COPY requirements.txt .
 COPY pyproject.toml .
 
 # تثبيت التبعيات
 RUN pip install --no-cache-dir -r requirements.txt
 
-# نسخ جميع ملفات المشروع (main.py في الجذر مباشرة)
+# نسخ جميع ملفات المشروع
 COPY . .
 
 # إنشاء المجلدات المطلوبة
@@ -34,7 +34,7 @@ RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
 USER appuser
 
 # تعيين المنفذ
-EXPOSE 5000
+EXPOSE 10000
 
-# تشغيل main.py مباشرة (موجود في الجذر)
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "5000"]
+# استخدام متغير PORT من البيئة (افتراضي 10000)
+CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-10000}"]
