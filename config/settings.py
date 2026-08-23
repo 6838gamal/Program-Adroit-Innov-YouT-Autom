@@ -27,96 +27,53 @@ class Settings(BaseSettings):
     WORKERS: int = 1
 
     # ============================================
-    # POSTGRESQL DATABASE (المفتاح الأول)
+    # DATABASE TYPE
     # ============================================
-    # POSTGRES_URL: رابط اتصال PostgreSQL الكامل
-    POSTGRES_URL: str = Field(
-        default=f"postgresql+asyncpg://postgres:postgres@localhost:5432/video_platform",
-        description="PostgreSQL connection URL (async)"
+    DATABASE_TYPE: str = Field(
+        default="supabase",
+        description="Database type: supabase, postgres, sqlite"
     )
-    
-    # POSTGRES_SYNC_URL: رابط اتصال PostgreSQL للتحديثات (Synchronous)
-    POSTGRES_SYNC_URL: str = Field(
-        default=f"postgresql://postgres:postgres@localhost:5432/video_platform",
-        description="PostgreSQL connection URL (sync for migrations)"
-    )
-    
-    # إعدادات PostgreSQL الإضافية (إذا أردت بناء الرابط يدوياً)
-    POSTGRES_HOST: str = "localhost"
-    POSTGRES_PORT: int = 5432
-    POSTGRES_USER: str = "postgres"
-    POSTGRES_PASSWORD: SecretStr = Field(default="postgres")
-    POSTGRES_DB: str = "video_platform"
-    POSTGRES_SSL_MODE: str = "prefer"  # disable, allow, prefer, require, verify-ca, verify-full
-    
-    @property
-    def DATABASE_URL(self) -> str:
-        """Get async PostgreSQL connection URL"""
-        return self.POSTGRES_URL
-    
-    @property
-    def SYNC_DATABASE_URL(self) -> str:
-        """Get sync PostgreSQL connection URL for migrations"""
-        return self.POSTGRES_SYNC_URL
-
-    # Database Pool Settings
-    DB_POOL_SIZE: int = 10
-    DB_MAX_OVERFLOW: int = 20
-    DB_POOL_TIMEOUT: int = 30
-    DB_POOL_RECYCLE: int = 3600
-    DATABASE_ECHO: bool = False
 
     # ============================================
-    # SUPABASE STORAGE (المفاتيح المهمة)
+    # SUPABASE DATABASE (القاعدة الأساسية)
     # ============================================
-    
     # 1. SUPABASE_URL: رابط مشروع Supabase
     SUPABASE_URL: Optional[str] = Field(
         default=None,
         description="Supabase project URL (e.g., https://project.supabase.co)"
     )
     
-    # 2. SUPABASE_PUBLIC_KEY: المفتاح العام (للعمليات من العميل)
+    # 2. SUPABASE_PUBLIC_KEY: المفتاح العام
     SUPABASE_PUBLIC_KEY: Optional[SecretStr] = Field(
         default=None,
         description="Supabase public/anonymous key for client-side operations"
     )
     
-    # 3. SUPABASE_SECRET_KEY: المفتاح السري (للعمليات من الخادم)
+    # 3. SUPABASE_SECRET_KEY: المفتاح السري (للتشغيل من الخادم)
     SUPABASE_SECRET_KEY: Optional[SecretStr] = Field(
         default=None,
         description="Supabase secret/service role key for server-side admin operations"
     )
     
-    # 4. SUPABASE_STORAGE: نوع التخزين في Supabase
-    SUPABASE_STORAGE: str = Field(
-        default="s3",  # s3, gcs, azure
-        description="Supabase storage type (s3, gcs, azure)"
+    # 4. SUPABASE_DB_SCHEMA: مخطط قاعدة البيانات
+    SUPABASE_DB_SCHEMA: str = Field(
+        default="public",
+        description="Supabase database schema (default: public)"
     )
     
-    # 5. SUPABASE_BUCKET: اسم دلو التخزين الرئيسي
-    SUPABASE_BUCKET: str = Field(
-        default="videos",
-        description="Supabase storage bucket name for videos"
+    # 5. SUPABASE_DB_POOL_SIZE: حجم تجمع الاتصالات
+    SUPABASE_DB_POOL_SIZE: int = Field(
+        default=10,
+        description="Supabase connection pool size"
     )
     
-    # دلاء إضافية
-    SUPABASE_BUCKET_THUMBNAILS: str = Field(
-        default="thumbnails",
-        description="Supabase storage bucket for thumbnails"
-    )
-    SUPABASE_BUCKET_TEMP: str = Field(
-        default="temp",
-        description="Supabase storage bucket for temporary files"
-    )
-    SUPABASE_BUCKET_EXPORTS: str = Field(
-        default="exports",
-        description="Supabase storage bucket for exported files"
-    )
-    
-    # ============================================
-    # SUPABASE PROPERTIES (للاستخدام الداخلي)
-    # ============================================
+    @property
+    def supabase_database_url(self) -> Optional[str]:
+        """Construct Supabase database connection URL using the REST API"""
+        if not self.SUPABASE_URL:
+            return None
+        # Supabase uses PostgreSQL under the hood but we access it via REST/API
+        return f"{self.SUPABASE_URL}/rest/v1"
     
     @property
     def supabase_configured(self) -> bool:
@@ -151,7 +108,63 @@ class Settings(BaseSettings):
         return None
 
     # ============================================
-    # LOCAL STORAGE (للتخزين المحلي)
+    # POSTGRESQL DATABASE (اختياري - للتطوير المحلي)
+    # ============================================
+    POSTGRES_HOST: str = "localhost"
+    POSTGRES_PORT: int = 5432
+    POSTGRES_USER: str = "postgres"
+    POSTGRES_PASSWORD: SecretStr = Field(default="postgres")
+    POSTGRES_DB: str = "video_platform"
+    POSTGRES_SSL_MODE: str = "prefer"
+    
+    @property
+    def POSTGRES_URL(self) -> str:
+        """Construct PostgreSQL connection URL (for local development)"""
+        password = self.POSTGRES_PASSWORD.get_secret_value()
+        ssl_param = f"?sslmode={self.POSTGRES_SSL_MODE}" if self.POSTGRES_SSL_MODE else ""
+        return f"postgresql+asyncpg://{self.POSTGRES_USER}:{password}@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}{ssl_param}"
+    
+    @property
+    def SYNC_POSTGRES_URL(self) -> str:
+        """Construct sync PostgreSQL connection URL (for migrations)"""
+        password = self.POSTGRES_PASSWORD.get_secret_value()
+        ssl_param = f"?sslmode={self.POSTGRES_SSL_MODE}" if self.POSTGRES_SSL_MODE else ""
+        return f"postgresql://{self.POSTGRES_USER}:{password}@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}{ssl_param}"
+
+    # Database Pool (for PostgreSQL when used)
+    DB_POOL_SIZE: int = 10
+    DB_MAX_OVERFLOW: int = 20
+    DB_POOL_TIMEOUT: int = 30
+    DB_POOL_RECYCLE: int = 3600
+    DATABASE_ECHO: bool = False
+
+    # ============================================
+    # SUPABASE STORAGE (للملفات)
+    # ============================================
+    SUPABASE_STORAGE: str = Field(
+        default="s3",
+        description="Supabase storage type (s3, gcs, azure)"
+    )
+    
+    SUPABASE_BUCKET: str = Field(
+        default="videos",
+        description="Supabase storage bucket name for videos"
+    )
+    SUPABASE_BUCKET_THUMBNAILS: str = Field(
+        default="thumbnails",
+        description="Supabase storage bucket for thumbnails"
+    )
+    SUPABASE_BUCKET_TEMP: str = Field(
+        default="temp",
+        description="Supabase storage bucket for temporary files"
+    )
+    SUPABASE_BUCKET_EXPORTS: str = Field(
+        default="exports",
+        description="Supabase storage bucket for exported files"
+    )
+
+    # ============================================
+    # LOCAL STORAGE (احتياطي)
     # ============================================
     MEDIA_DIR: Path = BASE_DIR / "media"
     TEMP_DIR: Path = BASE_DIR / "temp"
@@ -159,14 +172,13 @@ class Settings(BaseSettings):
     THUMBNAILS_DIR: Path = BASE_DIR / "media" / "thumbnails"
     CACHE_DIR: Path = BASE_DIR / "cache"
     
-    # نوع التخزين الأساسي (auto, local, supabase)
     STORAGE_TYPE: str = Field(
         default="auto",
-        description="Storage type: auto (uses Supabase if configured), local, or supabase"
+        description="Storage type: auto, local, supabase"
     )
     
     # ============================================
-    # STORAGE LIMITS & VALIDATION
+    # STORAGE LIMITS
     # ============================================
     MAX_FILE_SIZE: int = 500 * 1024 * 1024  # 500MB
     MAX_THUMBNAIL_SIZE: int = 5 * 1024 * 1024  # 5MB
@@ -178,7 +190,7 @@ class Settings(BaseSettings):
     # ============================================
     VIDEO_PROCESSING_QUEUE: str = "video_processing"
     MAX_CONCURRENT_PROCESSING: int = 3
-    PROCESSING_TIMEOUT_SECONDS: int = 3600  # 1 hour
+    PROCESSING_TIMEOUT_SECONDS: int = 3600
     FFMPEG_PATH: str = "ffmpeg"
     FFMPEG_PRESET: str = "medium"
     VIDEO_THUMBNAIL_TIME: float = 5.0
@@ -193,11 +205,11 @@ class Settings(BaseSettings):
     RATE_LIMIT_BURST: int = 100
 
     # ============================================
-    # CACHE (Redis optional)
+    # CACHE
     # ============================================
-    CACHE_TYPE: str = "simple"  # simple, redis
+    CACHE_TYPE: str = "simple"
     REDIS_URL: Optional[str] = None
-    CACHE_DEFAULT_TTL: int = 300  # 5 minutes
+    CACHE_DEFAULT_TTL: int = 300
     CACHE_KEY_PREFIX: str = "video_platform"
 
     # ============================================
@@ -241,6 +253,11 @@ class Settings(BaseSettings):
     @property
     def is_testing(self) -> bool:
         return self.ENVIRONMENT.lower() == "testing"
+    
+    @property
+    def using_supabase_db(self) -> bool:
+        """Check if using Supabase as database"""
+        return self.DATABASE_TYPE.lower() == "supabase"
 
     # ============================================
     # VALIDATORS
@@ -254,19 +271,6 @@ class Settings(BaseSettings):
             else:
                 warnings.warn(
                     "Using default SECRET_KEY - change this in production!",
-                    UserWarning
-                )
-        return v
-
-    @field_validator("POSTGRES_PASSWORD")
-    def validate_postgres_password(cls, v: SecretStr) -> SecretStr:
-        if v.get_secret_value() == "postgres":
-            env = os.getenv("ENVIRONMENT", "development")
-            if env == "production":
-                raise ValueError("POSTGRES_PASSWORD must be changed in production!")
-            else:
-                warnings.warn(
-                    "Using default PostgreSQL password is not secure!",
                     UserWarning
                 )
         return v
@@ -356,50 +360,30 @@ def ensure_dirs() -> None:
 def validate_config() -> bool:
     """Validate critical configuration settings."""
     try:
-        # Check critical production settings
         if settings.is_production:
-            # Secret key must be changed
             if settings.SECRET_KEY.get_secret_value() == "change-me-in-production":
                 raise ValueError("SECRET_KEY must be changed from default in production!")
             
-            # Database password must be changed
-            if settings.POSTGRES_PASSWORD.get_secret_value() == "postgres":
-                raise ValueError("POSTGRES_PASSWORD must be changed from default in production!")
-            
-            # Supabase must be configured in production
             if not settings.supabase_configured:
                 raise ValueError(
                     "Supabase must be configured for production! "
-                    "Set SUPABASE_URL and at least one key (SUPABASE_PUBLIC_KEY or SUPABASE_SECRET_KEY)."
-                )
-            
-            # Secret key is required for admin operations in production
-            if not settings.SUPABASE_SECRET_KEY:
-                warnings.warn(
-                    "SUPABASE_SECRET_KEY is not set. Some admin operations may be limited.",
-                    UserWarning
+                    "Set SUPABASE_URL, SUPABASE_PUBLIC_KEY, and SUPABASE_SECRET_KEY."
                 )
         
-        # Validate PostgreSQL connection parameters
-        if not all([
-            settings.POSTGRES_HOST,
-            settings.POSTGRES_USER,
-            settings.POSTGRES_DB,
-        ]):
-            raise ValueError("All PostgreSQL connection parameters must be configured!")
-        
-        # Validate Supabase if it's the selected storage type
-        if settings.STORAGE_TYPE in ["supabase", "auto"]:
+        # Validate based on database type
+        if settings.using_supabase_db:
             if not settings.supabase_configured:
-                if settings.STORAGE_TYPE == "supabase":
-                    raise ValueError(
-                        "Supabase is selected as storage type but not properly configured!"
-                    )
-                else:
-                    warnings.warn(
-                        "Supabase not configured, falling back to local storage",
-                        UserWarning
-                    )
+                raise ValueError(
+                    "DATABASE_TYPE is set to 'supabase' but Supabase is not properly configured!"
+                )
+        else:
+            # PostgreSQL validation
+            if not all([
+                settings.POSTGRES_HOST,
+                settings.POSTGRES_USER,
+                settings.POSTGRES_DB,
+            ]):
+                raise ValueError("All PostgreSQL connection parameters must be configured!")
         
         # Validate video processing settings
         if settings.MAX_CONCURRENT_PROCESSING < 1:
@@ -408,9 +392,7 @@ def validate_config() -> bool:
         if settings.MAX_FILE_SIZE <= 0:
             raise ValueError("MAX_FILE_SIZE must be greater than 0")
         
-        # Ensure directories exist
         ensure_dirs()
-        
         return True
         
     except Exception as e:
