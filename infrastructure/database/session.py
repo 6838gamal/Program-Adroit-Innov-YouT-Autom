@@ -7,7 +7,10 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy import MetaData
 from config.settings import settings
-import warnings
+import re
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 # تعريف قاعدة البيانات مع تسمية توافقية
@@ -29,56 +32,53 @@ _session_factory: async_sessionmaker | None = None
 
 def get_database_url() -> str:
     """
-    Get the appropriate database URL based on configuration.
-    
-    Returns:
-        str: Database connection URL
+    Build Supabase PostgreSQL connection URL from settings.
     """
-    # إذا كان يستخدم Supabase كقاعدة بيانات رئيسية
-    if settings.using_supabase_db:
-        # Supabase تستخدم PostgreSQL تحت الغطاء
-        # لكننا نفضل استخدام Supabase Client بدلاً من SQLAlchemy
-        # نعيد عنوان وهمي مع تحذير
-        warnings.warn(
-            "Supabase is set as database. SQLAlchemy engine will use in-memory SQLite. "
-            "Use supabase_db client for actual database operations.",
-            UserWarning
-        )
-        # في حالة التطوير، استخدم SQLite للاختبار
-        if settings.is_development or settings.is_testing:
-            return "sqlite+aiosqlite:///:memory:"
-        else:
-            # في الإنتاج، لا نستخدم SQLAlchemy مع Supabase
-            # نعيد عنوان وهمي ولكن لا نستخدمه فعلياً
-            return "sqlite+aiosqlite:///./data/supabase_fallback.db"
+    if not settings.SUPABASE_URL:
+        raise ValueError("SUPABASE_URL is required but not configured!")
     
-    # استخدام PostgreSQL المباشر
-    return settings.POSTGRES_URL
+    try:
+        # استخراج project_ref من SUPABASE_URL
+        # مثال: https://nyotevucyflkqaqkutjn.supabase.co
+        match = re.search(r'https?://([^.]+)\.supabase\.co', settings.SUPABASE_URL)
+        if not match:
+            raise ValueError(f"Invalid SUPABASE_URL format: {settings.SUPABASE_URL}")
+        
+        project_ref = match.group(1)
+        
+        # استخدام POSTGRES_PASSWORD من الإعدادات
+        password = settings.POSTGRES_PASSWORD.get_secret_value()
+        if not password or password == "postgres":
+            logger.warning("⚠️ POSTGRES_PASSWORD is using default value. Please set a secure password in production!")
+        
+        db_url = f"postgresql+asyncpg://postgres:{password}@db.{project_ref}.supabase.co:5432/postgres"
+        logger.info(f"✅ Built Supabase PostgreSQL URL for project: {project_ref}")
+        return db_url
+        
+    except Exception as e:
+        logger.error(f"❌ Failed to build Supabase database URL: {e}")
+        raise
 
 
 def get_engine() -> AsyncEngine:
-    """Get database engine based on configuration."""
+    """Get database engine for Supabase."""
     global _engine
     
     if _engine is None:
         database_url = get_database_url()
         
-        # إعدادات إضافية للاتصال
+        # إعدادات الاتصال
         engine_kwargs = {
             "echo": settings.DATABASE_ECHO,
             "future": True,
+            "pool_size": settings.DB_POOL_SIZE,
+            "max_overflow": settings.DB_MAX_OVERFLOW if hasattr(settings, 'DB_MAX_OVERFLOW') else 20,
+            "pool_timeout": settings.DB_POOL_TIMEOUT if hasattr(settings, 'DB_POOL_TIMEOUT') else 30,
+            "pool_recycle": settings.DB_POOL_RECYCLE if hasattr(settings, 'DB_POOL_RECYCLE') else 3600,
+            "pool_pre_ping": True,
         }
         
-        # إعدادات خاصة بـ PostgreSQL
-        if not settings.using_supabase_db and "postgresql" in database_url:
-            engine_kwargs.update({
-                "pool_size": settings.DB_POOL_SIZE,
-                "max_overflow": settings.DB_MAX_OVERFLOW,
-                "pool_timeout": settings.DB_POOL_TIMEOUT,
-                "pool_recycle": settings.DB_POOL_RECYCLE,
-                "pool_pre_ping": True,  # التحقق من الاتصال قبل الاستخدام
-            })
-        
+        logger.info("Creating Supabase database engine...")
         _engine = create_async_engine(
             database_url,
             **engine_kwargs
@@ -106,17 +106,7 @@ def get_session_factory() -> async_sessionmaker:
 async def get_db() -> AsyncSession:
     """
     FastAPI dependency — yields an async DB session.
-    
-    ملاحظة: إذا كنت تستخدم Supabase، يفضل استخدام SupabaseDBClient بدلاً من هذا.
     """
-    # إذا كان يستخدم Supabase، نعطي تحذير
-    if settings.using_supabase_db:
-        warnings.warn(
-            "Using SQLAlchemy session with Supabase is not recommended. "
-            "Use supabase_db client instead.",
-            UserWarning
-        )
-    
     factory = get_session_factory()
     async with factory() as session:
         try:
@@ -132,20 +122,7 @@ async def get_db() -> AsyncSession:
 async def create_all_tables() -> None:
     """
     Create all tables on startup.
-    
-    - مع Supabase: يتم إنشاء الجداول عبر SQL Editor أو migrations
-    - مع PostgreSQL: يتم إنشاؤها تلقائياً
     """
-    # إذا كان يستخدم Supabase، لا نقوم بإنشاء الجداول تلقائياً
-    if settings.using_supabase_db:
-        warnings.warn(
-            "Supabase is used as database. Tables should be created manually "
-            "via Supabase SQL Editor or migrations. Skipping automatic creation.",
-            UserWarning
-        )
-        return
-    
-    # لـ PostgreSQL أو SQLite
     try:
         # استيراد النماذج لضمان تسجيلها
         import infrastructure.database.models  # noqa: F401
@@ -154,10 +131,10 @@ async def create_all_tables() -> None:
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
         
-        print("✅ Database tables created/verified successfully!")
+        logger.info("✅ Database tables created/verified successfully!")
         
     except Exception as e:
-        print(f"❌ Failed to create tables: {e}")
+        logger.error(f"❌ Failed to create tables: {e}")
         raise
 
 
@@ -165,16 +142,10 @@ async def drop_all_tables() -> None:
     """
     Drop all tables (for testing only).
     """
-    if settings.using_supabase_db:
-        warnings.warn(
-            "Cannot drop tables automatically with Supabase. Use SQL Editor.",
-            UserWarning
-        )
-        return
-    
     engine = get_engine()
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
+    logger.info("✅ All tables dropped")
 
 
 async def check_connection() -> bool:
@@ -188,78 +159,64 @@ async def check_connection() -> bool:
         engine = get_engine()
         async with engine.connect() as conn:
             await conn.execute("SELECT 1")
+        logger.info("✅ Supabase connection successful!")
         return True
     except Exception as e:
-        print(f"❌ Database connection failed: {e}")
+        logger.error(f"❌ Supabase connection failed: {e}")
         return False
 
 
-# ============================================
-# دالة مساعدة للحصول على محرك Supabase
-# ============================================
-
-def get_supabase_engine() -> AsyncEngine | None:
+async def get_db_info() -> dict:
     """
-    Get a SQLAlchemy engine that connects directly to Supabase PostgreSQL.
+    Get database information.
     
-    ملاحظة: هذا يتطلب معرفة مباشرة بقاعدة البيانات وقد لا يكون متاحاً في جميع خطط Supabase.
+    Returns:
+        dict: Database information
     """
-    if not settings.using_supabase_db:
-        return None
+    info = {
+        "type": "supabase",
+        "connected": False,
+        "tables": []
+    }
     
-    # بعض خطط Supabase توفر اتصالاً مباشراً بقاعدة البيانات
-    # يمكنك الحصول على هذه المعلومات من Supabase Dashboard
-    # Database Settings > Connection String > URI
-    if hasattr(settings, 'SUPABASE_DIRECT_URL') and settings.SUPABASE_DIRECT_URL:
-        return create_async_engine(
-            settings.SUPABASE_DIRECT_URL,
-            echo=settings.DATABASE_ECHO,
-            pool_size=settings.DB_POOL_SIZE,
-            max_overflow=settings.DB_MAX_OVERFLOW,
-            pool_pre_ping=True,
-        )
+    try:
+        engine = get_engine()
+        async with engine.connect() as conn:
+            # اختبار الاتصال
+            await conn.execute("SELECT 1")
+            info["connected"] = True
+            
+            # جلب أسماء الجداول
+            result = await conn.execute(
+                "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'"
+            )
+            tables = result.scalars().all()
+            info["tables"] = list(tables)
+                
+    except Exception as e:
+        logger.error(f"❌ Failed to get database info: {e}")
     
-    return None
+    return info
 
 
-# ============================================
-# نموذج لاستخدام Supabase Client مع SQLAlchemy
-# ============================================
-
-class SupabaseCompatibleSession:
+async def table_exists(table_name: str) -> bool:
     """
-    Wrapper لتوفير واجهة مشابهة لـ SQLAlchemy مع Supabase.
-    هذا يسمح بالتبديل بين SQLAlchemy و Supabase بسهولة.
-    """
+    Check if a table exists in the database.
     
-    def __init__(self):
-        self._client = None
-        self._connected = False
-    
-    async def __aenter__(self):
-        from infrastructure.database.supabase_client import supabase_db
-        self._client = supabase_db
-        self._connected = True
-        return self
-    
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        self._connected = False
-        # لا حاجة لإغلاق الاتصال في Supabase
-    
-    async def execute(self, table: str, operation: str, **kwargs):
-        """تنفيذ عملية على Supabase"""
-        if not self._connected:
-            raise RuntimeError("Session is not connected")
+    Args:
+        table_name: Name of the table to check
         
-        client = self._client.client
-        
-        if operation == "select":
-            return client.table(table).select(**kwargs).execute()
-        elif operation == "insert":
-            return client.table(table).insert(kwargs.get('data', {})).execute()
-        elif operation == "update":
-            return client.table(table).update(kwargs.get('data', {})).eq(**kwargs.get('filters', {})).execute()
-        elif operation == "delete":
-            return client.table(table).delete().eq(**kwargs.get('filters', {})).execute()
-        else:
-            raise ValueError(f"Unsupported operation: {operation}")
+    Returns:
+        bool: True if table exists
+    """
+    try:
+        engine = get_engine()
+        async with engine.connect() as conn:
+            result = await conn.execute(
+                "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = :name)",
+                {"name": table_name}
+            )
+            return result.scalar() or False
+    except Exception as e:
+        logger.error(f"❌ Failed to check table existence: {e}")
+        return False
