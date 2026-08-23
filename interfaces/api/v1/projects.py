@@ -187,7 +187,8 @@ async def process_video(
         "url": request.url,
         "ytdlp_available": ytdlp_available,
         "ytdlp_error": None,
-        "platform": None
+        "platform": None,
+        "warning": None
     }
     
     # بدء المعالجة في الخلفية
@@ -230,6 +231,7 @@ async def get_processing_status(session_id: str):
         "view_count": session.get("view_count"),
         "like_count": session.get("like_count"),
         "error": session.get("error"),
+        "warning": session.get("warning"),
         "started_at": session.get("started_at"),
         "updated_at": datetime.now().isoformat(),
         "ytdlp_available": session.get("ytdlp_available", False),
@@ -370,14 +372,17 @@ async def extract_video_info_with_ytdlp(url: str) -> Dict[str, Any]:
             
             # التحقق من أنواع الأخطاء الشائعة
             if "Sign in to confirm" in error_msg or "bot" in error_msg.lower():
-                print("⚠️ يوتيوب يطلب التحقق من البوت، استخدام الطريقة اليدوية")
+                print("⚠️ يوتيوب يطلب التحقق من البوت - سيتم استخدام معلومات تقديرية")
                 return extract_video_info_manual(url, youtube_auth_error=True)
             elif "video unavailable" in error_msg.lower() or "private" in error_msg.lower():
-                print("⚠️ الفيديو غير متاح أو خاص، استخدام الطريقة اليدوية")
+                print("⚠️ الفيديو غير متاح أو خاص - سيتم استخدام معلومات تقديرية")
                 return extract_video_info_manual(url, video_unavailable=True)
             elif "rate limit" in error_msg.lower():
-                print("⚠️ تم تجاوز حد الطلبات، استخدام الطريقة اليدوية")
+                print("⚠️ تم تجاوز حد الطلبات - سيتم استخدام معلومات تقديرية")
                 return extract_video_info_manual(url)
+            elif "age restricted" in error_msg.lower():
+                print("⚠️ الفيديو مقيد بالعمر - سيتم استخدام معلومات تقديرية")
+                return extract_video_info_manual(url, age_restricted=True)
             
             return extract_video_info_manual(url)
         
@@ -399,7 +404,8 @@ async def extract_video_info_with_ytdlp(url: str) -> Dict[str, Any]:
             "size": None,
             "size_bytes": None,
             "dimensions": "1280x720",
-            "ytdlp_error": None
+            "ytdlp_error": None,
+            "warning": None
         }
         
         # استخراج معلومات الصيغ
@@ -446,7 +452,12 @@ async def extract_video_info_with_ytdlp(url: str) -> Dict[str, Any]:
         return extract_video_info_manual(url)
 
 
-def extract_video_info_manual(url: str, youtube_auth_error: bool = False, video_unavailable: bool = False) -> Dict[str, Any]:
+def extract_video_info_manual(
+    url: str, 
+    youtube_auth_error: bool = False, 
+    video_unavailable: bool = False,
+    age_restricted: bool = False
+) -> Dict[str, Any]:
     """
     استخراج معلومات الفيديو يدوياً (بدون yt-dlp)
     """
@@ -466,44 +477,55 @@ def extract_video_info_manual(url: str, youtube_auth_error: bool = False, video_
         "view_count": None,
         "like_count": None,
         "platform": "generic",
-        "ytdlp_error": None
+        "ytdlp_error": None,
+        "warning": None
     }
     
     # تحديد المنصة من الرابط
     if "youtube.com" in domain or "youtu.be" in domain:
         info["platform"] = "youtube"
-        
-        # محاولة استخراج معرف الفيديو للحصول على الصورة المصغرة
         video_id = extract_youtube_id(url)
         
-        if video_unavailable:
-            info["title"] = f"فيديو يوتيوب (غير متاح - ID: {video_id[:8] if video_id else '???'})"
+        # تحديد نوع الخطأ وعرض رسالة مناسبة
+        if age_restricted:
+            info["ytdlp_error"] = "age_restricted"
+            info["warning"] = "الفيديو مقيد بالعمر ولا يمكن الوصول إليه"
+            info["title"] = f"فيديو يوتيوب (مقيد بالعمر)"
             info["duration"] = 60
             info["size"] = "~30.0 MB"
             info["size_bytes"] = 30 * 1024 * 1024
+            if video_id:
+                info["thumbnail"] = f"https://img.youtube.com/vi/{video_id}/hqdefault.jpg"
+        elif video_unavailable:
             info["ytdlp_error"] = "video_unavailable"
+            info["warning"] = "الفيديو غير متاح أو خاص"
+            info["title"] = f"فيديو يوتيوب (غير متاح)"
+            info["duration"] = 60
+            info["size"] = "~30.0 MB"
+            info["size_bytes"] = 30 * 1024 * 1024
             if video_id:
                 info["thumbnail"] = f"https://img.youtube.com/vi/{video_id}/hqdefault.jpg"
         elif youtube_auth_error:
-            info["title"] = f"فيديو يوتيوب (يتطلب تسجيل الدخول - ID: {video_id[:8] if video_id else '???'})"
+            info["ytdlp_error"] = "auth_required"
+            info["warning"] = "يوتيوب يطلب تسجيل الدخول للتحقق من أنك لست روبوت"
+            info["title"] = f"فيديو يوتيوب (يتطلب تسجيل الدخول)"
             info["duration"] = 120
             info["size"] = "~45.6 MB"
             info["size_bytes"] = 45.6 * 1024 * 1024
-            info["ytdlp_error"] = "auth_required"
             if video_id:
                 info["thumbnail"] = f"https://img.youtube.com/vi/{video_id}/hqdefault.jpg"
         else:
-            info["title"] = f"فيديو يوتيوب (ID: {video_id[:8] if video_id else '???'})"
+            info["title"] = f"فيديو يوتيوب"
             info["duration"] = 120
             info["size"] = "~45.6 MB"
             info["size_bytes"] = 45.6 * 1024 * 1024
             if video_id:
                 info["thumbnail"] = f"https://img.youtube.com/vi/{video_id}/hqdefault.jpg"
+                info["title"] = f"فيديو يوتيوب (ID: {video_id[:8]}...)"
         
-        # إضافة تفاصيل إضافية عن رابط يوتيوب
-        if video_id:
-            info["description"] = f"فيديو من يوتيوب - المعرف: {video_id}"
-            info["uploader"] = "YouTube"
+        # إضافة معلومات إضافية
+        info["description"] = f"فيديو من يوتيوب"
+        info["uploader"] = "YouTube"
             
     elif "tiktok.com" in domain:
         info["platform"] = "tiktok"
@@ -513,6 +535,7 @@ def extract_video_info_manual(url: str, youtube_auth_error: bool = False, video_
         info["size_bytes"] = 15.2 * 1024 * 1024
         info["dimensions"] = "1080x1920"
         info["uploader"] = "TikTok"
+        info["description"] = "فيديو من تيك توك"
         
     elif "vimeo.com" in domain:
         info["platform"] = "vimeo"
@@ -521,6 +544,7 @@ def extract_video_info_manual(url: str, youtube_auth_error: bool = False, video_
         info["size"] = "~89.3 MB"
         info["size_bytes"] = 89.3 * 1024 * 1024
         info["uploader"] = "Vimeo"
+        info["description"] = "فيديو من Vimeo"
         
     elif "facebook.com" in domain:
         info["platform"] = "facebook"
@@ -529,6 +553,7 @@ def extract_video_info_manual(url: str, youtube_auth_error: bool = False, video_
         info["size"] = "~35.0 MB"
         info["size_bytes"] = 35 * 1024 * 1024
         info["uploader"] = "Facebook"
+        info["description"] = "فيديو من فيسبوك"
         
     elif "instagram.com" in domain:
         info["platform"] = "instagram"
@@ -537,6 +562,7 @@ def extract_video_info_manual(url: str, youtube_auth_error: bool = False, video_
         info["size"] = "~20.0 MB"
         info["size_bytes"] = 20 * 1024 * 1024
         info["uploader"] = "Instagram"
+        info["description"] = "فيديو من إنستغرام"
         
     else:
         info["platform"] = "generic"
@@ -545,8 +571,12 @@ def extract_video_info_manual(url: str, youtube_auth_error: bool = False, video_
         info["size"] = "~30.0 MB"
         info["size_bytes"] = 30 * 1024 * 1024
         info["format"] = detect_video_format(url)
+        info["description"] = f"فيديو من {domain}"
     
     print(f"ℹ️ تم استخراج معلومات الفيديو يدوياً: {info['title']}")
+    if info.get("warning"):
+        print(f"⚠️ تحذير: {info['warning']}")
+    
     return info
 
 
@@ -656,14 +686,17 @@ async def process_video_background(session_id: str, url: str):
             "view_count": video_info.get("view_count"),
             "like_count": video_info.get("like_count"),
             "platform": video_info.get("platform", "generic"),
-            "ytdlp_error": video_info.get("ytdlp_error")
+            "ytdlp_error": video_info.get("ytdlp_error"),
+            "warning": video_info.get("warning")
         })
         
-        # إذا كان هناك خطأ في yt-dlp، نضيف ملاحظة في التفاصيل
+        # تحديث التفاصيل بناءً على نوع الخطأ
         if video_info.get("ytdlp_error") == "auth_required":
-            processing_sessions[session_id]["detail"] = "⚠️ يوتيوب يطلب تسجيل الدخول، تم استخدام معلومات تقديرية"
+            processing_sessions[session_id]["detail"] = "⚠️ يوتيوب يطلب تسجيل الدخول - جاري استخدام معلومات تقديرية"
         elif video_info.get("ytdlp_error") == "video_unavailable":
-            processing_sessions[session_id]["detail"] = "⚠️ الفيديو غير متاح، تم استخدام معلومات تقديرية"
+            processing_sessions[session_id]["detail"] = "⚠️ الفيديو غير متاح - جاري استخدام معلومات تقديرية"
+        elif video_info.get("ytdlp_error") == "age_restricted":
+            processing_sessions[session_id]["detail"] = "⚠️ الفيديو مقيد بالعمر - جاري استخدام معلومات تقديرية"
         
         await asyncio.sleep(1.5)
         
@@ -712,10 +745,15 @@ async def process_video_background(session_id: str, url: str):
             if not processing_sessions[session_id].get("detail") or "⚠️" not in processing_sessions[session_id].get("detail", ""):
                 processing_sessions[session_id]["detail"] = "تم استخدام فيديو تجريبي للعرض (بديل ليوتيوب)"
         
+        # إذا كان هناك تحذير، نضيفه إلى التفاصيل
+        if video_info.get("warning"):
+            current_detail = processing_sessions[session_id].get("detail", "")
+            if "⚠️" not in current_detail:
+                processing_sessions[session_id]["detail"] = f"⚠️ {video_info['warning']} - {current_detail}"
+        
         processing_sessions[session_id].update({
             "status": "completed",
             "progress": 100,
-            "detail": processing_sessions[session_id].get("detail", "اكتملت المعالجة! ✅"),
             "step": "اكتمل",
             "completed": True,
             "video_url": video_url,
@@ -731,7 +769,8 @@ async def process_video_background(session_id: str, url: str):
             "view_count": video_info.get("view_count"),
             "like_count": video_info.get("like_count"),
             "platform": video_info.get("platform"),
-            "ytdlp_error": video_info.get("ytdlp_error")
+            "ytdlp_error": video_info.get("ytdlp_error"),
+            "warning": video_info.get("warning")
         })
         
     except Exception as e:
