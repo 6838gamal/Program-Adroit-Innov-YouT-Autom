@@ -1,77 +1,402 @@
 {% extends "base.html" %}
-{% block title %}مشروع جديد{% endblock %}
-{% block page_title %}مشروع جديد{% endblock %}
+{% block title %}مشروع جديد - دردشة AI{% endblock %}
+{% block page_title %}إنشاء مشروع فيديو بالذكاء الاصطناعي{% endblock %}
 
 {% block content %}
-<div class="max-w-2xl mx-auto">
-    <div class="card">
-        <form id="create-form" class="space-y-4 sm:space-y-5">
-            <div>
-                <label class="block text-sm text-slate-300 mb-1.5">عنوان المشروع <span class="text-red-400">*</span></label>
-                <input type="text" id="title" name="title" class="input" placeholder="أدخل عنوان المشروع" required autofocus>
+<div class="max-w-4xl mx-auto">
+    <!-- منطقة الدردشة -->
+    <div class="card mb-4 overflow-hidden">
+        <div class="bg-slate-800/50 p-3 border-b border-slate-700 flex items-center justify-between">
+            <div class="flex items-center gap-2">
+                <div class="w-3 h-3 bg-green-500 rounded-full animate-pulse"></div>
+                <span class="text-sm font-medium text-slate-300">AI Assistant</span>
+                <span class="text-xs text-slate-500">متصل</span>
             </div>
-            <div>
-                <label class="block text-sm text-slate-300 mb-1.5">الوصف</label>
-                <textarea id="description" name="description" rows="3" class="input resize-none" placeholder="وصف مختصر للمشروع"></textarea>
+            <button onclick="clearChat()" class="text-xs text-slate-500 hover:text-slate-300 transition">
+                مسح المحادثة
+            </button>
+        </div>
+        
+        <!-- رسائل الدردشة -->
+        <div id="chat-messages" class="h-96 overflow-y-auto p-4 space-y-4 bg-slate-900/50">
+            <!-- رسالة ترحيب -->
+            <div class="flex items-start gap-3">
+                <div class="w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center flex-shrink-0">
+                    <svg class="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/>
+                    </svg>
+                </div>
+                <div class="flex-1 bg-slate-800 rounded-2xl rounded-tr-sm px-4 py-3">
+                    <p class="text-sm text-slate-300">مرحباً! 👋 أنا مساعدك الذكي لإنشاء فيديوهات. أخبرني عن فكرة الفيديو الذي ترغب في إنشائه، وسأساعدك في صياغة النص والنص السكريبت المناسب.</p>
+                    <p class="text-xs text-slate-500 mt-2">💡 يمكنك أيضاً إضافة رابط فيديو من الإنترنت لاستخدامه كمصدر إلهام</p>
+                </div>
+                <span class="text-[10px] text-slate-600 flex-shrink-0">الآن</span>
             </div>
-            <div>
-                <label class="block text-sm text-slate-300 mb-1.5">النص / السكريبت</label>
-                <textarea id="script" name="script" rows="7" class="input resize-y font-mono text-xs sm:text-sm" placeholder="أدخل النص الكامل للفيديو هنا…&#10;&#10;يمكنك تقسيم النص إلى فقرات وستتحول إلى مشاهد."></textarea>
-                <p class="text-xs text-slate-500 mt-1">كل فقرة مفصولة بسطر فارغ = مشهد منفصل</p>
+        </div>
+
+        <!-- روابط الفيديو المضافة -->
+        <div id="video-links-container" class="px-4 py-2 border-t border-slate-700 bg-slate-800/30 hidden">
+            <div class="flex items-center gap-2 flex-wrap">
+                <span class="text-xs text-slate-400">📎 روابط الفيديو:</span>
+                <div id="video-links-list" class="flex gap-2 flex-wrap"></div>
             </div>
-            <div>
-                <label class="block text-sm text-slate-300 mb-1.5">الوسوم</label>
-                <input type="text" id="tags" name="tags" class="input" placeholder="تقنية, تعليم, مراجعة">
-                <p class="text-xs text-slate-500 mt-1">مفصولة بفاصلة</p>
-            </div>
-            <div class="flex flex-col xs:flex-row gap-2 sm:gap-3 pt-1">
-                <button type="submit" id="submit-btn" class="btn-primary justify-center">
-                    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
-                    إنشاء المشروع
+        </div>
+
+        <!-- منطقة إدخال الرسالة -->
+        <div class="p-4 border-t border-slate-700 bg-slate-800/30">
+            <!-- أزرار الإجراءات السريعة -->
+            <div class="flex flex-wrap gap-2 mb-3">
+                <button onclick="addSuggestion('فيديو تعليمي عن الذكاء الاصطناعي')" 
+                        class="text-xs bg-slate-700 hover:bg-slate-600 text-slate-300 px-3 py-1 rounded-full transition">
+                    🎓 تعليمي
                 </button>
-                <a href="/projects" class="btn-secondary justify-center">إلغاء</a>
+                <button onclick="addSuggestion('مراجعة منتج تقني')" 
+                        class="text-xs bg-slate-700 hover:bg-slate-600 text-slate-300 px-3 py-1 rounded-full transition">
+                    📱 مراجعة
+                </button>
+                <button onclick="addSuggestion('قصة تحفيزية قصيرة')" 
+                        class="text-xs bg-slate-700 hover:bg-slate-600 text-slate-300 px-3 py-1 rounded-full transition">
+                    📖 قصة
+                </button>
+                <button onclick="addSuggestion('تحديثات أخبار التكنولوجيا')" 
+                        class="text-xs bg-slate-700 hover:bg-slate-600 text-slate-300 px-3 py-1 rounded-full transition">
+                    📰 أخبار
+                </button>
+                <button onclick="document.getElementById('url-input').focus()" 
+                        class="text-xs bg-indigo-900/50 hover:bg-indigo-800/50 text-indigo-300 px-3 py-1 rounded-full transition border border-indigo-700/30">
+                    🔗 إضافة رابط
+                </button>
             </div>
-        </form>
+
+            <form id="chat-form" class="flex flex-col gap-2">
+                <div class="flex gap-2">
+                    <input type="text" id="url-input" 
+                           class="input flex-1 text-sm bg-slate-800/50 border-slate-600 focus:border-indigo-500" 
+                           placeholder="أضف رابط فيديو من YouTube أو TikTok أو أي منصة...">
+                    <button type="button" onclick="addVideoLink()" 
+                            class="btn-secondary whitespace-nowrap text-sm px-4 py-2">
+                        <svg class="w-4 h-4 inline ml-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/>
+                        </svg>
+                        إضافة
+                    </button>
+                </div>
+                <div class="flex gap-2">
+                    <textarea id="chat-input" rows="2" 
+                              class="input flex-1 resize-none text-sm bg-slate-800/50 border-slate-600 focus:border-indigo-500" 
+                              placeholder="اكتب فكرة الفيديو هنا، أو اطلب من AI المساعدة..."></textarea>
+                    <button type="submit" id="send-btn" 
+                            class="btn-primary self-end px-6 py-2">
+                        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/>
+                        </svg>
+                        إرسال
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- ملخص المشروع -->
+    <div class="card bg-slate-800/30 border-slate-700">
+        <div class="flex items-center justify-between">
+            <div>
+                <h3 class="text-sm font-medium text-slate-300">📋 ملخص المشروع</h3>
+                <p class="text-xs text-slate-500 mt-1">سيتم توليد الفيديو بناءً على المحادثة مع AI والروابط المضافة</p>
+            </div>
+            <div class="flex gap-2">
+                <button onclick="generateFromChat()" 
+                        class="btn-primary text-sm px-4 py-2">
+                    <svg class="w-4 h-4 inline ml-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+                    </svg>
+                    توليد الفيديو
+                </button>
+                <a href="/projects" class="btn-secondary text-sm px-4 py-2">إلغاء</a>
+            </div>
+        </div>
     </div>
 </div>
 {% endblock %}
 
 {% block scripts %}
 <script>
-document.getElementById('create-form').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const btn = document.getElementById('submit-btn');
-    btn.disabled = true;
-    btn.textContent = 'جارٍ الإنشاء…';
+// حالة الدردشة
+let chatHistory = [];
+let videoLinks = [];
+let projectData = {
+    title: '',
+    description: '',
+    script: '',
+    tags: []
+};
 
-    const tagsRaw = document.getElementById('tags').value;
-    const tags = tagsRaw ? tagsRaw.split(',').map(t => t.trim()).filter(Boolean) : [];
-    const payload = {
-        title: document.getElementById('title').value,
-        description: document.getElementById('description').value,
-        script: document.getElementById('script').value,
-        tags,
-    };
+// إضافة رسالة للدردشة
+function addMessage(role, content, timestamp = new Date()) {
+    const container = document.getElementById('chat-messages');
+    const timeStr = timestamp.toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' });
+    
+    const messageDiv = document.createElement('div');
+    messageDiv.className = `flex items-start gap-3 ${role === 'user' ? 'flex-row-reverse' : ''}`;
+    
+    const avatar = document.createElement('div');
+    avatar.className = `w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${
+        role === 'user' ? 'bg-blue-600' : 'bg-indigo-600'
+    }`;
+    avatar.innerHTML = role === 'user' 
+        ? '<svg class="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/></svg>'
+        : '<svg class="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>';
+    
+    const bubble = document.createElement('div');
+    bubble.className = `flex-1 ${
+        role === 'user' ? 'bg-blue-600/30 rounded-2xl rounded-tl-sm' : 'bg-slate-800 rounded-2xl rounded-tr-sm'
+    } px-4 py-3 max-w-[85%]`;
+    bubble.innerHTML = `<p class="text-sm text-slate-300 whitespace-pre-wrap">${content}</p>`;
+    
+    const time = document.createElement('span');
+    time.className = 'text-[10px] text-slate-600 flex-shrink-0 self-end';
+    time.textContent = timeStr;
+    
+    if (role === 'user') {
+        messageDiv.appendChild(time);
+        messageDiv.appendChild(bubble);
+        messageDiv.appendChild(avatar);
+    } else {
+        messageDiv.appendChild(avatar);
+        messageDiv.appendChild(bubble);
+        messageDiv.appendChild(time);
+    }
+    
+    container.appendChild(messageDiv);
+    container.scrollTop = container.scrollHeight;
+    
+    chatHistory.push({ role, content, timestamp });
+}
+
+// إضافة رابط فيديو
+function addVideoLink() {
+    const input = document.getElementById('url-input');
+    const url = input.value.trim();
+    if (!url) {
+        showToast('الرجاء إدخال رابط صحيح', 'warning');
+        return;
+    }
+    
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+        showToast('الرجاء إدخال رابط صحيح يبدأ بـ http:// أو https://', 'warning');
+        return;
+    }
+    
+    // استخراج اسم الموقع من الرابط
+    let siteName = 'فيديو';
     try {
+        const urlObj = new URL(url);
+        siteName = urlObj.hostname.replace('www.', '').split('.')[0];
+    } catch(e) {}
+    
+    videoLinks.push(url);
+    updateVideoLinksUI();
+    input.value = '';
+    
+    // إضافة رسالة في الدردشة
+    addMessage('user', `📎 أضفت رابط فيديو من ${siteName}: ${url}`);
+    addMessage('assistant', `تم استلام الرابط ✅ سأستخدم هذا الفيديو كمصدر إلهام لفيديو المشروع.`);
+    
+    showToast('تم إضافة الرابط بنجاح', 'success');
+}
+
+// تحديث واجهة الروابط
+function updateVideoLinksUI() {
+    const container = document.getElementById('video-links-container');
+    const list = document.getElementById('video-links-list');
+    
+    if (videoLinks.length === 0) {
+        container.classList.add('hidden');
+        return;
+    }
+    
+    container.classList.remove('hidden');
+    list.innerHTML = videoLinks.map((url, index) => `
+        <span class="inline-flex items-center gap-1 bg-slate-700/50 rounded-full px-3 py-1 text-xs text-slate-300">
+            🔗 ${url.length > 40 ? url.substring(0, 40) + '...' : url}
+            <button onclick="removeVideoLink(${index})" class="text-slate-400 hover:text-red-400 transition">
+                <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                </svg>
+            </button>
+        </span>
+    `).join('');
+}
+
+// حذف رابط
+function removeVideoLink(index) {
+    videoLinks.splice(index, 1);
+    updateVideoLinksUI();
+    showToast('تم حذف الرابط', 'info');
+}
+
+// إضافة اقتراح سريع
+function addSuggestion(text) {
+    document.getElementById('chat-input').value = text;
+    document.getElementById('chat-input').focus();
+}
+
+// معالجة إرسال الرسالة
+document.getElementById('chat-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const input = document.getElementById('chat-input');
+    const message = input.value.trim();
+    if (!message) return;
+    
+    input.value = '';
+    addMessage('user', message);
+    
+    const btn = document.getElementById('send-btn');
+    btn.disabled = true;
+    btn.innerHTML = '<svg class="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"/></svg>';
+    
+    try {
+        // محاكاة استجابة AI
+        await new Promise(resolve => setTimeout(resolve, 1500));
+        
+        const responses = [
+            'فكرة رائعة! 🎯 سأساعدك في تطوير هذا المفهوم إلى فيديو متكامل. هل لديك أي تفاصيل إضافية تريد إضافتها؟',
+            'ممتاز! 📝 سأقوم بتحليل طلبك واقتراح هيكل مناسب للفيديو. ما هو الجمهور المستهدف لهذا الفيديو؟',
+            'فهمت! 🎬 بناءً على طلبك، سأقترح سكريبت يحتوي على مقدمة جذابة، محتوى رئيسي، وخاتمة مؤثرة. هل تريد التركيز على جانب معين؟',
+            'خيار جيد! 💡 يمكنني مساعدتك في صياغة النص بشكل احترافي مع مراعاة أفضل ممارسات إنتاج الفيديو. هل لديك مدة زمنية محددة للفيديو؟'
+        ];
+        
+        const aiResponse = responses[Math.floor(Math.random() * responses.length)];
+        addMessage('assistant', aiResponse);
+        
+        // تحديث بيانات المشروع من المحادثة
+        if (chatHistory.length > 2) {
+            projectData.title = message.substring(0, 50) + (message.length > 50 ? '...' : '');
+            projectData.description = message;
+        }
+        
+    } catch (error) {
+        showToast('حدث خطأ في الاتصال', 'error');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/></svg> إرسال';
+    }
+});
+
+// مسح المحادثة
+function clearChat() {
+    if (!confirm('هل أنت متأكد من مسح المحادثة؟')) return;
+    const container = document.getElementById('chat-messages');
+    container.innerHTML = '';
+    chatHistory = [];
+    
+    // إعادة رسالة الترحيب
+    addMessage('assistant', 'مرحباً! 👋 أنا مساعدك الذكي لإنشاء فيديوهات. أخبرني عن فكرة الفيديو الذي ترغب في إنشائه، وسأساعدك في صياغة النص والنص السكريبت المناسب.\n\n💡 يمكنك أيضاً إضافة رابط فيديو من الإنترنت لاستخدامه كمصدر إلهام');
+}
+
+// توليد الفيديو من المحادثة
+async function generateFromChat() {
+    if (chatHistory.length < 2) {
+        showToast('يرجى إجراء محادثة مع AI أولاً', 'warning');
+        return;
+    }
+    
+    const btn = document.querySelector('.btn-primary:contains("توليد الفيديو")');
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = 'جاري التوليد...';
+    }
+    
+    try {
+        // بناء النص السكريبت من المحادثة
+        let script = '';
+        for (const msg of chatHistory) {
+            if (msg.role === 'user') {
+                script += `🎬 طلب: ${msg.content}\n\n`;
+            } else if (msg.role === 'assistant' && msg.content.includes('سأقوم')) {
+                script += `💡 اقتراح: ${msg.content}\n\n`;
+            }
+        }
+        
+        // إضافة الروابط كمصادر
+        if (videoLinks.length > 0) {
+            script += '\n--- مصادر إلهام ---\n';
+            videoLinks.forEach((url, i) => {
+                script += `${i+1}. ${url}\n`;
+            });
+        }
+        
+        const payload = {
+            title: projectData.title || 'فيديو جديد',
+            description: projectData.description || 'تم إنشاؤه عبر محادثة مع AI',
+            script: script || 'نص الفيديو المستند إلى المحادثة',
+            tags: ['ai-generated', 'chat-created', ...videoLinks.map(() => 'video-source')],
+            video_links: videoLinks
+        };
+        
         const resp = await fetch('/api/v1/projects', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
+            body: JSON.stringify(payload)
         });
+        
         if (resp.ok) {
             const project = await resp.json();
-            showToast('تم إنشاء المشروع', 'success');
-            setTimeout(() => window.location.href = `/projects/${project.id}`, 500);
+            showToast('✅ تم إنشاء المشروع بنجاح! جاري التحويل...', 'success');
+            setTimeout(() => window.location.href = `/projects/${project.id}`, 800);
         } else {
             const err = await resp.json();
             showToast(err.detail || 'فشل إنشاء المشروع', 'error');
-            btn.disabled = false;
-            btn.innerHTML = '<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg> إنشاء المشروع';
         }
     } catch (e) {
-        showToast('خطأ في الاتصال', 'error');
-        btn.disabled = false;
+        showToast('خطأ في الاتصال بالخادم', 'error');
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = '<svg class="w-4 h-4 inline ml-1" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg> توليد الفيديو';
+        }
     }
+}
+
+// دعم مفتاح Enter + Shift للإرسال
+document.getElementById('chat-input').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        document.getElementById('chat-form').dispatchEvent(new Event('submit'));
+    }
+});
+
+// دعم مفتاح Enter لإضافة رابط
+document.getElementById('url-input').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+        e.preventDefault();
+        addVideoLink();
+    }
+});
+
+// تهيئة
+document.addEventListener('DOMContentLoaded', () => {
+    // إضافة دعم للمحتوى الطويل
+    const style = document.createElement('style');
+    style.textContent = `
+        #chat-messages::-webkit-scrollbar {
+            width: 6px;
+        }
+        #chat-messages::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        #chat-messages::-webkit-scrollbar-thumb {
+            background: #475569;
+            border-radius: 3px;
+        }
+        #chat-messages::-webkit-scrollbar-thumb:hover {
+            background: #64748b;
+        }
+        .btn-primary:contains("توليد الفيديو") {
+            position: relative;
+        }
+    `;
+    document.head.appendChild(style);
 });
 </script>
 {% endblock %}
