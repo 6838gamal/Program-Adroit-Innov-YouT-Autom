@@ -199,7 +199,8 @@ let state = {
     cancelProcessing: false,
     generatedVideo: null,
     currentProjectId: null,
-    sessionId: null
+    sessionId: null,
+    processingSessionId: null
 };
 
 // ============================================
@@ -290,7 +291,6 @@ function addVideoLink() {
     addMessage('user', `📎 أضفت رابط فيديو من ${siteName}: ${url}`);
     addMessage('assistant', `✅ تم استلام الرابط! جاري معالجة الفيديو...`);
     
-    // معالجة الرابط عبر API
     processVideoLink(url);
 }
 
@@ -309,7 +309,7 @@ function updateVideoLinksUI() {
             🔗 ${url.length > 40 ? url.substring(0, 40) + '...' : url}
             <button onclick="removeVideoLink(${index})" class="text-slate-400 hover:text-red-400 transition">
                 <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path stroke-linecap="line" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
                 </svg>
             </button>
         </span>
@@ -329,70 +329,108 @@ async function processVideoLink(url) {
     showProgress('جاري تحليل رابط الفيديو...', 10, 'جاري استخراج معلومات الفيديو');
     
     try {
-        // إرسال طلب معالجة الفيديو إلى الخادم
-        const response = await fetch('/api/v1/video/process', {
+        const response = await fetch('/api/v1/projects/video/process', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ url: url, session_id: state.sessionId })
+            body: JSON.stringify({ 
+                url: url, 
+                session_id: state.sessionId 
+            })
         });
         
         if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.detail || 'فشل معالجة الفيديو');
+            let errorMessage = 'فشل معالجة الفيديو';
+            try {
+                const errorData = await response.json();
+                errorMessage = errorData.detail || errorMessage;
+            } catch (e) {
+                errorMessage = `خطأ ${response.status}: ${response.statusText}`;
+            }
+            throw new Error(errorMessage);
         }
         
-        // قراءة التقدم عبر Server-Sent Events أو WebSocket
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let progress = 10;
+        const data = await response.json();
+        state.processingSessionId = data.session_id;
         
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            
-            const chunk = decoder.decode(value);
-            const data = JSON.parse(chunk);
-            
-            if (data.error) {
-                throw new Error(data.error);
-            }
-            
-            progress = data.progress || progress;
-            updateProgress(data.status || 'جاري المعالجة...', progress, data.detail || '');
-            
-            if (data.completed) {
-                // عرض الفيديو المعالج
-                showPreview(data.video_url, {
-                    url: data.video_url,
-                    title: data.title || 'فيديو معالج',
-                    duration: data.duration || 0,
-                    processed: true,
-                    thumbnail: data.thumbnail || null
-                });
-                hideProgress();
-                showToast('✅ تم معالجة الفيديو بنجاح!', 'success');
-                addMessage('assistant', '🎬 تم معالجة الفيديو بنجاح! يمكنك معاينته أدناه. اضغط "تأكيد" لحفظ المشروع.');
-                break;
-            }
-        }
+        await pollProcessingStatus(state.processingSessionId);
         
     } catch (error) {
         hideProgress();
         showToast('❌ فشل معالجة الفيديو: ' + error.message, 'error');
-        addMessage('assistant', '❌ عذراً، فشلت معالجة الفيديو. يرجى المحاولة مرة أخرى أو استخدام رابط آخر.');
+        addMessage('assistant', `❌ عذراً، فشلت معالجة الفيديو: ${error.message}. يرجى المحاولة مرة أخرى.`);
         console.error('Video processing error:', error);
     }
 }
 
+async function pollProcessingStatus(sessionId) {
+    let attempts = 0;
+    const maxAttempts = 60;
+    
+    while (attempts < maxAttempts && !state.cancelProcessing) {
+        try {
+            const response = await fetch(`/api/v1/projects/video/process/${sessionId}/status`);
+            
+            if (!response.ok) {
+                throw new Error('فشل الحصول على حالة المعالجة');
+            }
+            
+            const status = await response.json();
+            
+            updateProgress(
+                status.detail || 'جاري المعالجة...',
+                status.progress || 0,
+                status.detail || ''
+            );
+            
+            if (status.completed) {
+                if (status.error) {
+                    throw new Error(status.error);
+                }
+                
+                showPreview(status.video_url, {
+                    url: status.video_url,
+                    title: status.title || 'فيديو معالج',
+                    duration: status.duration || 0,
+                    processed: true,
+                    thumbnail: status.thumbnail || null,
+                    session_id: sessionId
+                });
+                
+                hideProgress();
+                showToast('✅ تم معالجة الفيديو بنجاح!', 'success');
+                addMessage('assistant', '🎬 تم معالجة الفيديو بنجاح! يمكنك معاينته أدناه. اضغط "تأكيد" لحفظ المشروع.');
+                return;
+            }
+            
+            if (status.status === 'failed') {
+                throw new Error(status.detail || 'فشلت المعالجة');
+            }
+            
+        } catch (error) {
+            if (error.message !== 'فشل الحصول على حالة المعالجة') {
+                throw error;
+            }
+        }
+        
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        attempts++;
+    }
+    
+    if (state.cancelProcessing) {
+        return;
+    }
+    
+    throw new Error('انتهى وقت المعالجة. يرجى المحاولة مرة أخرى.');
+}
+
 // ============================================
-// توليد فيديو من البرومبت عبر API
+// توليد فيديو من البرومبت
 // ============================================
 async function generateVideoFromPrompt(prompt) {
     showProgress('جاري توليد الفيديو...', 5, 'تحليل الطلب');
     
     try {
-        // إرسال طلب توليد الفيديو إلى الخادم
-        const response = await fetch('/api/v1/video/generate', {
+        const response = await fetch('/api/v1/projects/video/generate', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -403,51 +441,89 @@ async function generateVideoFromPrompt(prompt) {
         });
         
         if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.detail || 'فشل توليد الفيديو');
+            let errorMessage = 'فشل توليد الفيديو';
+            try {
+                const errorData = await response.json();
+                errorMessage = errorData.detail || errorMessage;
+            } catch (e) {
+                errorMessage = `خطأ ${response.status}: ${response.statusText}`;
+            }
+            throw new Error(errorMessage);
         }
         
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let progress = 5;
+        const data = await response.json();
+        state.processingSessionId = data.session_id;
         
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            
-            const chunk = decoder.decode(value);
-            const data = JSON.parse(chunk);
-            
-            if (data.error) {
-                throw new Error(data.error);
-            }
-            
-            progress = data.progress || progress;
-            updateProgress(data.status || 'جاري التوليد...', progress, data.detail || '');
-            
-            if (data.completed) {
-                // عرض الفيديو المولد
-                showPreview(data.video_url, {
-                    url: data.video_url,
-                    title: data.title || prompt.substring(0, 50) + '...',
-                    description: prompt,
-                    duration: data.duration || 0,
-                    generated: true,
-                    thumbnail: data.thumbnail || null
-                });
-                hideProgress();
-                showToast('✅ تم توليد الفيديو بنجاح!', 'success');
-                addMessage('assistant', '🎬 تم توليد الفيديو بناءً على طلبك! يمكنك معاينته أدناه. اضغط "تأكيد" لحفظ المشروع.');
-                break;
-            }
-        }
+        await pollGenerationStatus(state.processingSessionId);
         
     } catch (error) {
         hideProgress();
         showToast('❌ فشل توليد الفيديو: ' + error.message, 'error');
-        addMessage('assistant', '❌ عذراً، فشل توليد الفيديو. يرجى المحاولة مرة أخرى.');
+        addMessage('assistant', `❌ عذراً، فشل توليد الفيديو: ${error.message}. يرجى المحاولة مرة أخرى.`);
         console.error('Video generation error:', error);
     }
+}
+
+async function pollGenerationStatus(sessionId) {
+    let attempts = 0;
+    const maxAttempts = 90;
+    
+    while (attempts < maxAttempts && !state.cancelProcessing) {
+        try {
+            const response = await fetch(`/api/v1/projects/video/generate/${sessionId}/status`);
+            
+            if (!response.ok) {
+                throw new Error('فشل الحصول على حالة التوليد');
+            }
+            
+            const status = await response.json();
+            
+            updateProgress(
+                status.detail || 'جاري التوليد...',
+                status.progress || 0,
+                status.detail || ''
+            );
+            
+            if (status.completed) {
+                if (status.error) {
+                    throw new Error(status.error);
+                }
+                
+                showPreview(status.video_url, {
+                    url: status.video_url,
+                    title: status.title || 'فيديو مولد',
+                    description: prompt,
+                    duration: status.duration || 0,
+                    generated: true,
+                    thumbnail: status.thumbnail || null,
+                    session_id: sessionId
+                });
+                
+                hideProgress();
+                showToast('✅ تم توليد الفيديو بنجاح!', 'success');
+                addMessage('assistant', '🎬 تم توليد الفيديو بناءً على طلبك! يمكنك معاينته أدناه. اضغط "تأكيد" لحفظ المشروع.');
+                return;
+            }
+            
+            if (status.status === 'failed') {
+                throw new Error(status.detail || 'فشل التوليد');
+            }
+            
+        } catch (error) {
+            if (error.message !== 'فشل الحصول على حالة التوليد') {
+                throw error;
+            }
+        }
+        
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        attempts++;
+    }
+    
+    if (state.cancelProcessing) {
+        return;
+    }
+    
+    throw new Error('انتهى وقت التوليد. يرجى المحاولة مرة أخرى.');
 }
 
 // ============================================
@@ -471,13 +547,13 @@ function showPreview(videoUrl, videoData) {
     if (videoData.duration) infoText += ` • ⏱️ ${Math.floor(videoData.duration / 60)}:${String(videoData.duration % 60).padStart(2, '0')}`;
     if (videoData.generated) infoText += ' • 🤖 مولّد بالذكاء الاصطناعي';
     if (videoData.processed) infoText += ' • 🔄 معالج';
-    if (videoData.url) infoText += ' • 🔗 مستورد';
     info.textContent = infoText;
     
     state.generatedVideo = {
         url: videoUrl,
         data: videoData,
-        links: state.videoLinks
+        links: state.videoLinks,
+        session_id: videoData.session_id
     };
     
     video.onloadeddata = () => {
@@ -526,7 +602,8 @@ async function confirmProject() {
             video_links: state.videoLinks,
             duration: state.generatedVideo.data.duration || 0,
             status: 'rendered',
-            session_id: state.sessionId
+            session_id: state.sessionId,
+            thumbnail: state.generatedVideo.data.thumbnail || null
         };
         
         const response = await fetch('/api/v1/projects', {
@@ -536,15 +613,20 @@ async function confirmProject() {
         });
         
         if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.detail || 'فشل إنشاء المشروع');
+            let errorMessage = 'فشل إنشاء المشروع';
+            try {
+                const errorData = await response.json();
+                errorMessage = errorData.detail || errorMessage;
+            } catch (e) {
+                errorMessage = `خطأ ${response.status}: ${response.statusText}`;
+            }
+            throw new Error(errorMessage);
         }
         
         const project = await response.json();
         state.currentProjectId = project.id;
         showToast('✅ تم إنشاء المشروع بنجاح!', 'success');
         
-        // تحديث صفحة المشاريع (سيتم استدعاؤها من الملف الآخر)
         window.dispatchEvent(new CustomEvent('projectCreated', { 
             detail: { projectId: project.id, project: project }
         }));
@@ -556,11 +638,12 @@ async function confirmProject() {
     } catch (error) {
         showToast('❌ ' + error.message, 'error');
         console.error('Project creation error:', error);
+        addMessage('assistant', `❌ عذراً، فشل إنشاء المشروع: ${error.message}. يرجى المحاولة مرة أخرى.`);
     } finally {
         confirmBtn.disabled = false;
         confirmBtn.innerHTML = `
             <svg class="w-4 h-4 inline ml-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="line" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
             </svg>
             تأكيد وإنشاء المشروع
         `;
@@ -640,7 +723,6 @@ document.getElementById('chat-form').addEventListener('submit', async (e) => {
     btn.innerHTML = '<div class="spinner-sm"></div>';
     
     try {
-        // توليد الفيديو من البرومبت
         await generateVideoFromPrompt(message);
     } catch (error) {
         showToast('❌ حدث خطأ: ' + error.message, 'error');
@@ -649,43 +731,12 @@ document.getElementById('chat-form').addEventListener('submit', async (e) => {
         btn.disabled = false;
         btn.innerHTML = `
             <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="line" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/>
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/>
             </svg>
             إرسال
         `;
     }
 });
-
-// ============================================
-// وظائف مساعدة
-// ============================================
-function showToast(message, type = 'info') {
-    const toast = document.createElement('div');
-    const colors = {
-        success: 'bg-green-600',
-        error: 'bg-red-600',
-        warning: 'bg-yellow-600',
-        info: 'bg-blue-600'
-    };
-    const icons = {
-        success: '✅',
-        error: '❌',
-        warning: '⚠️',
-        info: 'ℹ️'
-    };
-    toast.className = `fixed bottom-4 right-4 ${colors[type] || colors.info} text-white px-6 py-3 rounded-lg shadow-lg z-50 transition-all duration-300 transform translate-y-full opacity-0 max-w-md`;
-    toast.innerHTML = `${icons[type] || ''} ${message}`;
-    document.body.appendChild(toast);
-    
-    requestAnimationFrame(() => {
-        toast.classList.remove('translate-y-full', 'opacity-0');
-    });
-    
-    setTimeout(() => {
-        toast.classList.add('translate-y-full', 'opacity-0');
-        setTimeout(() => toast.remove(), 300);
-    }, 4000);
-}
 
 // ============================================
 // اختصارات لوحة المفاتيح
@@ -705,22 +756,83 @@ document.getElementById('url-input').addEventListener('keydown', (e) => {
 });
 
 // ============================================
+// التحقق من الاتصال
+// ============================================
+async function checkConnection() {
+    const status = document.getElementById('connection-status');
+    const text = document.getElementById('connection-text');
+    
+    try {
+        const response = await fetch('/api/v1/projects/video/health', {
+            method: 'GET',
+            signal: AbortSignal.timeout(5000)
+        });
+        
+        if (response.ok) {
+            status.className = 'w-3 h-3 bg-green-500 rounded-full animate-pulse';
+            text.textContent = 'متصل';
+            text.className = 'text-xs text-green-400';
+        } else {
+            throw new Error('Server error');
+        }
+    } catch (error) {
+        status.className = 'w-3 h-3 bg-red-500 rounded-full';
+        text.textContent = 'غير متصل';
+        text.className = 'text-xs text-red-400';
+        showToast('⚠️ تعذر الاتصال بالخادم.', 'warning');
+    }
+}
+
+// ============================================
 // تهيئة الجلسة
 // ============================================
 function initSession() {
     state.sessionId = 'session_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
 }
 
-initSession();
-
 // ============================================
-// الاستماع لأحداث التكامل مع صفحة المشاريع
+// معالجة الأخطاء العالمية
 // ============================================
-window.addEventListener('projectCreated', (event) => {
-    console.log('Project created:', event.detail);
-    // يمكن تحديث صفحة المشاريع إذا كانت مفتوحة
+window.addEventListener('error', (event) => {
+    console.error('Global error:', event.error);
+    showToast('❌ حدث خطأ غير متوقع. يرجى تحديث الصفحة.', 'error');
 });
 
-console.log('🎬 AI Video Creator - Create Page initialized');
+window.addEventListener('unhandledrejection', (event) => {
+    console.error('Unhandled rejection:', event.reason);
+    showToast('❌ حدث خطأ غير متوقع. يرجى تحديث الصفحة.', 'error');
+});
+
+// ============================================
+// تهيئة
+// ============================================
+document.addEventListener('DOMContentLoaded', () => {
+    initSession();
+    checkConnection();
+    setInterval(checkConnection, 30000);
+    console.log('🎬 AI Video Creator - Create Page initialized');
+});
+
+function showToast(message, type = 'info') {
+    const toast = document.createElement('div');
+    const colors = {
+        success: 'bg-green-600',
+        error: 'bg-red-600',
+        warning: 'bg-yellow-600',
+        info: 'bg-blue-600'
+    };
+    toast.className = `fixed bottom-4 right-4 ${colors[type] || colors.info} text-white px-6 py-3 rounded-lg shadow-lg z-50 transition-all duration-300 transform translate-y-full opacity-0 max-w-md`;
+    toast.textContent = message;
+    document.body.appendChild(toast);
+    
+    requestAnimationFrame(() => {
+        toast.classList.remove('translate-y-full', 'opacity-0');
+    });
+    
+    setTimeout(() => {
+        toast.classList.add('translate-y-full', 'opacity-0');
+        setTimeout(() => toast.remove(), 300);
+    }, 4000);
+}
 </script>
 {% endblock %}
