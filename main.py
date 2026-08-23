@@ -2,6 +2,7 @@
 Content Production & Publishing Platform
 Entry point — FastAPI application factory.
 """
+import os  # ✅ تم إضافة الاستيراد
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -298,7 +299,6 @@ app = create_app()
 
 if __name__ == "__main__":
     import uvicorn
-    import os
     
     # استخدام PORT من متغيرات البيئة أو الافتراضي 10000
     port = int(os.getenv("PORT", 10000))
