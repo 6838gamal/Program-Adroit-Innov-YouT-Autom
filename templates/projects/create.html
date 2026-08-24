@@ -12,9 +12,12 @@
                 <span class="text-sm font-medium text-slate-300">AI Assistant</span>
                 <span class="text-xs text-slate-500" id="connection-text">متصل</span>
             </div>
-            <button onclick="clearChat()" class="text-xs text-slate-500 hover:text-slate-300 transition">
-                مسح المحادثة
-            </button>
+            <div class="flex items-center gap-3">
+                <span id="auth-status" class="text-xs text-slate-500">🔑 غير مسجل</span>
+                <button onclick="clearChat()" class="text-xs text-slate-500 hover:text-slate-300 transition">
+                    مسح المحادثة
+                </button>
+            </div>
         </div>
         
         <!-- رسائل الدردشة -->
@@ -28,6 +31,7 @@
                 <div class="flex-1 bg-slate-800 rounded-2xl rounded-tr-sm px-4 py-3">
                     <p class="text-sm text-slate-300">مرحباً! 👋 أنا مساعدك الذكي لإنشاء فيديوهات. أخبرني عن فكرة الفيديو الذي ترغب في إنشائه، أو أضف رابط فيديو من الإنترنت لاستخدامه كمصدر إلهام.</p>
                     <p class="text-xs text-slate-500 mt-2">💡 يمكنك أيضاً تحميل فيديو من جهازك مباشرة.</p>
+                    <p class="text-xs text-slate-500 mt-1">🎬 يدعم يوتيوب، تيك توك، فيسبوك، إنستغرام، Vimeo والمزيد!</p>
                 </div>
                 <span class="text-[10px] text-slate-600 flex-shrink-0">الآن</span>
             </div>
@@ -114,11 +118,17 @@
                     </div>
                 </div>
                 
-                <!-- رابط التحميل -->
-                <div id="video-download" class="mt-2 hidden">
-                    <div class="bg-slate-800/30 rounded-lg p-2">
-                        <span class="text-xs text-slate-500 block mb-1">📥 التحميل:</span>
-                        <a id="video-download-link" href="#" target="_blank" class="text-xs text-blue-400 hover:text-blue-300">تحميل الفيديو</a>
+                <!-- معلومات إضافية للفيديو -->
+                <div id="video-youtube-info" class="mt-2 hidden">
+                    <div class="bg-slate-800/30 rounded-lg p-2 grid grid-cols-2 gap-2 text-xs">
+                        <div>
+                            <span class="text-slate-500">📅 النشر:</span>
+                            <span id="video-published" class="text-slate-300 mr-1">—</span>
+                        </div>
+                        <div>
+                            <span class="text-slate-500">🔗 المعرف:</span>
+                            <span id="video-id" class="text-slate-300 mr-1">—</span>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -140,6 +150,22 @@
                 <button onclick="addSuggestion('قصة تحفيزية قصيرة')" class="text-xs bg-slate-700 hover:bg-slate-600 text-slate-300 px-3 py-1 rounded-full transition">📖 قصة</button>
                 <button onclick="addSuggestion('تحديثات أخبار التكنولوجيا')" class="text-xs bg-slate-700 hover:bg-slate-600 text-slate-300 px-3 py-1 rounded-full transition">📰 أخبار</button>
                 <button onclick="document.getElementById('url-input').focus()" class="text-xs bg-indigo-900/50 hover:bg-indigo-800/50 text-indigo-300 px-3 py-1 rounded-full transition border border-indigo-700/30">🔗 إضافة رابط</button>
+            </div>
+
+            <!-- أزرار يوتيوب -->
+            <div class="flex flex-wrap gap-2 mb-3">
+                <button onclick="handleYouTubeAuth()" class="text-xs bg-red-600/20 hover:bg-red-600/30 text-red-400 px-3 py-1 rounded-full transition border border-red-700/30">
+                    🔑 تسجيل الدخول يوتيوب
+                </button>
+                <button onclick="loadMyVideos()" class="text-xs bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 px-3 py-1 rounded-full transition border border-blue-700/30">
+                    📂 فيديوهاتي
+                </button>
+                <button onclick="loadMySubscriptions()" class="text-xs bg-purple-600/20 hover:bg-purple-600/30 text-purple-400 px-3 py-1 rounded-full transition border border-purple-700/30">
+                    📺 المشترك بها
+                </button>
+                <button onclick="searchYouTube()" class="text-xs bg-green-600/20 hover:bg-green-600/30 text-green-400 px-3 py-1 rounded-full transition border border-green-700/30">
+                    🔍 بحث يوتيوب
+                </button>
             </div>
 
             <form id="chat-form" class="flex flex-col gap-2">
@@ -339,7 +365,8 @@ let state = {
     processing: false,
     cancelProcessing: false,
     uploadedFile: null,
-    videoData: null
+    videoData: null,
+    isYoutubeAuth: false
 };
 
 // ============================================
@@ -390,7 +417,7 @@ function clearChat() {
     const container = document.getElementById('chat-messages');
     container.innerHTML = '';
     state.chatHistory = [];
-    addMessage('assistant', 'مرحباً! 👋 أنا مساعدك الذكي لإنشاء فيديوهات. أخبرني عن فكرة الفيديو الذي ترغب في إنشائه، أو أضف رابط فيديو من الإنترنت لاستخدامه كمصدر إلهام.\n\n💡 يمكنك أيضاً تحميل فيديو من جهازك مباشرة.');
+    addMessage('assistant', 'مرحباً! 👋 أنا مساعدك الذكي لإنشاء فيديوهات. أخبرني عن فكرة الفيديو الذي ترغب في إنشائه، أو أضف رابط فيديو من الإنترنت لاستخدامه كمصدر إلهام.\n\n💡 يمكنك أيضاً تحميل فيديو من جهازك مباشرة.\n\n🎬 يدعم يوتيوب، تيك توك، فيسبوك، إنستغرام، Vimeo والمزيد!');
 }
 
 function addSuggestion(text) {
@@ -519,7 +546,7 @@ function formatFileSize(bytes) {
 }
 
 // ============================================
-// معالجة الفيديو - استخدام نقاط النهاية الجديدة
+// معالجة الفيديو
 // ============================================
 async function processVideoLink(url) {
     showProgress('جاري تحليل رابط الفيديو...', 5);
@@ -532,7 +559,11 @@ async function processVideoLink(url) {
         const response = await fetch('/api/v1/projects/video/process', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ url: url, session_id: state.sessionId })
+            body: JSON.stringify({ 
+                url: url, 
+                session_id: state.sessionId,
+                use_auth: state.isYoutubeAuth 
+            })
         });
         
         if (!response.ok) {
@@ -676,7 +707,10 @@ async function pollProcessingStatus(sessionId) {
                     session_id: sessionId,
                     isExternal: isExternal,
                     original_url: status.video_url,
-                    download: status.download
+                    download: status.download,
+                    video_id: status.video_id,
+                    published_at: status.published_at,
+                    use_auth: status.use_auth
                 });
                 
                 hideProgress();
@@ -948,6 +982,13 @@ function formatNumber(num) {
     return num.toString();
 }
 
+function updateLoadingVideoInfo(format, size, duration, dimensions) {
+    document.getElementById('loading-format').textContent = format;
+    document.getElementById('loading-size').textContent = size;
+    document.getElementById('loading-duration').textContent = duration;
+    document.getElementById('loading-dimensions').textContent = dimensions;
+}
+
 // ============================================
 // عرض المعاينة
 // ============================================
@@ -989,6 +1030,13 @@ function showPreviewWithInfo(videoUrl, videoData) {
         document.getElementById('video-uploader').textContent = videoData.uploader || '—';
         document.getElementById('video-views').textContent = videoData.view_count ? formatNumber(videoData.view_count) : '—';
         document.getElementById('video-likes').textContent = videoData.like_count ? formatNumber(videoData.like_count) : '—';
+    }
+    
+    // عرض معلومات يوتيوب
+    if (videoData.video_id || videoData.published_at) {
+        document.getElementById('video-youtube-info').classList.remove('hidden');
+        document.getElementById('video-id').textContent = videoData.video_id || '—';
+        document.getElementById('video-published').textContent = videoData.published_at ? new Date(videoData.published_at).toLocaleDateString('ar-SA') : '—';
     }
     
     if (videoData.warning) {
@@ -1080,6 +1128,166 @@ function cancelPreview() {
 }
 
 // ============================================
+// وظائف يوتيوب
+// ============================================
+
+async function handleYouTubeAuth() {
+    try {
+        const response = await fetch('/api/v1/youtube/auth/url');
+        if (!response.ok) throw new Error('فشل الحصول على رابط المصادقة');
+        
+        const data = await response.json();
+        
+        if (data.auth_url) {
+            // فتح نافذة المصادقة
+            const authWindow = window.open(data.auth_url, '_blank', 'width=600,height=700');
+            showToast('🔑 افتح النافذة المنبثقة للمصادقة', 'info');
+            
+            // بدء مراقبة حالة المصادقة
+            let attempts = 0;
+            const checkInterval = setInterval(async () => {
+                attempts++;
+                try {
+                    const statusResponse = await fetch('/api/v1/youtube/auth/status?user_id=default');
+                    if (statusResponse.ok) {
+                        const statusData = await statusResponse.json();
+                        if (statusData.authenticated) {
+                            clearInterval(checkInterval);
+                            state.isYoutubeAuth = true;
+                            document.getElementById('auth-status').textContent = '✅ مسجل';
+                            document.getElementById('auth-status').className = 'text-xs text-green-400';
+                            showToast('✅ تم تسجيل الدخول إلى يوتيوب بنجاح!', 'success');
+                            addMessage('assistant', '🔑 تم تسجيل الدخول إلى يوتيوب بنجاح! يمكنك الآن الوصول إلى فيديوهاتك ومعلومات إضافية.');
+                        }
+                    }
+                } catch (e) {
+                    console.log('⏳ في انتظار المصادقة...');
+                }
+                
+                if (attempts > 30) { // 30 ثانية
+                    clearInterval(checkInterval);
+                    if (!state.isYoutubeAuth) {
+                        showToast('⏰ انتهى وقت المصادقة. حاول مرة أخرى.', 'warning');
+                    }
+                }
+            }, 1000);
+        }
+    } catch (error) {
+        showToast('❌ فشل المصادقة: ' + error.message, 'error');
+    }
+}
+
+async function loadMyVideos() {
+    try {
+        showProgress('جاري تحميل فيديوهاتك...', 10);
+        
+        const response = await fetch('/api/v1/youtube/my/videos?max_results=10');
+        if (!response.ok) {
+            if (response.status === 401) {
+                showToast('⚠️ يرجى تسجيل الدخول أولاً', 'warning');
+                handleYouTubeAuth();
+                return;
+            }
+            throw new Error('فشل تحميل الفيديوهات');
+        }
+        
+        const data = await response.json();
+        hideProgress();
+        
+        if (data.videos && data.videos.length > 0) {
+            addMessage('assistant', `📂 لديك ${data.videos.length} فيديو مرفوع:`);
+            data.videos.forEach(video => {
+                addMessage('assistant', 
+                    `🎬 ${video.title}\n` +
+                    `👤 ${video.channel_title || 'غير معروف'}\n` +
+                    `👁️ ${formatNumber(video.view_count)} مشاهدات\n` +
+                    `⏱️ ${formatDuration(video.duration)}\n` +
+                    `🔗 https://youtube.com/watch?v=${video.video_id}`
+                );
+            });
+        } else {
+            addMessage('assistant', '📭 لا توجد فيديوهات مرفوعة.');
+        }
+        
+    } catch (error) {
+        hideProgress();
+        showToast('❌ ' + error.message, 'error');
+    }
+}
+
+async function loadMySubscriptions() {
+    try {
+        showProgress('جاري تحميل القنوات المشترك فيها...', 10);
+        
+        const response = await fetch('/api/v1/youtube/my/subscriptions?max_results=10');
+        if (!response.ok) {
+            if (response.status === 401) {
+                showToast('⚠️ يرجى تسجيل الدخول أولاً', 'warning');
+                handleYouTubeAuth();
+                return;
+            }
+            throw new Error('فشل تحميل القنوات');
+        }
+        
+        const data = await response.json();
+        hideProgress();
+        
+        if (data.subscriptions && data.subscriptions.length > 0) {
+            addMessage('assistant', `📺 أنت مشترك في ${data.subscriptions.length} قناة:`);
+            data.subscriptions.forEach(sub => {
+                addMessage('assistant', 
+                    `📺 ${sub.title}\n` +
+                    `🆔 ${sub.channel_id}`
+                );
+            });
+        } else {
+            addMessage('assistant', '📭 لا توجد قنوات مشترك فيها.');
+        }
+        
+    } catch (error) {
+        hideProgress();
+        showToast('❌ ' + error.message, 'error');
+    }
+}
+
+async function searchYouTube() {
+    const query = prompt('🔍 أدخل كلمة البحث:');
+    if (!query) return;
+    
+    try {
+        showProgress(`جاري البحث عن: ${query}...`, 10);
+        
+        const response = await fetch('/api/v1/youtube/search', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query, max_results: 5 })
+        });
+        
+        if (!response.ok) throw new Error('فشل البحث');
+        
+        const data = await response.json();
+        hideProgress();
+        
+        if (data.videos && data.videos.length > 0) {
+            addMessage('assistant', `🔍 نتائج البحث عن "${query}":`);
+            data.videos.forEach(video => {
+                addMessage('assistant', 
+                    `🎬 ${video.title}\n` +
+                    `👤 ${video.channel_title}\n` +
+                    `🔗 ${video.url}`
+                );
+            });
+        } else {
+            addMessage('assistant', '📭 لا توجد نتائج.');
+        }
+        
+    } catch (error) {
+        hideProgress();
+        showToast('❌ ' + error.message, 'error');
+    }
+}
+
+// ============================================
 // تأكيد وإنشاء المشروع
 // ============================================
 async function confirmProject() {
@@ -1109,7 +1317,9 @@ async function confirmProject() {
             description: state.generatedVideo.data.description || '',
             status: 'rendered',
             session_id: state.sessionId,
-            thumbnail: state.generatedVideo.data.thumbnail || null
+            thumbnail: state.generatedVideo.data.thumbnail || null,
+            video_id: state.generatedVideo.data.video_id || null,
+            platform: state.generatedVideo.data.platform || 'generic'
         };
         
         const response = await fetch('/api/v1/projects', {
@@ -1233,9 +1443,17 @@ async function checkConnection() {
             signal: AbortSignal.timeout(5000)
         });
         if (response.ok) {
+            const data = await response.json();
             status.className = 'w-3 h-3 bg-green-500 rounded-full animate-pulse';
             text.textContent = 'متصل';
             text.className = 'text-xs text-green-400';
+            
+            // تحديث حالة المصادقة
+            if (data.youtube_authenticated) {
+                state.isYoutubeAuth = true;
+                document.getElementById('auth-status').textContent = '✅ مسجل';
+                document.getElementById('auth-status').className = 'text-xs text-green-400';
+            }
         } else {
             throw new Error('Server error');
         }
@@ -1269,6 +1487,7 @@ document.addEventListener('DOMContentLoaded', () => {
     checkConnection();
     setInterval(checkConnection, 30000);
     console.log('🎬 AI Video Creator - Create Page initialized');
+    console.log('📡 YouTube API + OAuth 2.0 enabled');
 });
 
 function showToast(message, type = 'info') {
