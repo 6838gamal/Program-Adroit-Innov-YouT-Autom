@@ -27,6 +27,9 @@ from interfaces.api.oauth import router as oauth_router
 from interfaces.web.routes import router as web_router
 from interfaces.websocket.render_ws import router as ws_router
 
+from interfaces.api.youtube_routes import router as youtube_router
+from interfaces.api.video_routes import router as video_router
+
 # Configure logging
 logging.basicConfig(
     level=settings.LOG_LEVEL if hasattr(settings, 'LOG_LEVEL') else logging.INFO,
@@ -251,6 +254,10 @@ def create_app() -> FastAPI:
     app.include_router(oauth_router)   # OAuth2:    /oauth/...
     app.include_router(api_router)     # REST API:  /api/v1/...
     app.include_router(web_router)     # Web UI:    /
+
+    # تسجيل الرواترز
+    app.include_router(youtube_router, prefix="/api/v1")
+    app.include_router(video_router, prefix="/api/v1")
 
     # ── Health Check ─────────────────────────────────────────────────────
     @app.get("/health")
