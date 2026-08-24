@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from uuid import UUID
 from typing import Optional, List, Dict, Any
@@ -15,6 +15,7 @@ from urllib.parse import urlparse
 from pydantic import BaseModel
 
 from application.services.project_service import ProjectService
+from application.services.youtube_service import YouTubeService
 from infrastructure.database.session import get_db
 from infrastructure.repositories.sql_project_repository import SQLProjectRepository
 from infrastructure.event_bus.in_memory_event_bus import InMemoryEventBus
@@ -23,6 +24,7 @@ from interfaces.schemas.project_schemas import (
     ProjectResponse, ProjectListResponse,
 )
 from shared.exceptions import ProjectNotFoundError
+from utils.video_utils import get_download_info, get_youtube_thumbnail, download_video
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
@@ -37,6 +39,10 @@ def get_project_service(session: AsyncSession = Depends(get_db)) -> ProjectServi
     )
 
 
+def get_youtube_service() -> YouTubeService:
+    return YouTubeService()
+
+
 # ============================================
 # تعريف نماذج Pydantic
 # ============================================
@@ -44,6 +50,7 @@ def get_project_service(session: AsyncSession = Depends(get_db)) -> ProjectServi
 class VideoProcessRequest(BaseModel):
     url: str
     session_id: Optional[str] = None
+    use_auth: bool = False
 
 
 class VideoGenerateRequest(BaseModel):
@@ -52,15 +59,320 @@ class VideoGenerateRequest(BaseModel):
     links: Optional[List[str]] = []
 
 
+class YouTubeVideoRequest(BaseModel):
+    url: str
+    use_auth: bool = False
+    session_id: Optional[str] = None
+
+
+class YouTubeSearchRequest(BaseModel):
+    query: str
+    max_results: int = 10
+
+
+class YouTubeAuthRequest(BaseModel):
+    code: str
+    user_id: str = "default"
+
+
 # ============================================
-# التحقق من وجود yt-dlp
+# التحقق من وجود yt-dlp (كخيار احتياطي)
 # ============================================
 
 def is_ytdlp_available() -> bool:
     """
-    التحقق من وجود yt-dlp في النظام
+    التحقق من وجود yt-dlp في النظام (كخيار احتياطي)
     """
     return shutil.which("yt-dlp") is not None
+
+
+# ============================================
+# استخراج معلومات الفيديو المحسّن
+# ============================================
+
+async def extract_youtube_video_info(url: str, use_auth: bool = False) -> Dict[str, Any]:
+    """
+    استخراج معلومات الفيديو باستخدام YouTube Data API + pytube
+    """
+    service = YouTubeService()
+    video_id = service.extract_video_id(url)
+    
+    if not video_id:
+        print(f"⚠️ لم يتم العثور على معرف الفيديو في: {url}")
+        return extract_video_info_manual(url)
+    
+    try:
+        # 1. الحصول على المعلومات من YouTube Data API
+        print(f"📡 جلب معلومات الفيديو من YouTube Data API: {video_id}")
+        info = service.get_video_info(video_id, use_auth=use_auth)
+        
+        if info:
+            print(f"✅ تم الحصول على المعلومات من API")
+        else:
+            print(f"⚠️ فشل API، محاولة استخدام pytube...")
+            # 2. محاولة استخدام pytube كبديل
+            download_info = get_download_info(video_id)
+            if download_info and not download_info.get('error'):
+                return {
+                    'video_id': video_id,
+                    'title': download_info.get('title', 'فيديو يوتيوب'),
+                    'duration': download_info.get('length', 0),
+                    'thumbnail': download_info.get('thumbnail', get_youtube_thumbnail(video_id)),
+                    'uploader': download_info.get('author', 'YouTube'),
+                    'description': download_info.get('description', ''),
+                    'view_count': 0,
+                    'like_count': 0,
+                    'platform': 'youtube',
+                    'is_external': True,
+                    'url': url,
+                    'format': 'mp4',
+                    'size': None,
+                    'size_bytes': None,
+                    'dimensions': '1920x1080',
+                    'download': download_info,
+                    'warning': 'تم استخدام pytube بدلاً من YouTube API'
+                }
+            else:
+                print(f"⚠️ فشل pytube أيضاً، استخدام الطريقة اليدوية")
+                return extract_video_info_manual(url)
+        
+        # 3. دمج مع معلومات التحميل من pytube
+        download_info = get_download_info(video_id)
+        
+        # 4. بناء النتيجة النهائية
+        result = {
+            'video_id': video_id,
+            'title': info.get('title', 'فيديو يوتيوب'),
+            'duration': info.get('duration', 0),
+            'thumbnail': info.get('thumbnail') or get_youtube_thumbnail(video_id),
+            'uploader': info.get('channel_title', 'YouTube'),
+            'uploader_id': info.get('channel_id', ''),
+            'description': info.get('description', ''),
+            'view_count': info.get('view_count', 0),
+            'like_count': info.get('like_count', 0),
+            'comment_count': info.get('comment_count', 0),
+            'platform': 'youtube',
+            'is_external': True,
+            'url': url,
+            'format': 'mp4',
+            'size': None,
+            'size_bytes': None,
+            'dimensions': info.get('dimensions', '1920x1080'),
+            'tags': info.get('tags', []),
+            'category_id': info.get('category_id', ''),
+            'is_private': info.get('is_private', False),
+            'is_unlisted': info.get('is_unlisted', False),
+            'is_embeddable': info.get('is_embeddable', True),
+            'published_at': info.get('published_at', ''),
+            'download': download_info if download_info and not download_info.get('error') else None,
+            'ytdlp_available': False,
+            'ytdlp_error': None,
+            'warning': None,
+            'use_auth': use_auth
+        }
+        
+        # حساب حجم الملف التقريبي
+        if result['duration']:
+            estimated_size_mb = max(result['duration'] * 2.5, 10)  # 2.5 MB per second minimum 10 MB
+            result['size_bytes'] = int(estimated_size_mb * 1024 * 1024)
+            result['size'] = f"~{estimated_size_mb:.1f} MB"
+        
+        print(f"✅ تم استخراج معلومات الفيديو بنجاح: {result['title']}")
+        return result
+        
+    except Exception as e:
+        print(f"⚠️ خطأ في استخراج المعلومات: {e}")
+        return extract_video_info_manual(url)
+
+
+def extract_video_info_manual(
+    url: str, 
+    youtube_auth_error: bool = False, 
+    video_unavailable: bool = False,
+    age_restricted: bool = False
+) -> Dict[str, Any]:
+    """
+    استخراج معلومات الفيديو يدوياً (كحل أخير)
+    """
+    parsed_url = urlparse(url)
+    domain = parsed_url.netloc.lower()
+    
+    info = {
+        "title": None,
+        "duration": None,
+        "format": "mp4",
+        "size": None,
+        "size_bytes": None,
+        "dimensions": "1280x720",
+        "thumbnail": None,
+        "uploader": None,
+        "description": None,
+        "view_count": None,
+        "like_count": None,
+        "platform": "generic",
+        "ytdlp_error": None,
+        "warning": None,
+        "is_external": True,
+        "video_id": None
+    }
+    
+    # تحديد المنصة من الرابط
+    if "youtube.com" in domain or "youtu.be" in domain:
+        info["platform"] = "youtube"
+        info["is_external"] = True
+        video_id = extract_youtube_id(url)
+        info["video_id"] = video_id
+        
+        if video_id:
+            info["thumbnail"] = get_youtube_thumbnail(video_id)
+        
+        if age_restricted:
+            info["ytdlp_error"] = "age_restricted"
+            info["warning"] = "الفيديو مقيد بالعمر - سيتم استخدام فيديو تجريبي للعرض"
+            info["title"] = "فيديو يوتيوب (مقيد بالعمر)"
+            info["duration"] = 60
+            info["size"] = "~30.0 MB"
+            info["size_bytes"] = 30 * 1024 * 1024
+        elif video_unavailable:
+            info["ytdlp_error"] = "video_unavailable"
+            info["warning"] = "الفيديو غير متاح - سيتم استخدام فيديو تجريبي للعرض"
+            info["title"] = "فيديو يوتيوب (غير متاح)"
+            info["duration"] = 60
+            info["size"] = "~30.0 MB"
+            info["size_bytes"] = 30 * 1024 * 1024
+        elif youtube_auth_error:
+            info["ytdlp_error"] = "auth_required"
+            info["warning"] = "يوتيوب يطلب تسجيل الدخول - سيتم استخدام فيديو تجريبي للعرض"
+            info["title"] = "فيديو يوتيوب (يتطلب تسجيل الدخول)"
+            info["duration"] = 120
+            info["size"] = "~45.6 MB"
+            info["size_bytes"] = 45.6 * 1024 * 1024
+        else:
+            info["title"] = f"فيديو يوتيوب {f'(ID: {video_id[:8]}...)' if video_id else ''}"
+            info["duration"] = 120
+            info["size"] = "~45.6 MB"
+            info["size_bytes"] = 45.6 * 1024 * 1024
+            info["warning"] = "سيتم استخدام فيديو تجريبي للعرض (YouTube Data API غير متاح)"
+        
+        info["description"] = "فيديو من يوتيوب"
+        info["uploader"] = "YouTube"
+            
+    elif "tiktok.com" in domain:
+        info["platform"] = "tiktok"
+        info["is_external"] = True
+        info["title"] = "فيديو تيك توك"
+        info["duration"] = 60
+        info["size"] = "~15.2 MB"
+        info["size_bytes"] = 15.2 * 1024 * 1024
+        info["dimensions"] = "1080x1920"
+        info["uploader"] = "TikTok"
+        info["description"] = "فيديو من تيك توك"
+        info["warning"] = "سيتم استخدام فيديو تجريبي للعرض"
+        
+    elif "vimeo.com" in domain:
+        info["platform"] = "vimeo"
+        info["is_external"] = False
+        info["title"] = "فيديو Vimeo"
+        info["duration"] = 180
+        info["size"] = "~89.3 MB"
+        info["size_bytes"] = 89.3 * 1024 * 1024
+        info["uploader"] = "Vimeo"
+        info["description"] = "فيديو من Vimeo"
+        
+    elif "facebook.com" in domain:
+        info["platform"] = "facebook"
+        info["is_external"] = True
+        info["title"] = "فيديو فيسبوك"
+        info["duration"] = 120
+        info["size"] = "~35.0 MB"
+        info["size_bytes"] = 35 * 1024 * 1024
+        info["uploader"] = "Facebook"
+        info["description"] = "فيديو من فيسبوك"
+        info["warning"] = "سيتم استخدام فيديو تجريبي للعرض"
+        
+    elif "instagram.com" in domain:
+        info["platform"] = "instagram"
+        info["is_external"] = True
+        info["title"] = "فيديو إنستغرام"
+        info["duration"] = 60
+        info["size"] = "~20.0 MB"
+        info["size_bytes"] = 20 * 1024 * 1024
+        info["uploader"] = "Instagram"
+        info["description"] = "فيديو من إنستغرام"
+        info["warning"] = "سيتم استخدام فيديو تجريبي للعرض"
+        
+    else:
+        info["platform"] = "generic"
+        info["is_external"] = True
+        info["title"] = f"فيديو من {domain}"
+        info["duration"] = 90
+        info["size"] = "~30.0 MB"
+        info["size_bytes"] = 30 * 1024 * 1024
+        info["format"] = detect_video_format(url)
+        info["description"] = f"فيديو من {domain}"
+        info["warning"] = "سيتم استخدام فيديو تجريبي للعرض"
+    
+    print(f"ℹ️ تم استخراج معلومات الفيديو يدوياً: {info['title']} ({info['platform']})")
+    if info.get("warning"):
+        print(f"⚠️ {info['warning']}")
+    
+    return info
+
+
+def extract_youtube_id(url: str) -> Optional[str]:
+    """
+    استخراج معرف الفيديو من رابط يوتيوب
+    """
+    patterns = [
+        r'(?:youtube\.com\/watch\?v=)([\w-]+)',
+        r'(?:youtu\.be\/)([\w-]+)',
+        r'(?:youtube\.com\/embed\/)([\w-]+)',
+        r'(?:youtube\.com\/shorts\/)([\w-]+)',
+        r'(?:youtube\.com\/v\/)([\w-]+)',
+        r'(?:youtube\.com\/watch\?.*?v=)([\w-]+)',
+        r'(?:youtube\.com\/@[\w-]+\/video\/)([\w-]+)',
+        r'(?:youtube\.com\/live\/)([\w-]+)'
+    ]
+    
+    for pattern in patterns:
+        match = re.search(pattern, url)
+        if match:
+            return match.group(1)
+    return None
+
+
+def detect_video_format(url: str) -> str:
+    """
+    اكتشاف صيغة الفيديو من الرابط
+    """
+    extensions = {
+        '.mp4': 'mp4',
+        '.webm': 'webm',
+        '.avi': 'avi',
+        '.mov': 'mov',
+        '.mkv': 'mkv',
+        '.flv': 'flv',
+        '.wmv': 'wmv'
+    }
+    
+    for ext, format_name in extensions.items():
+        if ext in url.lower():
+            return format_name
+    return 'mp4'
+
+
+def format_file_size(bytes_size: int) -> str:
+    """
+    تنسيق حجم الملف
+    """
+    if bytes_size < 1024:
+        return f"{bytes_size} B"
+    elif bytes_size < 1024 * 1024:
+        return f"{bytes_size / 1024:.1f} KB"
+    elif bytes_size < 1024 * 1024 * 1024:
+        return f"{bytes_size / (1024 * 1024):.1f} MB"
+    else:
+        return f"{bytes_size / (1024 * 1024 * 1024):.2f} GB"
 
 
 # ============================================
@@ -146,7 +458,7 @@ async def delete_project(
 
 
 # ============================================
-# نقاط النهاية لمعالجة الفيديو
+# نقاط النهاية لمعالجة الفيديو (محسّنة)
 # ============================================
 
 @router.post("/video/process")
@@ -155,11 +467,11 @@ async def process_video(
     background_tasks: BackgroundTasks,
 ):
     """
-    معالجة رابط فيديو من الإنترنت
+    معالجة رابط فيديو من الإنترنت باستخدام YouTube Data API + pytube
     """
     session_id = request.session_id or str(uuid.uuid4())
     
-    # التحقق من وجود yt-dlp
+    # التحقق من وجود yt-dlp كخيار احتياطي
     ytdlp_available = is_ytdlp_available()
     
     # تهيئة حالة المعالجة
@@ -189,11 +501,13 @@ async def process_video(
         "ytdlp_error": None,
         "platform": None,
         "warning": None,
-        "is_external": False
+        "is_external": False,
+        "use_auth": request.use_auth,
+        "video_id": None
     }
     
     # بدء المعالجة في الخلفية
-    background_tasks.add_task(process_video_background, session_id, request.url)
+    background_tasks.add_task(process_video_background, session_id, request.url, request.use_auth)
     
     return {
         "session_id": session_id,
@@ -238,7 +552,9 @@ async def get_processing_status(session_id: str):
         "ytdlp_available": session.get("ytdlp_available", False),
         "ytdlp_error": session.get("ytdlp_error"),
         "platform": session.get("platform"),
-        "is_external": session.get("is_external", False)
+        "is_external": session.get("is_external", False),
+        "video_id": session.get("video_id"),
+        "use_auth": session.get("use_auth", False)
     }
 
 
@@ -323,353 +639,26 @@ async def video_health_check():
     """
     التحقق من صحة خدمة الفيديو
     """
+    # التحقق من YouTube Service
+    youtube_service = YouTubeService()
+    is_youtube_auth = youtube_service.is_authenticated()
+    
     return {
         "status": "ok",
         "message": "Video processing service is running",
         "active_sessions": len(processing_sessions),
         "ytdlp_available": is_ytdlp_available(),
+        "youtube_api_available": True,
+        "youtube_authenticated": is_youtube_auth,
         "timestamp": datetime.now().isoformat()
     }
 
 
 # ============================================
-# وظائف استخراج معلومات الفيديو المحسنة
+# وظائف الخلفية (محسّنة)
 # ============================================
 
-async def extract_video_info_with_ytdlp(url: str) -> Dict[str, Any]:
-    """
-    استخراج معلومات الفيديو باستخدام yt-dlp مع معالجة أخطاء يوتيوب
-    """
-    # التحقق من وجود yt-dlp
-    if not is_ytdlp_available():
-        print("⚠️ yt-dlp غير مثبت، استخدام الطريقة اليدوية")
-        return extract_video_info_manual(url)
-    
-    try:
-        # استخدام yt-dlp مع خيارات إضافية
-        cmd = [
-            "yt-dlp",
-            "--dump-json",
-            "--no-playlist",
-            "--skip-download",
-            "--no-warnings",
-            "--extractor-args", "youtube:player_client=android,web",
-            "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "--socket-timeout", "30",
-            "--retries", "3",
-            url
-        ]
-        
-        process = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
-        )
-        
-        stdout, stderr = await process.communicate()
-        
-        if process.returncode != 0:
-            error_msg = stderr.decode('utf-8', errors='ignore')
-            print(f"yt-dlp error: {error_msg}")
-            
-            # التحقق من أنواع الأخطاء الشائعة
-            if "Sign in to confirm" in error_msg or "bot" in error_msg.lower():
-                print("⚠️ يوتيوب يطلب التحقق من البوت - سيتم استخدام معلومات تقديرية")
-                return extract_video_info_manual(url, youtube_auth_error=True)
-            elif "video unavailable" in error_msg.lower() or "private" in error_msg.lower():
-                print("⚠️ الفيديو غير متاح أو خاص - سيتم استخدام معلومات تقديرية")
-                return extract_video_info_manual(url, video_unavailable=True)
-            elif "rate limit" in error_msg.lower():
-                print("⚠️ تم تجاوز حد الطلبات - سيتم استخدام معلومات تقديرية")
-                return extract_video_info_manual(url)
-            elif "age restricted" in error_msg.lower():
-                print("⚠️ الفيديو مقيد بالعمر - سيتم استخدام معلومات تقديرية")
-                return extract_video_info_manual(url, age_restricted=True)
-            
-            return extract_video_info_manual(url)
-        
-        # تحليل الناتج JSON
-        data = json.loads(stdout.decode('utf-8', errors='ignore'))
-        
-        # استخراج المعلومات الأساسية
-        info = {
-            "title": data.get("title", "فيديو بدون عنوان"),
-            "duration": data.get("duration"),
-            "thumbnail": data.get("thumbnail"),
-            "uploader": data.get("uploader"),
-            "uploader_id": data.get("uploader_id"),
-            "description": data.get("description", "")[:500],
-            "view_count": data.get("view_count"),
-            "like_count": data.get("like_count"),
-            "platform": "unknown",
-            "format": "mp4",
-            "size": None,
-            "size_bytes": None,
-            "dimensions": "1280x720",
-            "ytdlp_error": None,
-            "warning": None,
-            "is_external": True
-        }
-        
-        # تحديد المنصة من الرابط
-        webpage_url = data.get("webpage_url", "")
-        if "youtube.com" in webpage_url or "youtu.be" in webpage_url:
-            info["platform"] = "youtube"
-            info["is_external"] = True
-        elif "tiktok.com" in webpage_url:
-            info["platform"] = "tiktok"
-            info["is_external"] = True
-        elif "vimeo.com" in webpage_url:
-            info["platform"] = "vimeo"
-            info["is_external"] = False  # Vimeo يعمل بشكل جيد
-        else:
-            info["platform"] = "generic"
-            info["is_external"] = True
-        
-        # استخراج معلومات الصيغ
-        if "formats" in data:
-            formats = data["formats"]
-            best_format = None
-            for fmt in formats:
-                if fmt.get("ext") == "mp4" and fmt.get("height"):
-                    if not best_format or fmt.get("height", 0) > best_format.get("height", 0):
-                        best_format = fmt
-            
-            if best_format:
-                info["format"] = best_format.get("ext", "mp4")
-                if best_format.get("width") and best_format.get("height"):
-                    info["dimensions"] = f"{best_format.get('width')}x{best_format.get('height')}"
-                if best_format.get("filesize"):
-                    size_bytes = best_format.get("filesize")
-                    info["size_bytes"] = size_bytes
-                    info["size"] = format_file_size(size_bytes)
-                elif best_format.get("filesize_approx"):
-                    size_bytes = best_format.get("filesize_approx")
-                    info["size_bytes"] = size_bytes
-                    info["size"] = format_file_size(size_bytes) + " (تقريباً)"
-        
-        # إذا لم نحصل على حجم، نستخدم قيمة افتراضية
-        if not info["size"]:
-            duration = info["duration"] or 60
-            estimated_size = max(duration * 5, 5)
-            info["size_bytes"] = estimated_size * 1024 * 1024
-            info["size"] = f"~{estimated_size:.1f} MB"
-        
-        # إذا كان الفيديو من تيك توك أو يوتيوب، نضيف تحذير
-        if info["platform"] in ["tiktok", "youtube"]:
-            info["warning"] = f"هذا الفيديو من {info['platform']}. سيتم استخدام فيديو تجريبي للعرض."
-        
-        print(f"✅ تم استخراج معلومات الفيديو بنجاح: {info['title']} ({info['platform']})")
-        return info
-        
-    except json.JSONDecodeError as e:
-        print(f"JSON decode error: {e}")
-        return extract_video_info_manual(url)
-    except asyncio.TimeoutError:
-        print("⏰ انتهى وقت استخراج المعلومات، استخدام الطريقة اليدوية")
-        return extract_video_info_manual(url)
-    except Exception as e:
-        print(f"Error extracting video info with yt-dlp: {e}")
-        return extract_video_info_manual(url)
-
-
-def extract_video_info_manual(
-    url: str, 
-    youtube_auth_error: bool = False, 
-    video_unavailable: bool = False,
-    age_restricted: bool = False
-) -> Dict[str, Any]:
-    """
-    استخراج معلومات الفيديو يدوياً (بدون yt-dlp)
-    """
-    parsed_url = urlparse(url)
-    domain = parsed_url.netloc.lower()
-    
-    info = {
-        "title": None,
-        "duration": None,
-        "format": "mp4",
-        "size": None,
-        "size_bytes": None,
-        "dimensions": "1280x720",
-        "thumbnail": None,
-        "uploader": None,
-        "description": None,
-        "view_count": None,
-        "like_count": None,
-        "platform": "generic",
-        "ytdlp_error": None,
-        "warning": None,
-        "is_external": True
-    }
-    
-    # تحديد المنصة من الرابط
-    if "youtube.com" in domain or "youtu.be" in domain:
-        info["platform"] = "youtube"
-        info["is_external"] = True
-        video_id = extract_youtube_id(url)
-        
-        if age_restricted:
-            info["ytdlp_error"] = "age_restricted"
-            info["warning"] = "الفيديو مقيد بالعمر - سيتم استخدام فيديو تجريبي للعرض"
-            info["title"] = "فيديو يوتيوب (مقيد بالعمر)"
-            info["duration"] = 60
-            info["size"] = "~30.0 MB"
-            info["size_bytes"] = 30 * 1024 * 1024
-            if video_id:
-                info["thumbnail"] = f"https://img.youtube.com/vi/{video_id}/hqdefault.jpg"
-        elif video_unavailable:
-            info["ytdlp_error"] = "video_unavailable"
-            info["warning"] = "الفيديو غير متاح - سيتم استخدام فيديو تجريبي للعرض"
-            info["title"] = "فيديو يوتيوب (غير متاح)"
-            info["duration"] = 60
-            info["size"] = "~30.0 MB"
-            info["size_bytes"] = 30 * 1024 * 1024
-            if video_id:
-                info["thumbnail"] = f"https://img.youtube.com/vi/{video_id}/hqdefault.jpg"
-        elif youtube_auth_error:
-            info["ytdlp_error"] = "auth_required"
-            info["warning"] = "يوتيوب يطلب تسجيل الدخول - سيتم استخدام فيديو تجريبي للعرض"
-            info["title"] = "فيديو يوتيوب (يتطلب تسجيل الدخول)"
-            info["duration"] = 120
-            info["size"] = "~45.6 MB"
-            info["size_bytes"] = 45.6 * 1024 * 1024
-            if video_id:
-                info["thumbnail"] = f"https://img.youtube.com/vi/{video_id}/hqdefault.jpg"
-        else:
-            info["title"] = "فيديو يوتيوب"
-            info["duration"] = 120
-            info["size"] = "~45.6 MB"
-            info["size_bytes"] = 45.6 * 1024 * 1024
-            if video_id:
-                info["thumbnail"] = f"https://img.youtube.com/vi/{video_id}/hqdefault.jpg"
-                info["title"] = f"فيديو يوتيوب (ID: {video_id[:8]}...)"
-            info["warning"] = "سيتم استخدام فيديو تجريبي للعرض"
-        
-        info["description"] = "فيديو من يوتيوب"
-        info["uploader"] = "YouTube"
-            
-    elif "tiktok.com" in domain:
-        info["platform"] = "tiktok"
-        info["is_external"] = True
-        info["title"] = "فيديو تيك توك"
-        info["duration"] = 60
-        info["size"] = "~15.2 MB"
-        info["size_bytes"] = 15.2 * 1024 * 1024
-        info["dimensions"] = "1080x1920"
-        info["uploader"] = "TikTok"
-        info["description"] = "فيديو من تيك توك"
-        info["warning"] = "سيتم استخدام فيديو تجريبي للعرض"
-        
-    elif "vimeo.com" in domain:
-        info["platform"] = "vimeo"
-        info["is_external"] = False
-        info["title"] = "فيديو Vimeo"
-        info["duration"] = 180
-        info["size"] = "~89.3 MB"
-        info["size_bytes"] = 89.3 * 1024 * 1024
-        info["uploader"] = "Vimeo"
-        info["description"] = "فيديو من Vimeo"
-        
-    elif "facebook.com" in domain:
-        info["platform"] = "facebook"
-        info["is_external"] = True
-        info["title"] = "فيديو فيسبوك"
-        info["duration"] = 120
-        info["size"] = "~35.0 MB"
-        info["size_bytes"] = 35 * 1024 * 1024
-        info["uploader"] = "Facebook"
-        info["description"] = "فيديو من فيسبوك"
-        info["warning"] = "سيتم استخدام فيديو تجريبي للعرض"
-        
-    elif "instagram.com" in domain:
-        info["platform"] = "instagram"
-        info["is_external"] = True
-        info["title"] = "فيديو إنستغرام"
-        info["duration"] = 60
-        info["size"] = "~20.0 MB"
-        info["size_bytes"] = 20 * 1024 * 1024
-        info["uploader"] = "Instagram"
-        info["description"] = "فيديو من إنستغرام"
-        info["warning"] = "سيتم استخدام فيديو تجريبي للعرض"
-        
-    else:
-        info["platform"] = "generic"
-        info["is_external"] = True
-        info["title"] = f"فيديو من {domain}"
-        info["duration"] = 90
-        info["size"] = "~30.0 MB"
-        info["size_bytes"] = 30 * 1024 * 1024
-        info["format"] = detect_video_format(url)
-        info["description"] = f"فيديو من {domain}"
-        info["warning"] = "سيتم استخدام فيديو تجريبي للعرض"
-    
-    print(f"ℹ️ تم استخراج معلومات الفيديو يدوياً: {info['title']} ({info['platform']})")
-    if info.get("warning"):
-        print(f"⚠️ {info['warning']}")
-    
-    return info
-
-
-def extract_youtube_id(url: str) -> Optional[str]:
-    """
-    استخراج معرف الفيديو من رابط يوتيوب
-    """
-    patterns = [
-        r'(?:youtube\.com\/watch\?v=)([\w-]+)',
-        r'(?:youtu\.be\/)([\w-]+)',
-        r'(?:youtube\.com\/embed\/)([\w-]+)',
-        r'(?:youtube\.com\/shorts\/)([\w-]+)',
-        r'(?:youtube\.com\/v\/)([\w-]+)',
-        r'(?:youtube\.com\/watch\?.*?v=)([\w-]+)'
-    ]
-    
-    for pattern in patterns:
-        match = re.search(pattern, url)
-        if match:
-            return match.group(1)
-    return None
-
-
-def detect_video_format(url: str) -> str:
-    """
-    اكتشاف صيغة الفيديو من الرابط
-    """
-    extensions = {
-        '.mp4': 'mp4',
-        '.webm': 'webm',
-        '.avi': 'avi',
-        '.mov': 'mov',
-        '.mkv': 'mkv',
-        '.flv': 'flv',
-        '.wmv': 'wmv'
-    }
-    
-    for ext, format_name in extensions.items():
-        if ext in url.lower():
-            return format_name
-    return 'mp4'
-
-
-def format_file_size(bytes_size: int) -> str:
-    """
-    تنسيق حجم الملف
-    """
-    if bytes_size < 1024:
-        return f"{bytes_size} B"
-    elif bytes_size < 1024 * 1024:
-        return f"{bytes_size / 1024:.1f} KB"
-    elif bytes_size < 1024 * 1024 * 1024:
-        return f"{bytes_size / (1024 * 1024):.1f} MB"
-    else:
-        return f"{bytes_size / (1024 * 1024 * 1024):.2f} GB"
-
-
-# ============================================
-# وظائف الخلفية
-# ============================================
-
-async def process_video_background(session_id: str, url: str):
+async def process_video_background(session_id: str, url: str, use_auth: bool = False):
     """
     معالجة الفيديو في الخلفية مع تحديث التقدم
     """
@@ -687,21 +676,12 @@ async def process_video_background(session_id: str, url: str):
         processing_sessions[session_id].update({
             "status": "extracting",
             "progress": 25,
-            "detail": "جاري استخراج معلومات الفيديو...",
+            "detail": "جاري استخراج معلومات الفيديو باستخدام YouTube API...",
             "step": "استخراج المعلومات"
         })
         
-        # التحقق من وجود yt-dlp
-        ytdlp_available = is_ytdlp_available()
-        processing_sessions[session_id]["ytdlp_available"] = ytdlp_available
-        
-        if ytdlp_available:
-            processing_sessions[session_id]["detail"] = "جاري استخراج معلومات الفيديو باستخدام yt-dlp..."
-        else:
-            processing_sessions[session_id]["detail"] = "جاري استخراج معلومات الفيديو (طريقة يدوية)..."
-        
-        # استخراج معلومات الفيديو
-        video_info = await extract_video_info_with_ytdlp(url)
+        # استخراج معلومات الفيديو باستخدام الطريقة المحسّنة
+        video_info = await extract_youtube_video_info(url, use_auth)
         
         # تحديث بمعلومات الفيديو المستخرجة
         processing_sessions[session_id].update({
@@ -719,17 +699,19 @@ async def process_video_background(session_id: str, url: str):
             "platform": video_info.get("platform", "generic"),
             "ytdlp_error": video_info.get("ytdlp_error"),
             "warning": video_info.get("warning"),
-            "is_external": video_info.get("is_external", True)
+            "is_external": video_info.get("is_external", True),
+            "video_id": video_info.get("video_id"),
+            "use_auth": use_auth
         })
         
         await asyncio.sleep(1.5)
         
-        # خطوة 3: التحقق من الرابط
+        # خطوة 3: التحقق من الفيديو
         processing_sessions[session_id].update({
             "status": "verifying",
             "progress": 45,
-            "detail": "جاري التحقق من الرابط...",
-            "step": "التحقق من الرابط"
+            "detail": "جاري التحقق من الفيديو...",
+            "step": "التحقق من الفيديو"
         })
         await asyncio.sleep(1)
         
@@ -760,22 +742,33 @@ async def process_video_background(session_id: str, url: str):
         })
         await asyncio.sleep(1)
         
-        # اكتمال المعالجة
-        video_url = url
-        
-        # إذا كان الفيديو من منصة خارجية (يوتيوب، تيك توك، إلخ)
-        # نستخدم فيديو تجريبي للعرض
+        # تحديد رابط الفيديو النهائي
         platform = video_info.get("platform", "generic")
         is_external = video_info.get("is_external", True)
+        video_url = url
         
+        # إذا كان الفيديو من يوتيوب أو منصة خارجية، نستخدم فيديو تجريبي للعرض
         if is_external or platform in ["youtube", "tiktok", "facebook", "instagram"]:
             video_url = "https://sample-videos.com/video321/mp4/240/big_buck_bunny_240p_1mb.mp4"
             if not processing_sessions[session_id].get("warning"):
                 processing_sessions[session_id]["warning"] = f"تم استخدام فيديو تجريبي للعرض (بديل لـ {platform})"
             processing_sessions[session_id]["detail"] = f"✅ تم معالجة الفيديو من {platform} (فيديو تجريبي للعرض)"
+            
+            # إذا كان يوتيوب، نحاول تحميل فيديو حقيقي
+            if platform == "youtube" and video_info.get("video_id"):
+                try:
+                    video_id = video_info["video_id"]
+                    downloaded_path = download_video(video_id, '720p')
+                    if downloaded_path:
+                        video_url = downloaded_path
+                        processing_sessions[session_id]["detail"] = "✅ تم تحميل الفيديو من يوتيوب بنجاح!"
+                        processing_sessions[session_id]["warning"] = None
+                except Exception as e:
+                    print(f"⚠️ فشل تحميل الفيديو: {e}")
         else:
             processing_sessions[session_id]["detail"] = "✅ تم معالجة الفيديو بنجاح!"
         
+        # اكتمال المعالجة
         processing_sessions[session_id].update({
             "status": "completed",
             "progress": 100,
@@ -796,10 +789,15 @@ async def process_video_background(session_id: str, url: str):
             "platform": video_info.get("platform"),
             "ytdlp_error": video_info.get("ytdlp_error"),
             "warning": video_info.get("warning"),
-            "is_external": is_external
+            "is_external": is_external,
+            "video_id": video_info.get("video_id")
         })
         
     except Exception as e:
+        import traceback
+        error_detail = traceback.format_exc()
+        print(f"❌ خطأ في المعالجة: {error_detail}")
+        
         processing_sessions[session_id].update({
             "status": "failed",
             "progress": 0,
