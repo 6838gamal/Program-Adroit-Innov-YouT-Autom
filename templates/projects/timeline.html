@@ -1,22 +1,605 @@
 {% extends "base.html" %}
-{% block title %}محرر التايم لاين — {{ project.title }}{% endblock %}
+{% block title %}محرر الفيديو المتقدم — {{ project.title }}{% endblock %}
 {% block page_title %}{{ project.title | truncate(30) }}{% endblock %}
 
 {% block head %}
 <style>
-    .track-row { display:flex; min-height:52px; border-bottom:1px solid #334155; }
-    .track-label { width:7rem; flex-shrink:0; background:#0f172a; border-left:1px solid #334155; padding:.5rem .75rem; display:flex;align-items:center;gap:.5rem; font-size:.7rem; color:#94a3b8; }
-    .track-body { flex:1; position:relative; overflow:hidden; background: repeating-linear-gradient(90deg,transparent,transparent calc(var(--cell-w) - 1px),#334155 calc(var(--cell-w) - 1px),#334155 var(--cell-w)); }
-    .scene-block { position:absolute; top:4px; height:calc(100% - 8px); border-radius:6px; display:flex;align-items:center;padding:0 .5rem; font-size:.65rem; font-weight:600; cursor:pointer; user-select:none; white-space:nowrap; overflow:hidden; transition:opacity .15s; }
-    .scene-block:hover { opacity:.85; filter:brightness(1.1); }
-    .ruler { height:28px; background:#0f172a; border-bottom:1px solid #334155; display:flex; overflow:hidden; }
-    .ruler-mark { flex-shrink:0; border-left:1px solid #334155; font-size:.6rem; color:#475569; padding:.25rem 0 0 .25rem; }
-    .timeline-scroll { overflow-x:auto; overflow-y:hidden; }
-    .scene-block-video { background:#2563eb30; border:1px solid #2563eb80; color:#2563eb; }
-    .scene-block-audio { background:#05966930; border:1px solid #05966980; color:#059669; }
-    .scene-block-text { background:#d9770630; border:1px solid #d9770680; color:#d97706; }
-    .scene-block-music { background:#7c3aed30; border:1px solid #7c3aed80; color:#7c3aed; }
-    .scene-block-subtitle { background:#47556930; border:1px solid #47556980; color:#94a3b8; }
+    /* ====== المتغيرات العامة ====== */
+    :root {
+        --track-height: 48px;
+        --ruler-height: 32px;
+        --layer-height: 32px;
+        --cell-base: 80px;
+        --primary: #2563eb;
+        --primary-dark: #1d4ed8;
+        --bg-dark: #0f172a;
+        --bg-panel: #1e293b;
+        --border-color: #334155;
+        --text-muted: #94a3b8;
+        --text-light: #f1f5f9;
+    }
+
+    /* ====== الحاوية الرئيسية ====== */
+    .editor-container {
+        display: flex;
+        flex-direction: column;
+        height: calc(100vh - 180px);
+        min-height: 500px;
+        background: var(--bg-dark);
+        border-radius: 12px;
+        overflow: hidden;
+        border: 1px solid var(--border-color);
+    }
+
+    /* ====== منطقة المعاينة ====== */
+    .preview-area {
+        flex: 1;
+        background: #000;
+        position: relative;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 240px;
+        background: radial-gradient(ellipse at center, #1a1a2e 0%, #0a0a15 100%);
+        border-bottom: 2px solid var(--border-color);
+    }
+
+    .preview-area video,
+    .preview-area canvas {
+        max-width: 100%;
+        max-height: 100%;
+        object-fit: contain;
+        background: #000;
+    }
+
+    .preview-overlay {
+        position: absolute;
+        top: 12px;
+        left: 12px;
+        display: flex;
+        gap: 8px;
+        z-index: 10;
+    }
+
+    .preview-controls {
+        position: absolute;
+        bottom: 16px;
+        left: 50%;
+        transform: translateX(-50%);
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        background: rgba(0,0,0,0.75);
+        backdrop-filter: blur(8px);
+        padding: 8px 16px;
+        border-radius: 30px;
+        border: 1px solid rgba(255,255,255,0.1);
+        z-index: 10;
+    }
+
+    .preview-controls button {
+        background: none;
+        border: none;
+        color: white;
+        cursor: pointer;
+        padding: 4px 8px;
+        border-radius: 4px;
+        transition: all 0.2s;
+        font-size: 18px;
+    }
+
+    .preview-controls button:hover {
+        background: rgba(255,255,255,0.15);
+    }
+
+    .preview-controls .time-display {
+        color: var(--text-muted);
+        font-size: 13px;
+        font-variant-numeric: tabular-nums;
+        min-width: 100px;
+        text-align: center;
+        font-family: monospace;
+    }
+
+    .preview-controls input[type="range"] {
+        width: 120px;
+        accent-color: var(--primary);
+        cursor: pointer;
+    }
+
+    /* ====== شريط الأدوات ====== */
+    .toolbar {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 8px 16px;
+        padding: 10px 16px;
+        background: var(--bg-panel);
+        border-bottom: 1px solid var(--border-color);
+        flex-shrink: 0;
+    }
+
+    .toolbar-group {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 0 8px;
+        border-right: 1px solid var(--border-color);
+    }
+
+    .toolbar-group:last-child {
+        border-right: none;
+    }
+
+    .tool-btn {
+        background: transparent;
+        border: 1px solid transparent;
+        color: var(--text-muted);
+        padding: 4px 10px;
+        border-radius: 6px;
+        font-size: 12px;
+        cursor: pointer;
+        transition: all 0.2s;
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        height: 30px;
+    }
+
+    .tool-btn:hover {
+        background: rgba(255,255,255,0.05);
+        border-color: var(--border-color);
+        color: white;
+    }
+
+    .tool-btn.active {
+        background: var(--primary);
+        color: white;
+        border-color: var(--primary);
+    }
+
+    .tool-btn svg {
+        width: 16px;
+        height: 16px;
+    }
+
+    /* ====== منطقة الطبقات (Layers) ====== */
+    .layers-panel {
+        display: flex;
+        flex-direction: column;
+        background: var(--bg-panel);
+        border-bottom: 1px solid var(--border-color);
+        flex-shrink: 0;
+        max-height: 160px;
+        overflow-y: auto;
+    }
+
+    .layers-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 4px 12px;
+        font-size: 11px;
+        color: var(--text-muted);
+        border-bottom: 1px solid var(--border-color);
+        background: rgba(0,0,0,0.2);
+        flex-shrink: 0;
+    }
+
+    .layer-item {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 3px 12px;
+        font-size: 12px;
+        color: var(--text-light);
+        cursor: pointer;
+        border-bottom: 1px solid rgba(255,255,255,0.03);
+        transition: all 0.15s;
+        min-height: var(--layer-height);
+    }
+
+    .layer-item:hover {
+        background: rgba(255,255,255,0.05);
+    }
+
+    .layer-item.active {
+        background: rgba(37,99,235,0.15);
+        border-left: 3px solid var(--primary);
+    }
+
+    .layer-item .layer-vis {
+        cursor: pointer;
+        opacity: 0.6;
+        transition: opacity 0.2s;
+        font-size: 14px;
+    }
+
+    .layer-item .layer-vis:hover { opacity: 1; }
+    .layer-item .layer-vis.hidden { opacity: 0.2; }
+
+    .layer-item .layer-label {
+        flex: 1;
+        font-size: 12px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .layer-item .layer-type {
+        font-size: 10px;
+        padding: 1px 8px;
+        border-radius: 10px;
+        background: rgba(255,255,255,0.08);
+        color: var(--text-muted);
+    }
+
+    .layer-item .layer-actions {
+        display: flex;
+        gap: 4px;
+    }
+
+    .layer-item .layer-actions button {
+        background: none;
+        border: none;
+        color: var(--text-muted);
+        cursor: pointer;
+        padding: 2px 4px;
+        border-radius: 3px;
+        font-size: 12px;
+        transition: color 0.2s;
+    }
+
+    .layer-item .layer-actions button:hover { color: #ef4444; }
+
+    /* ====== منطقة التايم لاين ====== */
+    .timeline-area {
+        flex: 1;
+        overflow: hidden;
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        min-height: 200px;
+    }
+
+    .timeline-scroll {
+        flex: 1;
+        overflow: auto;
+        position: relative;
+    }
+
+    #timeline-inner {
+        position: relative;
+        min-width: max-content;
+        --cell-w: var(--cell-base);
+        padding-bottom: 8px;
+    }
+
+    /* ====== المسطرة ====== */
+    .ruler {
+        height: var(--ruler-height);
+        background: var(--bg-dark);
+        border-bottom: 1px solid var(--border-color);
+        display: flex;
+        position: sticky;
+        top: 0;
+        z-index: 5;
+        overflow: hidden;
+    }
+
+    .ruler .track-label {
+        width: 60px;
+        flex-shrink: 0;
+        background: var(--bg-dark);
+        border-left: 1px solid var(--border-color);
+        font-size: 10px;
+        color: var(--text-muted);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .ruler-marks {
+        display: flex;
+        flex: 1;
+        position: relative;
+        background: repeating-linear-gradient(
+            90deg,
+            transparent,
+            transparent calc(var(--cell-w) - 1px),
+            var(--border-color) calc(var(--cell-w) - 1px),
+            var(--border-color) var(--cell-w)
+        );
+    }
+
+    .ruler-mark {
+        flex-shrink: 0;
+        border-left: 1px solid var(--border-color);
+        font-size: 9px;
+        color: #475569;
+        padding: 2px 0 0 2px;
+        font-family: monospace;
+        position: relative;
+    }
+
+    .ruler-mark.major {
+        border-left-color: #64748b;
+    }
+
+    .ruler-mark .label {
+        position: absolute;
+        top: 2px;
+        left: 4px;
+        font-size: 9px;
+        color: #475569;
+    }
+
+    /* ====== مسارات التايم لاين ====== */
+    .track-row {
+        display: flex;
+        min-height: var(--track-height);
+        border-bottom: 1px solid var(--border-color);
+        position: relative;
+    }
+
+    .track-row:last-child {
+        border-bottom: none;
+    }
+
+    .track-label {
+        width: 60px;
+        flex-shrink: 0;
+        background: var(--bg-dark);
+        border-left: 1px solid var(--border-color);
+        padding: 4px 6px;
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        font-size: 10px;
+        color: var(--text-muted);
+        justify-content: center;
+        flex-direction: column;
+        line-height: 1.2;
+        text-align: center;
+    }
+
+    .track-label .track-icon {
+        font-size: 14px;
+    }
+
+    .track-body {
+        flex: 1;
+        position: relative;
+        overflow: hidden;
+        background: 
+            repeating-linear-gradient(
+                90deg,
+                transparent,
+                transparent calc(var(--cell-w) - 1px),
+                rgba(51,65,85,0.3) calc(var(--cell-w) - 1px),
+                rgba(51,65,85,0.3) var(--cell-w)
+            );
+        min-height: var(--track-height);
+    }
+
+    .track-body.droppable {
+        background: 
+            repeating-linear-gradient(
+                90deg,
+                transparent,
+                transparent calc(var(--cell-w) - 1px),
+                rgba(51,65,85,0.3) calc(var(--cell-w) - 1px),
+                rgba(51,65,85,0.3) var(--cell-w)
+            ),
+            radial-gradient(circle at center, rgba(37,99,235,0.05) 0%, transparent 70%);
+    }
+
+    /* ====== العناصر على التايم لاين ====== */
+    .clip-block {
+        position: absolute;
+        top: 4px;
+        height: calc(100% - 8px);
+        border-radius: 4px;
+        display: flex;
+        align-items: center;
+        padding: 0 8px;
+        font-size: 11px;
+        font-weight: 500;
+        cursor: grab;
+        user-select: none;
+        white-space: nowrap;
+        overflow: hidden;
+        transition: all 0.15s;
+        border: 1px solid transparent;
+        min-width: 20px;
+        z-index: 2;
+        gap: 4px;
+    }
+
+    .clip-block:hover {
+        filter: brightness(1.1);
+        z-index: 3;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+    }
+
+    .clip-block.dragging {
+        opacity: 0.6;
+        z-index: 10;
+        cursor: grabbing;
+    }
+
+    .clip-block.selected {
+        outline: 2px solid white;
+        outline-offset: 1px;
+        z-index: 4;
+    }
+
+    .clip-block .clip-thumb {
+        width: 20px;
+        height: 20px;
+        border-radius: 3px;
+        background: rgba(0,0,0,0.3);
+        flex-shrink: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 12px;
+    }
+
+    .clip-block .clip-label {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        font-size: 10px;
+    }
+
+    .clip-block .clip-duration {
+        font-size: 9px;
+        opacity: 0.7;
+        font-family: monospace;
+        margin-left: auto;
+        flex-shrink: 0;
+    }
+
+    /* ====== ألوان أنواع الكليبات ====== */
+    .clip-type-video {
+        background: rgba(37,99,235,0.25);
+        border-color: rgba(37,99,235,0.5);
+        color: #60a5fa;
+    }
+    .clip-type-audio {
+        background: rgba(5,150,105,0.25);
+        border-color: rgba(5,150,105,0.5);
+        color: #34d399;
+    }
+    .clip-type-image {
+        background: rgba(245,158,11,0.25);
+        border-color: rgba(245,158,11,0.5);
+        color: #fbbf24;
+    }
+    .clip-type-text {
+        background: rgba(217,119,6,0.25);
+        border-color: rgba(217,119,6,0.5);
+        color: #f59e0b;
+    }
+    .clip-type-music {
+        background: rgba(124,58,237,0.25);
+        border-color: rgba(124,58,237,0.5);
+        color: #a78bfa;
+    }
+    .clip-type-subtitle {
+        background: rgba(71,85,105,0.25);
+        border-color: rgba(71,85,105,0.5);
+        color: #94a3b8;
+    }
+    .clip-type-effect {
+        background: rgba(236,72,153,0.25);
+        border-color: rgba(236,72,153,0.5);
+        color: #f472b6;
+    }
+
+    /* ====== مؤشر التشغيل ====== */
+    .playhead {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        width: 2px;
+        background: #ef4444;
+        z-index: 10;
+        pointer-events: none;
+        transition: left 0.05s linear;
+    }
+
+    .playhead::before {
+        content: '';
+        position: absolute;
+        top: -6px;
+        left: -5px;
+        border-left: 6px solid transparent;
+        border-right: 6px solid transparent;
+        border-top: 8px solid #ef4444;
+    }
+
+    /* ====== منطقة الإفلات للاستيراد ====== */
+    .drop-zone {
+        border: 2px dashed var(--border-color);
+        border-radius: 8px;
+        padding: 20px;
+        text-align: center;
+        color: var(--text-muted);
+        transition: all 0.3s;
+        margin: 8px;
+    }
+
+    .drop-zone.dragover {
+        border-color: var(--primary);
+        background: rgba(37,99,235,0.05);
+    }
+
+    .drop-zone input[type="file"] {
+        display: none;
+    }
+
+    /* ====== شريط الحالة ====== */
+    .status-bar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 4px 16px;
+        background: var(--bg-dark);
+        border-top: 1px solid var(--border-color);
+        font-size: 11px;
+        color: var(--text-muted);
+        flex-shrink: 0;
+        min-height: 28px;
+    }
+
+    .status-bar .status-info {
+        display: flex;
+        gap: 16px;
+        align-items: center;
+    }
+
+    /* ====== سلة المحذوفات ====== */
+    .trash-zone {
+        position: fixed;
+        bottom: 80px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: rgba(239,68,68,0.15);
+        backdrop-filter: blur(8px);
+        border: 2px dashed rgba(239,68,68,0.3);
+        border-radius: 12px;
+        padding: 12px 24px;
+        color: #ef4444;
+        font-size: 14px;
+        display: none;
+        z-index: 100;
+        transition: all 0.3s;
+    }
+
+    .trash-zone.active {
+        display: block;
+        animation: pulse-trash 1s infinite;
+    }
+
+    @keyframes pulse-trash {
+        0%, 100% { transform: translateX(-50%) scale(1); }
+        50% { transform: translateX(-50%) scale(1.05); }
+    }
+
+    /* ====== استجابة ====== */
+    @media (max-width: 768px) {
+        .editor-container { height: calc(100vh - 140px); }
+        .preview-area { min-height: 160px; }
+        .toolbar { padding: 6px 10px; gap: 4px; }
+        .toolbar-group { padding: 0 4px; }
+        .tool-btn { font-size: 11px; padding: 2px 6px; }
+        .preview-controls { padding: 4px 10px; gap: 6px; }
+        .preview-controls input[type="range"] { width: 80px; }
+        .layers-panel { max-height: 100px; }
+        .track-label { width: 40px; font-size: 8px; }
+        .clip-block { font-size: 9px; padding: 0 4px; }
+    }
 </style>
 {% endblock %}
 
@@ -25,305 +608,1023 @@
     <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/></svg>
     <span class="hidden xs:inline">المشروع</span>
 </a>
-{% if project.status.value in ['draft','rendered','failed'] %}
 <button onclick="startRender('{{ project.id }}')" class="btn-primary btn-sm">
     <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/></svg>
     <span class="hidden xs:inline">رندر</span>
 </button>
-{% endif %}
+<button onclick="exportProject()" class="btn-secondary btn-sm">
+    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+    تصدير
+</button>
 {% endblock %}
 
 {% block content %}
-<!-- رأس المشروع -->
-<div class="flex flex-wrap items-center gap-2 sm:gap-3 mb-4">
-    <span class="badge status-{{ project.status.value }}">
-        {% if project.status.value == 'draft' %}📝 مسودة
-        {% elif project.status.value == 'in_production' %}⚙️ قيد الإنتاج
-        {% elif project.status.value == 'rendered' %}✅ تم الرندر
-        {% elif project.status.value == 'published' %}🚀 منشور
-        {% elif project.status.value == 'failed' %}❌ فشل
-        {% endif %}
-    </span>
-    {% if project.tags %}
-    {% for tag in project.tags[:3] %}
-    <span class="text-xs bg-slate-700 text-slate-300 px-2 py-0.5 rounded-full">{{ tag }}</span>
-    {% endfor %}
-    {% endif %}
-    {% if project.duration %}
-    <span class="text-xs text-slate-500">⏱️ {{ project.duration|format_duration }}</span>
-    {% endif %}
-</div>
+<div class="editor-container">
+    <!-- ====== منطقة المعاينة ====== -->
+    <div class="preview-area" id="previewArea">
+        <div class="preview-overlay">
+            <button class="tool-btn" onclick="toggleSafeAreas()" title="مناطق الأمان">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="3" width="18" height="18" rx="2" stroke-width="2"/><rect x="6" y="6" width="12" height="12" rx="1" stroke-width="1.5" stroke-dasharray="4 4"/></svg>
+            </button>
+            <button class="tool-btn" onclick="toggleGrid()" title="شبكة">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 3h18v18H3z" stroke-width="2"/><path d="M3 9h18M3 15h18M9 3v18M15 3v18" stroke-width="1.5"/></svg>
+            </button>
+        </div>
 
-<!-- شريط أدوات التايم لاين -->
-<div class="card mb-3 flex flex-wrap items-center gap-2 sm:gap-3 py-3">
-    <div class="flex items-center gap-2">
-        <label class="text-slate-400 text-xs">تكبير:</label>
-        <input type="range" id="zoom-slider" min="40" max="200" value="80" class="w-20 sm:w-28 accent-blue-500">
-        <span id="zoom-val" class="text-slate-400 text-xs w-8">80</span>
-    </div>
-    <div class="h-4 w-px bg-slate-600 hidden sm:block"></div>
-    <div class="flex items-center gap-1 text-xs text-slate-500">
-        <span class="w-3 h-3 rounded bg-blue-500 inline-block"></span> فيديو
-        <span class="w-3 h-3 rounded bg-emerald-600 inline-block mr-1.5"></span> صوت
-        <span class="w-3 h-3 rounded bg-amber-600 inline-block mr-1.5"></span> نص
-        <span class="w-3 h-3 rounded bg-purple-600 inline-block mr-1.5"></span> موسيقى
-        <span class="w-3 h-3 rounded bg-slate-500 inline-block mr-1.5"></span> ترجمة
-    </div>
-    {% if scenes %}
-    <span class="text-xs text-slate-500 mr-auto">{{ scenes|length }} مشهد</span>
-    {% endif %}
-</div>
+        <!-- كانفاس للمعاينة -->
+        <canvas id="previewCanvas" width="1280" height="720"></canvas>
 
-<!-- عارض التايم لاين -->
-{% if scenes %}
-<div class="card p-0 overflow-hidden">
-    <div class="timeline-scroll" id="timeline-container">
-        <div id="timeline-inner" style="--cell-w:80px; min-width: max-content;">
-            <!-- المسطرة -->
-            <div class="ruler" id="ruler">
-                <div class="track-label"></div>
-                <div class="flex flex-1" id="ruler-marks"></div>
-            </div>
-
-            <!-- مسار الفيديو -->
-            <div class="track-row">
-                <div class="track-label">
-                    <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.069A1 1 0 0121 8.87v6.26a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
-                    فيديو
-                </div>
-                <div class="track-body" id="track-video"></div>
-            </div>
-
-            <!-- مسار الصوت -->
-            <div class="track-row">
-                <div class="track-label">
-                    <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"/></svg>
-                    صوت
-                </div>
-                <div class="track-body" id="track-audio"></div>
-            </div>
-
-            <!-- مسار النص -->
-            <div class="track-row">
-                <div class="track-label">
-                    <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h8m-8 6h16"/></svg>
-                    نص
-                </div>
-                <div class="track-body" id="track-text"></div>
-            </div>
-
-            <!-- مسار الموسيقى -->
-            <div class="track-row">
-                <div class="track-label">
-                    <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2z"/></svg>
-                    موسيقى
-                </div>
-                <div class="track-body" id="track-music"></div>
-            </div>
-
-            <!-- مسار الترجمة -->
-            <div class="track-row">
-                <div class="track-label">
-                    <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z"/></svg>
-                    ترجمة
-                </div>
-                <div class="track-body" id="track-subtitle"></div>
-            </div>
+        <!-- عناصر تحكم المعاينة -->
+        <div class="preview-controls">
+            <button onclick="seekTo(0)" title="البداية">⏮</button>
+            <button onclick="togglePlay()" id="playBtn">▶</button>
+            <button onclick="seekTo(totalDuration)" title="النهاية">⏭</button>
+            <span class="time-display" id="currentTimeDisplay">00:00:00</span>
+            <input type="range" id="seekSlider" min="0" max="100" value="0">
+            <span class="time-display" id="totalTimeDisplay">00:00:00</span>
+            <button onclick="toggleLoop()" id="loopBtn" title="تكرار">🔁</button>
         </div>
     </div>
 
-    <!-- معلومات المؤشر -->
-    <div class="p-3 border-t border-slate-700 flex items-center gap-4 text-xs text-slate-400">
-        <span id="playhead-time">00:00:00</span>
-        <span>|</span>
-        <span id="total-duration"></span>
-        {% if project.video_url %}
-        <span>|</span>
-        <button onclick="previewVideo()" class="text-blue-400 hover:text-blue-300 text-xs flex items-center gap-1">
-            <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/></svg>
-            معاينة الفيديو
-        </button>
-        {% endif %}
-    </div>
-</div>
+    <!-- ====== شريط الأدوات ====== -->
+    <div class="toolbar">
+        <div class="toolbar-group">
+            <button class="tool-btn active" onclick="selectTool('select')" id="toolSelect" title="تحديد (V)">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 3l7.07 16.97 2.51-7.39 7.39-2.51L3 3z" stroke-width="2"/><path d="M13 13l6 6" stroke-width="2"/></svg>
+            </button>
+            <button class="tool-btn" onclick="selectTool('cut')" id="toolCut" title="قص (C)">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M7 6a1 1 0 100-2 1 1 0 000 2zM7 20a1 1 0 100-2 1 1 0 000 2zM17 6a1 1 0 100-2 1 1 0 000 2z" stroke-width="2"/><path d="M7 6l10 14M17 6L7 20" stroke-width="2"/></svg>
+            </button>
+            <button class="tool-btn" onclick="selectTool('trim')" id="toolTrim" title="قص الأطراف (T)">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 4l6 6M20 20l-6-6M4 20l6-6M20 4l-6 6" stroke-width="2"/><rect x="8" y="8" width="8" height="8" stroke-width="2"/></svg>
+            </button>
+        </div>
 
-<!-- قائمة المشاهد -->
-<div class="mt-4 sm:mt-6">
-    <h2 class="text-white font-semibold text-sm mb-3 flex items-center gap-2">
-        <svg class="w-4 h-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 10h16M4 14h16M4 18h16"/></svg>
-        قائمة المشاهد
-    </h2>
-    <div class="space-y-2">
-        {% for scene in scenes %}
-        <div class="card-sm flex items-start gap-3 hover:border-slate-500 transition-colors cursor-pointer" onclick="seekTo({{ scene.start_time }})">
-            <div class="w-8 h-8 bg-blue-600/30 rounded-lg flex items-center justify-center flex-shrink-0 text-blue-300 text-xs font-bold">{{ loop.index }}</div>
-            <div class="flex-1 min-w-0">
-                <div class="text-white text-sm font-medium truncate">{{ scene.title or 'مشهد ' ~ loop.index }}</div>
-                <div class="text-xs text-slate-400 mt-0.5">
-                    {{ "%.1f"|format(scene.start_time) }}s — {{ "%.1f"|format(scene.end_time) }}s
-                    ({{ "%.1f"|format(scene.duration) }}s)
+        <div class="toolbar-group">
+            <button class="tool-btn" onclick="addClip('video')" title="إضافة فيديو">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M15 10l4.553-2.069A1 1 0 0121 8.87v6.26a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" stroke-width="2"/></svg>
+            </button>
+            <button class="tool-btn" onclick="addClip('audio')" title="إضافة صوت">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" stroke-width="2"/></svg>
+            </button>
+            <button class="tool-btn" onclick="addClip('image')" title="إضافة صورة">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="3" width="18" height="18" rx="2" stroke-width="2"/><circle cx="8.5" cy="8.5" r="1.5" stroke-width="2"/><path d="M21 15l-5-5L5 21" stroke-width="2"/></svg>
+            </button>
+            <button class="tool-btn" onclick="addClip('text')" title="إضافة نص">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 7h16M4 12h8m-8 6h16" stroke-width="2"/></svg>
+            </button>
+            <button class="tool-btn" onclick="addClip('music')" title="إضافة موسيقى">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2z" stroke-width="2"/></svg>
+            </button>
+        </div>
+
+        <div class="toolbar-group">
+            <button class="tool-btn" onclick="splitClip()" title="تقسيم (S)">✂️</button>
+            <button class="tool-btn" onclick="duplicateClip()" title="نسخ (D)">📋</button>
+            <button class="tool-btn" onclick="deleteSelected()" title="حذف (Delete)">🗑️</button>
+        </div>
+
+        <div class="toolbar-group">
+            <label class="text-slate-400 text-xs">تكبير:</label>
+            <input type="range" id="zoom-slider" min="30" max="200" value="80" class="w-20 sm:w-28 accent-blue-500">
+            <span id="zoom-val" class="text-slate-400 text-xs w-8">80</span>
+        </div>
+    </div>
+
+    <!-- ====== لوحة الطبقات ====== -->
+    <div class="layers-panel" id="layersPanel">
+        <div class="layers-header">
+            <span>🧩 الطبقات</span>
+            <div class="flex items-center gap-2">
+                <button class="tool-btn" onclick="addLayer()" style="font-size:12px;padding:2px 8px;">+ إضافة طبقة</button>
+                <button class="tool-btn" onclick="moveLayer('up')" style="font-size:12px;padding:2px 8px;">↑</button>
+                <button class="tool-btn" onclick="moveLayer('down')" style="font-size:12px;padding:2px 8px;">↓</button>
+            </div>
+        </div>
+        <div id="layersList">
+            <!-- يتم توليد الطبقات بواسطة JavaScript -->
+        </div>
+    </div>
+
+    <!-- ====== منطقة التايم لاين ====== -->
+    <div class="timeline-area">
+        <div class="timeline-scroll" id="timelineContainer">
+            <div id="timeline-inner" style="--cell-w:80px; min-width: max-content;">
+
+                <!-- المسطرة -->
+                <div class="ruler" id="ruler">
+                    <div class="track-label">⏱️</div>
+                    <div class="ruler-marks" id="rulerMarks"></div>
                 </div>
-                {% if scene.content %}
-                <div class="text-xs text-slate-500 mt-1 truncate">{{ scene.content | truncate(80) }}</div>
-                {% endif %}
+
+                <!-- مسارات التايم لاين -->
+                <div id="tracksContainer">
+                    <!-- يتم توليد المسارات بواسطة JavaScript -->
+                </div>
+
+                <!-- مؤشر التشغيل -->
+                <div class="playhead" id="playhead" style="left:0;"></div>
+
             </div>
         </div>
-        {% endfor %}
+
+        <!-- شريط الحالة -->
+        <div class="status-bar">
+            <div class="status-info">
+                <span id="statusClips">0 مقطع</span>
+                <span id="statusDuration">المدة: 00:00</span>
+                <span id="statusFps">25 إطار/ث</span>
+            </div>
+            <div>
+                <span id="statusZoom">تكبير: 80%</span>
+            </div>
+        </div>
     </div>
 </div>
 
-{% else %}
-<div class="card text-center py-12 sm:py-16 text-slate-500">
-    <svg class="w-14 h-14 mx-auto mb-4 opacity-20" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 10h16M4 14h16M4 18h16"/></svg>
-    <p class="mb-1">لا يوجد تايم لاين بعد</p>
-    <p class="text-xs mb-4">قم بتشغيل الرندر لتوليد التايم لاين تلقائياً من النص</p>
-    {% if project.status.value in ['draft','failed'] %}
-    <button onclick="startRender('{{ project.id }}')" class="btn-primary btn-sm">▶ بدء الرندر</button>
-    {% endif %}
-</div>
-{% endif %}
+<!-- ====== سلة المحذوفات ====== -->
+<div class="trash-zone" id="trashZone">🗑️ اسقط هنا للحذف</div>
 
-<!-- مودال معاينة الفيديو -->
-<div id="preview-modal" class="hidden fixed inset-0 bg-black/90 flex items-center justify-center z-50 p-4">
-    <div class="relative w-full max-w-4xl">
-        <button onclick="closePreview()" class="absolute -top-10 right-0 text-slate-400 hover:text-white">
-            <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-        </button>
-        <div class="bg-black rounded-lg overflow-hidden">
-            {% if project.video_url %}
-            <video id="preview-video" class="w-full" controls autoplay>
-                <source src="{{ project.video_url }}" type="video/mp4">
-                متصفحك لا يدعم تشغيل الفيديو
-            </video>
-            {% else %}
-            <div class="text-center py-20 text-slate-500">
-                <p>لا يوجد فيديو للمعاينة</p>
-            </div>
-            {% endif %}
+<!-- ====== مودال استيراد ====== -->
+<div id="importModal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+    <div class="bg-slate-800 rounded-xl p-6 max-w-md w-full border border-slate-700">
+        <h3 class="text-white text-lg font-semibold mb-4">📥 استيراد وسائط</h3>
+        <div class="drop-zone" id="dropZone">
+            <p class="text-slate-400">اسحب الملفات هنا أو انقر للاختيار</p>
+            <p class="text-xs text-slate-500 mt-2">يدعم: MP4, MOV, MP3, WAV, PNG, JPG, GIF</p>
+            <input type="file" id="fileInput" multiple accept="video/*,audio/*,image/*">
+        </div>
+        <div class="flex justify-end mt-4 gap-2">
+            <button onclick="closeImportModal()" class="btn-secondary btn-sm">إلغاء</button>
+            <button onclick="importFiles()" class="btn-primary btn-sm">استيراد</button>
         </div>
     </div>
 </div>
+
 {% endblock %}
 
 {% block scripts %}
 <script>
+// ============================================================
+//  DATA
+// ============================================================
 const scenes = {{ scenes_json | safe }};
+let clips = [];
+let layers = [];
+let selectedClipId = null;
+let selectedLayerIndex = 0;
 let cellWidth = 80;
+let totalDuration = 30;
+let currentTime = 0;
+let isPlaying = false;
+let playInterval = null;
+let selectedTool = 'select';
+let clipIdCounter = 0;
 
-function buildTimeline() {
-    if (!scenes || scenes.length === 0) return;
-    const totalDuration = Math.max(...scenes.map(s => s.end_time), 10);
+const COLORS = {
+    video: '#2563eb',
+    audio: '#059669',
+    image: '#f59e0b',
+    text: '#d97706',
+    music: '#7c3aed',
+    subtitle: '#475569',
+    effect: '#ec4899'
+};
+
+const TYPE_ICONS = {
+    video: '🎬',
+    audio: '🎤',
+    image: '🖼️',
+    text: '📝',
+    music: '🎵',
+    subtitle: '📄',
+    effect: '✨'
+};
+
+// ============================================================
+//  INITIALIZE
+// ============================================================
+document.addEventListener('DOMContentLoaded', function() {
+    // تحويل المشاهد إلى كليبات
+    if (scenes && scenes.length > 0) {
+        scenes.forEach((scene, i) => {
+            const clip = {
+                id: clipIdCounter++,
+                type: 'video',
+                layer: 0,
+                start: scene.start_time || i * 2,
+                duration: scene.duration || 2,
+                title: scene.title || `مشهد ${i+1}`,
+                content: scene.content || '',
+                color: COLORS.video,
+                icon: '🎬',
+                metadata: { scene_id: scene.id }
+            };
+            clips.push(clip);
+        });
+        totalDuration = Math.max(...clips.map(c => c.start + c.duration), 10);
+    }
+
+    // طبقة افتراضية
+    if (layers.length === 0) {
+        layers.push({ name: 'طبقة 1', visible: true, locked: false });
+    }
+
+    renderLayers();
+    renderTimeline();
+    updateStatus();
+
+    // إعداد السحب والإفلات
+    setupDragDrop();
+
+    // إعداد مفتاح الاختصار
+    setupKeyboardShortcuts();
+
+    // تحميل بيانات المشروع المحفوظة
+    loadProjectData();
+});
+
+// ============================================================
+//  LAYERS
+// ============================================================
+function renderLayers() {
+    const container = document.getElementById('layersList');
+    container.innerHTML = '';
+    layers.forEach((layer, index) => {
+        const div = document.createElement('div');
+        div.className = `layer-item${index === selectedLayerIndex ? ' active' : ''}`;
+        div.innerHTML = `
+            <span class="layer-vis ${layer.visible ? '' : 'hidden'}" onclick="toggleLayerVisibility(${index})">
+                ${layer.visible ? '👁️' : '🚫'}
+            </span>
+            <span class="layer-label">${layer.name}</span>
+            <span class="layer-type">${clips.filter(c => c.layer === index).length} مقطع</span>
+            <div class="layer-actions">
+                <button onclick="renameLayer(${index})" title="تعديل الاسم">✏️</button>
+                <button onclick="deleteLayer(${index})" title="حذف الطبقة">🗑️</button>
+            </div>
+        `;
+        div.onclick = (e) => {
+            if (!e.target.closest('.layer-actions') && !e.target.closest('.layer-vis')) {
+                selectLayer(index);
+            }
+        };
+        container.appendChild(div);
+    });
+}
+
+function addLayer() {
+    const name = prompt('اسم الطبقة الجديدة:', `طبقة ${layers.length + 1}`);
+    if (name) {
+        layers.push({ name, visible: true, locked: false });
+        renderLayers();
+        selectLayer(layers.length - 1);
+    }
+}
+
+function deleteLayer(index) {
+    if (layers.length <= 1) {
+        showToast('لا يمكن حذف الطبقة الأخيرة', 'error');
+        return;
+    }
+    if (confirm(`هل تريد حذف الطبقة "${layers[index].name}" وجميع مقاطعها؟`)) {
+        // حذف الكليبات في هذه الطبقة
+        clips = clips.filter(c => c.layer !== index);
+        // إعادة ترقيم الطبقات
+        clips.forEach(c => {
+            if (c.layer > index) c.layer--;
+        });
+        layers.splice(index, 1);
+        if (selectedLayerIndex >= layers.length) selectedLayerIndex = layers.length - 1;
+        renderLayers();
+        renderTimeline();
+        updateStatus();
+        saveProjectData();
+    }
+}
+
+function selectLayer(index) {
+    selectedLayerIndex = index;
+    renderLayers();
+}
+
+function toggleLayerVisibility(index) {
+    layers[index].visible = !layers[index].visible;
+    renderLayers();
+    renderTimeline();
+}
+
+function renameLayer(index) {
+    const name = prompt('اسم الطبقة:', layers[index].name);
+    if (name) {
+        layers[index].name = name;
+        renderLayers();
+    }
+}
+
+function moveLayer(direction) {
+    const index = selectedLayerIndex;
+    const newIndex = direction === 'up' ? index - 1 : index + 1;
+    if (newIndex < 0 || newIndex >= layers.length) return;
+    // تبديل الطبقات
+    [layers[index], layers[newIndex]] = [layers[newIndex], layers[index]];
+    // تحديث طبقات الكليبات
+    clips.forEach(c => {
+        if (c.layer === index) c.layer = newIndex;
+        else if (c.layer === newIndex) c.layer = index;
+    });
+    selectedLayerIndex = newIndex;
+    renderLayers();
+    renderTimeline();
+    saveProjectData();
+}
+
+// ============================================================
+//  TIMELINE
+// ============================================================
+function renderTimeline() {
+    const container = document.getElementById('tracksContainer');
     const pxPerSec = cellWidth / 2;
     const totalWidth = totalDuration * pxPerSec + 120;
 
     // تحديث المسطرة
-    const rulerEl = document.getElementById('ruler-marks');
-    rulerEl.innerHTML = '';
-    for (let t = 0; t <= totalDuration; t += 2) {
+    const rulerMarks = document.getElementById('rulerMarks');
+    rulerMarks.innerHTML = '';
+    const step = totalDuration > 60 ? 5 : 2;
+    for (let t = 0; t <= totalDuration; t += step) {
         const mark = document.createElement('div');
-        mark.className = 'ruler-mark';
-        mark.style.width = (pxPerSec * 2) + 'px';
+        mark.className = `ruler-mark${t % 10 === 0 ? ' major' : ''}`;
+        mark.style.width = (pxPerSec * step) + 'px';
         const m = Math.floor(t/60), s = Math.floor(t%60);
-        mark.textContent = `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
-        rulerEl.appendChild(mark);
+        mark.innerHTML = `<span class="label">${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}</span>`;
+        rulerMarks.appendChild(mark);
     }
 
-    const colors = { video:'#2563eb', audio:'#059669', text:'#d97706', music:'#7c3aed', subtitle:'#475569' };
-    const tracks = ['video','audio','text','music','subtitle'];
-    tracks.forEach(t => {
-        const el = document.getElementById(`track-${t}`);
-        if (el) {
-            el.style.width = totalWidth + 'px';
-            el.innerHTML = '';
-        }
-    });
+    // تحديث المسارات
+    container.innerHTML = '';
+    layers.forEach((layer, layerIdx) => {
+        if (!layer.visible) return;
+        
+        const row = document.createElement('div');
+        row.className = 'track-row';
+        row.dataset.layer = layerIdx;
+        
+        // التسمية
+        const label = document.createElement('div');
+        label.className = 'track-label';
+        label.innerHTML = `
+            <span class="track-icon">📺</span>
+            <span>${layer.name}</span>
+        `;
+        row.appendChild(label);
 
-    scenes.forEach((scene, i) => {
-        const left = scene.start_time * pxPerSec;
-        const width = Math.max(scene.duration * pxPerSec - 2, 30);
-        const label = scene.title || `مشهد ${i+1}`;
+        // الجسم
+        const body = document.createElement('div');
+        body.className = 'track-body';
+        body.style.width = totalWidth + 'px';
+        body.style.setProperty('--cell-w', cellWidth + 'px');
+        body.dataset.layer = layerIdx;
 
-        const makeBlock = (trackId, colorClass) => {
-            const el = document.getElementById(`track-${trackId}`);
-            if (!el) return;
+        // الكليبات في هذه الطبقة
+        const layerClips = clips.filter(c => c.layer === layerIdx);
+        layerClips.forEach(clip => {
+            const left = clip.start * pxPerSec;
+            const width = Math.max(clip.duration * pxPerSec - 2, 20);
+            
             const block = document.createElement('div');
-            block.className = `scene-block scene-block-${trackId}`;
+            block.className = `clip-block clip-type-${clip.type}${selectedClipId === clip.id ? ' selected' : ''}`;
             block.style.cssText = `left:${left}px;width:${width}px;`;
-            block.innerHTML = `<span>${label}</span>`;
-            block.title = `${label} (${scene.start_time.toFixed(1)}s – ${scene.end_time.toFixed(1)}s)`;
-            block.onclick = () => seekTo(scene.start_time);
-            el.appendChild(block);
+            block.dataset.clipId = clip.id;
+            
+            const durationStr = formatTime(clip.duration);
+            block.innerHTML = `
+                <span class="clip-thumb">${clip.icon || '🎬'}</span>
+                <span class="clip-label">${clip.title || 'مقطع'}</span>
+                <span class="clip-duration">${durationStr}</span>
+            `;
+            
+            // أحداث
+            block.onclick = (e) => {
+                e.stopPropagation();
+                selectClip(clip.id);
+            };
+            
+            // سحب وإفلات
+            block.draggable = true;
+            block.ondragstart = (e) => {
+                e.dataTransfer.setData('text/plain', JSON.stringify({
+                    type: 'clip',
+                    clipId: clip.id,
+                    layer: layerIdx,
+                    start: clip.start
+                }));
+                block.classList.add('dragging');
+                document.getElementById('trashZone').classList.add('active');
+            };
+            block.ondragend = () => {
+                block.classList.remove('dragging');
+                document.getElementById('trashZone').classList.remove('active');
+            };
+
+            body.appendChild(block);
+        });
+
+        // منطقة إفلات للطبقة
+        body.ondragover = (e) => e.preventDefault();
+        body.ondrop = (e) => {
+            e.preventDefault();
+            const data = JSON.parse(e.dataTransfer.getData('text/plain'));
+            if (data.type === 'clip') {
+                const rect = body.getBoundingClientRect();
+                const x = e.clientX - rect.left + body.scrollLeft;
+                const newStart = x / pxPerSec;
+                moveClip(data.clipId, layerIdx, Math.max(0, newStart));
+            }
         };
 
-        makeBlock('video', colors.video);
-        makeBlock('audio', colors.audio);
-        if (scene.content) makeBlock('text', colors.text);
+        row.appendChild(body);
+        container.appendChild(row);
     });
 
-    document.getElementById('total-duration').textContent = `المدة الكلية: ${totalDuration.toFixed(1)}s`;
+    // تحديث مؤشر التشغيل
+    updatePlayhead();
+
+    // تحديث شريط الحالة
+    updateStatus();
+}
+
+function updatePlayhead() {
+    const playhead = document.getElementById('playhead');
+    const pxPerSec = cellWidth / 2;
+    const pos = currentTime * pxPerSec + 60;
+    playhead.style.left = pos + 'px';
+    
+    document.getElementById('currentTimeDisplay').textContent = formatTime(currentTime);
+    document.getElementById('totalTimeDisplay').textContent = formatTime(totalDuration);
+    
+    const slider = document.getElementById('seekSlider');
+    if (totalDuration > 0) {
+        slider.value = (currentTime / totalDuration) * 100;
+    }
+}
+
+function updateStatus() {
+    document.getElementById('statusClips').textContent = `${clips.length} مقطع`;
+    document.getElementById('statusDuration').textContent = `المدة: ${formatTime(totalDuration)}`;
+}
+
+// ============================================================
+//  CLIP OPERATIONS
+// ============================================================
+function addClip(type) {
+    const duration = type === 'image' ? 3 : 2;
+    const clip = {
+        id: clipIdCounter++,
+        type: type,
+        layer: selectedLayerIndex,
+        start: currentTime,
+        duration: duration,
+        title: `${type} ${clips.filter(c => c.type === type).length + 1}`,
+        content: '',
+        color: COLORS[type] || '#666',
+        icon: TYPE_ICONS[type] || '📄',
+        metadata: {}
+    };
+    
+    if (type === 'text') {
+        const text = prompt('نص المقطع:');
+        if (text) clip.content = text;
+        else return;
+    }
+    
+    clips.push(clip);
+    totalDuration = Math.max(totalDuration, clip.start + clip.duration + 2);
+    renderTimeline();
+    selectClip(clip.id);
+    saveProjectData();
+    showToast(`تم إضافة ${TYPE_ICONS[type]} ${type}`, 'success');
+}
+
+function deleteClip(id) {
+    clips = clips.filter(c => c.id !== id);
+    if (selectedClipId === id) selectedClipId = null;
+    renderTimeline();
+    updateStatus();
+    saveProjectData();
+}
+
+function selectClip(id) {
+    selectedClipId = id;
+    renderTimeline();
+    // عرض معلومات المقطع في وحدة التحكم
+    const clip = clips.find(c => c.id === id);
+    if (clip) {
+        console.log('مقطع مختار:', clip);
+    }
+}
+
+function splitClip() {
+    if (selectedClipId === null) {
+        showToast('اختر مقطعاً أولاً', 'warning');
+        return;
+    }
+    const clip = clips.find(c => c.id === selectedClipId);
+    if (!clip) return;
+    
+    const splitTime = currentTime - clip.start;
+    if (splitTime <= 0.1 || splitTime >= clip.duration - 0.1) {
+        showToast('اختر نقطة داخل المقطع', 'warning');
+        return;
+    }
+    
+    const newClip = {
+        ...clip,
+        id: clipIdCounter++,
+        start: clip.start + splitTime,
+        duration: clip.duration - splitTime,
+        title: `${clip.title} (جزء 2)`
+    };
+    clip.duration = splitTime;
+    clip.title = `${clip.title} (جزء 1)`;
+    
+    clips.push(newClip);
+    renderTimeline();
+    saveProjectData();
+    showToast('تم تقسيم المقطع', 'success');
+}
+
+function duplicateClip() {
+    if (selectedClipId === null) {
+        showToast('اختر مقطعاً أولاً', 'warning');
+        return;
+    }
+    const clip = clips.find(c => c.id === selectedClipId);
+    if (!clip) return;
+    
+    const newClip = {
+        ...clip,
+        id: clipIdCounter++,
+        start: clip.start + clip.duration + 0.5,
+        title: `${clip.title} (نسخة)`
+    };
+    clips.push(newClip);
+    totalDuration = Math.max(totalDuration, newClip.start + newClip.duration + 2);
+    renderTimeline();
+    selectClip(newClip.id);
+    saveProjectData();
+    showToast('تم نسخ المقطع', 'success');
+}
+
+function deleteSelected() {
+    if (selectedClipId === null) {
+        showToast('اختر مقطعاً أولاً', 'warning');
+        return;
+    }
+    if (confirm('هل تريد حذف المقطع المختار؟')) {
+        deleteClip(selectedClipId);
+        showToast('تم حذف المقطع', 'success');
+    }
+}
+
+function moveClip(id, newLayer, newStart) {
+    const clip = clips.find(c => c.id === id);
+    if (!clip) return;
+    clip.layer = newLayer;
+    clip.start = Math.max(0, newStart);
+    // تحديث المدة الكلية
+    totalDuration = Math.max(totalDuration, clip.start + clip.duration + 2);
+    renderTimeline();
+    saveProjectData();
+}
+
+// ============================================================
+//  PLAYBACK
+// ============================================================
+function togglePlay() {
+    if (isPlaying) {
+        pausePlay();
+    } else {
+        startPlay();
+    }
+}
+
+function startPlay() {
+    if (currentTime >= totalDuration) {
+        currentTime = 0;
+    }
+    isPlaying = true;
+    document.getElementById('playBtn').textContent = '⏸';
+    playInterval = setInterval(() => {
+        currentTime += 0.04;
+        if (currentTime >= totalDuration) {
+            pausePlay();
+            if (document.getElementById('loopBtn').textContent === '🔁') {
+                currentTime = 0;
+                startPlay();
+            }
+            return;
+        }
+        updatePlayhead();
+        renderPreview();
+    }, 40);
+}
+
+function pausePlay() {
+    isPlaying = false;
+    document.getElementById('playBtn').textContent = '▶';
+    if (playInterval) {
+        clearInterval(playInterval);
+        playInterval = null;
+    }
+}
+
+function toggleLoop() {
+    const btn = document.getElementById('loopBtn');
+    btn.textContent = btn.textContent === '🔁' ? '🔂' : '🔁';
 }
 
 function seekTo(time) {
-    const m = Math.floor(time/60), s = Math.floor(time%60), ms = Math.floor((time%1)*100);
-    document.getElementById('playhead-time').textContent =
-        `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}:${String(ms).padStart(2,'0')}`;
+    currentTime = Math.max(0, Math.min(time, totalDuration));
+    pausePlay();
+    updatePlayhead();
+    renderPreview();
 }
 
-function previewVideo() {
-    const modal = document.getElementById('preview-modal');
-    modal.classList.remove('hidden');
-    const video = document.getElementById('preview-video');
-    if (video) {
-        video.currentTime = 0;
-        video.play();
-    }
-}
-
-function closePreview() {
-    const modal = document.getElementById('preview-modal');
-    modal.classList.add('hidden');
-    const video = document.getElementById('preview-video');
-    if (video) video.pause();
-}
-
-document.getElementById('zoom-slider').addEventListener('input', e => {
-    cellWidth = parseInt(e.target.value);
-    document.getElementById('zoom-val').textContent = cellWidth;
-    buildTimeline();
+// مؤشر الوقت
+document.getElementById('seekSlider').addEventListener('input', function() {
+    const time = (this.value / 100) * totalDuration;
+    seekTo(time);
 });
 
-buildTimeline();
+// ============================================================
+//  PREVIEW
+// ============================================================
+function renderPreview() {
+    const canvas = document.getElementById('previewCanvas');
+    const ctx = canvas.getContext('2d');
+    const w = canvas.width, h = canvas.height;
+    
+    // خلفية داكنة
+    ctx.fillStyle = '#0a0a15';
+    ctx.fillRect(0, 0, w, h);
+    
+    // عرض الكليبات المرئية في الوقت الحالي
+    const visibleClips = clips.filter(c => {
+        const layer = layers[c.layer];
+        return layer && layer.visible && 
+               currentTime >= c.start && 
+               currentTime < c.start + c.duration;
+    });
+    
+    // رسم حسب الطبقة (من الأسفل للأعلى)
+    const sortedClips = [...visibleClips].sort((a, b) => a.layer - b.layer);
+    
+    sortedClips.forEach(clip => {
+        const progress = (currentTime - clip.start) / clip.duration;
+        const x = (progress * w * 0.7) + w * 0.15;
+        const y = h * 0.3 + (clip.layer * 30);
+        
+        // مستطيل المقطع
+        ctx.fillStyle = clip.color + '40';
+        ctx.strokeStyle = clip.color;
+        ctx.lineWidth = 2;
+        const rectW = 80, rectH = 50;
+        ctx.fillRect(x - rectW/2, y - rectH/2, rectW, rectH);
+        ctx.strokeRect(x - rectW/2, y - rectH/2, rectW, rectH);
+        
+        // أيقونة
+        ctx.font = '24px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = 'white';
+        ctx.fillText(clip.icon || '📄', x, y - 5);
+        
+        // عنوان
+        ctx.font = '11px sans-serif';
+        ctx.fillStyle = '#f1f5f9';
+        ctx.fillText(clip.title || 'مقطع', x, y + 25);
+        
+        // نوع
+        ctx.font = '9px sans-serif';
+        ctx.fillStyle = '#94a3b8';
+        ctx.fillText(clip.type, x, y + 40);
+        
+        // نسبة التقدم
+        ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.arc(x + 35, y - 15, 8, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(x + 35, y - 15, 8, -Math.PI/2, -Math.PI/2 + Math.PI * 2 * progress);
+        ctx.strokeStyle = clip.color;
+        ctx.lineWidth = 2;
+        ctx.stroke();
+    });
+    
+    // معلومات الوقت
+    ctx.fillStyle = 'rgba(255,255,255,0.2)';
+    ctx.fillRect(10, h - 30, 120, 22);
+    ctx.fillStyle = 'white';
+    ctx.font = '12px monospace';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(formatTime(currentTime) + ' / ' + formatTime(totalDuration), 18, h - 19);
+}
 
-// إغلاق المودال بالضغط على ESC
-document.addEventListener('keydown', function(e) {
-    if (e.key === 'Escape') {
-        closePreview();
-    }
-});
+// ============================================================
+//  TOOLS
+// ============================================================
+function selectTool(tool) {
+    selectedTool = tool;
+    document.querySelectorAll('.tool-btn').forEach(b => b.classList.remove('active'));
+    const btn = document.getElementById('tool' + tool.charAt(0).toUpperCase() + tool.slice(1));
+    if (btn) btn.classList.add('active');
+}
 
-async function startRender(projectId) {
-    try {
-        const resp = await fetch('/api/v1/production/render', {
-            method: 'POST',
-            headers: {'Content-Type':'application/json'},
-            body: JSON.stringify({ project_id: projectId })
-        });
-        if (resp.ok) { 
-            showToast('بدأت عملية الرندر', 'success'); 
-            setTimeout(() => window.location.href = '/render-queue', 1000); 
-        } else { 
-            const err = await resp.json(); 
-            showToast(err.detail || 'فشل', 'error'); 
+function toggleSafeAreas() {
+    const canvas = document.getElementById('previewCanvas');
+    const ctx = canvas.getContext('2d');
+    // سيتم تطبيقها في renderPreview
+}
+
+function toggleGrid() {
+    // سيتم تطبيقها في renderPreview
+}
+
+// ============================================================
+//  DRAG & DROP
+// ============================================================
+function setupDragDrop() {
+    const dropZone = document.getElementById('dropZone');
+    const fileInput = document.getElementById('fileInput');
+    
+    dropZone.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        dropZone.classList.add('dragover');
+    });
+    
+    dropZone.addEventListener('dragleave', () => {
+        dropZone.classList.remove('dragover');
+    });
+    
+    dropZone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dropZone.classList.remove('dragover');
+        handleFiles(e.dataTransfer.files);
+    });
+    
+    dropZone.addEventListener('click', () => {
+        fileInput.click();
+    });
+    
+    fileInput.addEventListener('change', (e) => {
+        handleFiles(e.target.files);
+        fileInput.value = '';
+    });
+    
+    // سلة المحذوفات
+    document.getElementById('trashZone').addEventListener('dragover', (e) => {
+        e.preventDefault();
+    });
+    
+    document.getElementById('trashZone').addEventListener('drop', (e) => {
+        e.preventDefault();
+        const data = JSON.parse(e.dataTransfer.getData('text/plain'));
+        if (data.type === 'clip') {
+            deleteClip(data.clipId);
+            document.getElementById('trashZone').classList.remove('active');
+            showToast('تم حذف المقطع', 'success');
         }
-    } catch(e) { showToast('خطأ في الاتصال', 'error'); }
+    });
 }
 
-// فلتر لتنسيق المدة
-function formatDuration(seconds) {
-    if (!seconds || isNaN(seconds)) return '—';
-    const mins = Math.floor(seconds / 60);
-    const secs = Math.floor(seconds % 60);
-    return `${mins}:${String(secs).padStart(2, '0')}`;
+function handleFiles(files) {
+    Array.from(files).forEach(file => {
+        const type = file.type.split('/')[0];
+        if (['video', 'audio', 'image'].includes(type)) {
+            const clip = {
+                id: clipIdCounter++,
+                type: type,
+                layer: selectedLayerIndex,
+                start: currentTime,
+                duration: type === 'image' ? 3 : 2,
+                title: file.name.split('.')[0].slice(0, 20),
+                content: URL.createObjectURL(file),
+                color: COLORS[type] || '#666',
+                icon: TYPE_ICONS[type] || '📄',
+                metadata: { file: file.name, size: file.size }
+            };
+            clips.push(clip);
+            totalDuration = Math.max(totalDuration, clip.start + clip.duration + 2);
+            showToast(`تم استيراد ${file.name}`, 'success');
+        }
+    });
+    renderTimeline();
+    updateStatus();
+    saveProjectData();
+    closeImportModal();
 }
+
+function importFiles() {
+    document.getElementById('fileInput').click();
+}
+
+function closeImportModal() {
+    document.getElementById('importModal').classList.add('hidden');
+}
+
+// ============================================================
+//  KEYBOARD SHORTCUTS
+// ============================================================
+function setupKeyboardShortcuts() {
+    document.addEventListener('keydown', (e) => {
+        // منع إذا كان في حقل إدخال
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+        
+        switch(e.key) {
+            case ' ':
+                e.preventDefault();
+                togglePlay();
+                break;
+            case 'v':
+            case 'V':
+                selectTool('select');
+                break;
+            case 'c':
+            case 'C':
+                selectTool('cut');
+                break;
+            case 's':
+            case 'S':
+                splitClip();
+                break;
+            case 'd':
+            case 'D':
+                duplicateClip();
+                break;
+            case 'Delete':
+            case 'Backspace':
+                deleteSelected();
+                break;
+            case 'ArrowLeft':
+                seekTo(currentTime - 0.5);
+                break;
+            case 'ArrowRight':
+                seekTo(currentTime + 0.5);
+                break;
+            case 'ArrowUp':
+                if (selectedClipId !== null) {
+                    const clip = clips.find(c => c.id === selectedClipId);
+                    if (clip && clip.layer < layers.length - 1) {
+                        moveClip(clip.id, clip.layer + 1, clip.start);
+                    }
+                }
+                break;
+            case 'ArrowDown':
+                if (selectedClipId !== null) {
+                    const clip = clips.find(c => c.id === selectedClipId);
+                    if (clip && clip.layer > 0) {
+                        moveClip(clip.id, clip.layer - 1, clip.start);
+                    }
+                }
+                break;
+        }
+    });
+}
+
+// ============================================================
+//  ZOOM
+// ============================================================
+document.getElementById('zoom-slider').addEventListener('input', function() {
+    cellWidth = parseInt(this.value);
+    document.getElementById('zoom-val').textContent = cellWidth;
+    document.getElementById('statusZoom').textContent = `تكبير: ${cellWidth}%`;
+    renderTimeline();
+});
+
+// ============================================================
+//  EXPORT / SAVE
+// ============================================================
+function saveProjectData() {
+    try {
+        const data = {
+            clips: clips,
+            layers: layers,
+            totalDuration: totalDuration,
+            cellWidth: cellWidth
+        };
+        localStorage.setItem(`project_${projectId}`, JSON.stringify(data));
+    } catch(e) {}
+}
+
+function loadProjectData() {
+    try {
+        const saved = localStorage.getItem(`project_${projectId}`);
+        if (saved) {
+            const data = JSON.parse(saved);
+            // استعادة البيانات مع التحقق
+            if (data.clips) clips = data.clips;
+            if (data.layers) layers = data.layers;
+            if (data.totalDuration) totalDuration = data.totalDuration;
+            if (data.cellWidth) {
+                cellWidth = data.cellWidth;
+                document.getElementById('zoom-slider').value = cellWidth;
+                document.getElementById('zoom-val').textContent = cellWidth;
+            }
+            renderLayers();
+            renderTimeline();
+            updateStatus();
+        }
+    } catch(e) {}
+}
+
+function exportProject() {
+    const data = {
+        project: {{ project.id|tojson }},
+        clips: clips,
+        layers: layers,
+        totalDuration: totalDuration,
+        exportedAt: new Date().toISOString()
+    };
+    const blob = new Blob([JSON.stringify(data, null, 2)], {type: 'application/json'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `project_${projectId}_export.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast('تم تصدير المشروع', 'success');
+}
+
+function startRender(projectId) {
+    // تحضير بيانات الرندر
+    const renderData = {
+        project_id: projectId,
+        clips: clips.map(c => ({
+            type: c.type,
+            start: c.start,
+            duration: c.duration,
+            layer: c.layer,
+            content: c.content,
+            title: c.title
+        })),
+        layers: layers,
+        duration: totalDuration
+    };
+    
+    fetch('/api/v1/production/render', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(renderData)
+    })
+    .then(resp => {
+        if (resp.ok) {
+            showToast('بدأت عملية الرندر', 'success');
+            setTimeout(() => window.location.href = '/render-queue', 1000);
+        } else {
+            resp.json().then(err => showToast(err.detail || 'فشل الرندر', 'error'));
+        }
+    })
+    .catch(() => showToast('خطأ في الاتصال', 'error'));
+}
+
+// ============================================================
+//  UTILITY
+// ============================================================
+function formatTime(seconds) {
+    if (!seconds || isNaN(seconds)) return '00:00:00';
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const s = Math.floor(seconds % 60);
+    if (h > 0) return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+    return `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+}
+
+function showToast(msg, type = 'info') {
+    const toast = document.createElement('div');
+    toast.className = `fixed bottom-20 left-1/2 transform -translate-x-1/2 px-6 py-3 rounded-lg text-white text-sm z-50 transition-all duration-300`;
+    const colors = {
+        success: 'bg-emerald-600',
+        error: 'bg-red-600',
+        warning: 'bg-amber-600',
+        info: 'bg-blue-600'
+    };
+    toast.className += ' ' + (colors[type] || colors.info);
+    toast.textContent = msg;
+    document.body.appendChild(toast);
+    setTimeout(() => {
+        toast.style.opacity = '0';
+        setTimeout(() => toast.remove(), 300);
+    }, 3000);
+}
+
+// متغير مؤقت للمشروع
+const projectId = {{ project.id }};
+
+// بدء العرض
+renderPreview();
+setInterval(renderPreview, 100);
+
 </script>
 {% endblock %}
