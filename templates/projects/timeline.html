@@ -38,7 +38,7 @@
         display: flex;
         align-items: center;
         justify-content: center;
-        min-height: 280px;
+        min-height: 300px;
         background: radial-gradient(ellipse at center, #1a1a2e 0%, #0a0a15 100%);
         border-bottom: 2px solid var(--border-color);
         overflow: hidden;
@@ -57,7 +57,8 @@
         height: 100%;
     }
 
-    .preview-overlay {
+    /* ====== شريط أدوات المعاينة العلوي ====== */
+    .preview-toolbar {
         position: absolute;
         top: 12px;
         left: 12px;
@@ -67,27 +68,52 @@
         flex-wrap: wrap;
     }
 
-    /* ====== أدوات التحكم المتقدمة ====== */
-    .preview-controls {
-        position: absolute;
-        bottom: 16px;
-        left: 50%;
-        transform: translateX(-50%);
+    .preview-toolbar .tool-btn {
+        background: rgba(0,0,0,0.6);
+        backdrop-filter: blur(8px);
+        border: 1px solid rgba(255,255,255,0.1);
+        color: var(--text-muted);
+        padding: 6px 12px;
+        border-radius: 6px;
+        font-size: 12px;
+        cursor: pointer;
+        transition: all 0.2s;
         display: flex;
         align-items: center;
-        gap: 8px;
-        background: rgba(0,0,0,0.85);
-        backdrop-filter: blur(12px);
-        padding: 8px 16px;
-        border-radius: 30px;
-        border: 1px solid rgba(255,255,255,0.1);
-        z-index: 10;
-        flex-wrap: wrap;
-        justify-content: center;
-        min-width: 200px;
+        gap: 4px;
     }
 
-    .preview-controls button {
+    .preview-toolbar .tool-btn:hover {
+        background: rgba(255,255,255,0.1);
+        color: white;
+    }
+
+    /* ====== شريط التحكم السفلي ====== */
+    .controls-bar {
+        background: var(--bg-panel);
+        border-top: 1px solid var(--border-color);
+        padding: 8px 16px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        flex-wrap: wrap;
+        flex-shrink: 0;
+        min-height: 56px;
+    }
+
+    .controls-bar .control-group {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 0 8px;
+        border-right: 1px solid var(--border-color);
+    }
+
+    .controls-bar .control-group:last-child {
+        border-right: none;
+    }
+
+    .controls-bar button {
         background: none;
         border: none;
         color: white;
@@ -103,21 +129,20 @@
         height: 32px;
     }
 
-    .preview-controls button:hover {
-        background: rgba(255,255,255,0.15);
-        transform: scale(1.05);
+    .controls-bar button:hover {
+        background: rgba(255,255,255,0.1);
     }
 
-    .preview-controls button.active {
+    .controls-bar button.active {
         background: var(--primary);
         color: white;
     }
 
-    .preview-controls .time-display {
+    .controls-bar .time-display {
         color: var(--text-muted);
         font-size: 13px;
         font-variant-numeric: tabular-nums;
-        min-width: 100px;
+        min-width: 90px;
         text-align: center;
         font-family: monospace;
         background: rgba(0,0,0,0.3);
@@ -125,15 +150,15 @@
         border-radius: 4px;
     }
 
-    .preview-controls input[type="range"] {
-        width: 100px;
+    .controls-bar input[type="range"] {
+        width: 120px;
         accent-color: var(--primary);
         cursor: pointer;
         background: transparent;
         height: 4px;
     }
 
-    .preview-controls input[type="range"]::-webkit-slider-thumb {
+    .controls-bar input[type="range"]::-webkit-slider-thumb {
         -webkit-appearance: none;
         width: 12px;
         height: 12px;
@@ -142,7 +167,7 @@
         cursor: pointer;
     }
 
-    .preview-controls .speed-control {
+    .controls-bar .speed-control {
         display: flex;
         align-items: center;
         gap: 4px;
@@ -151,7 +176,7 @@
         border-radius: 12px;
     }
 
-    .preview-controls .speed-control select {
+    .controls-bar .speed-control select {
         background: transparent;
         border: none;
         color: white;
@@ -161,7 +186,7 @@
         padding: 2px 4px;
     }
 
-    .preview-controls .speed-control select option {
+    .controls-bar .speed-control select option {
         background: var(--bg-dark);
     }
 
@@ -228,7 +253,7 @@
         background: var(--bg-panel);
         border-bottom: 1px solid var(--border-color);
         flex-shrink: 0;
-        max-height: 160px;
+        max-height: 140px;
         overflow-y: auto;
     }
 
@@ -460,15 +485,17 @@
     }
 
     .clip-block:hover {
-        filter: brightness(1.1);
+        filter: brightness(1.15);
         z-index: 3;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+        box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+        transform: scale(1.02);
     }
 
     .clip-block.dragging {
         opacity: 0.6;
         z-index: 10;
         cursor: grabbing;
+        transform: scale(0.95);
     }
 
     .clip-block.selected {
@@ -503,39 +530,40 @@
         flex-shrink: 0;
     }
 
+    /* ====== ألوان أنواع الكليبات ====== */
     .clip-type-video {
-        background: rgba(37,99,235,0.25);
-        border-color: rgba(37,99,235,0.5);
+        background: rgba(37,99,235,0.3);
+        border-color: rgba(37,99,235,0.6);
         color: #60a5fa;
     }
     .clip-type-audio {
-        background: rgba(5,150,105,0.25);
-        border-color: rgba(5,150,105,0.5);
+        background: rgba(5,150,105,0.3);
+        border-color: rgba(5,150,105,0.6);
         color: #34d399;
     }
     .clip-type-image {
-        background: rgba(245,158,11,0.25);
-        border-color: rgba(245,158,11,0.5);
+        background: rgba(245,158,11,0.3);
+        border-color: rgba(245,158,11,0.6);
         color: #fbbf24;
     }
     .clip-type-text {
-        background: rgba(217,119,6,0.25);
-        border-color: rgba(217,119,6,0.5);
+        background: rgba(217,119,6,0.3);
+        border-color: rgba(217,119,6,0.6);
         color: #f59e0b;
     }
     .clip-type-music {
-        background: rgba(124,58,237,0.25);
-        border-color: rgba(124,58,237,0.5);
+        background: rgba(124,58,237,0.3);
+        border-color: rgba(124,58,237,0.6);
         color: #a78bfa;
     }
     .clip-type-subtitle {
-        background: rgba(71,85,105,0.25);
-        border-color: rgba(71,85,105,0.5);
+        background: rgba(71,85,105,0.3);
+        border-color: rgba(71,85,105,0.6);
         color: #94a3b8;
     }
     .clip-type-effect {
-        background: rgba(236,72,153,0.25);
-        border-color: rgba(236,72,153,0.5);
+        background: rgba(236,72,153,0.3);
+        border-color: rgba(236,72,153,0.6);
         color: #f472b6;
     }
 
@@ -662,12 +690,14 @@
     .media-gallery {
         display: flex;
         flex-wrap: wrap;
-        gap: 8px;
-        padding: 8px;
-        max-height: 120px;
+        gap: 6px;
+        padding: 6px 12px;
+        max-height: 80px;
         overflow-y: auto;
-        background: rgba(0,0,0,0.2);
-        border-top: 1px solid var(--border-color);
+        background: rgba(0,0,0,0.3);
+        border-bottom: 1px solid var(--border-color);
+        flex-shrink: 0;
+        align-items: center;
     }
 
     .media-item {
@@ -677,29 +707,31 @@
         background: var(--bg-panel);
         border: 1px solid var(--border-color);
         border-radius: 6px;
-        padding: 4px 10px 4px 6px;
-        font-size: 11px;
+        padding: 3px 8px 3px 4px;
+        font-size: 10px;
         color: var(--text-light);
         cursor: pointer;
         transition: all 0.2s;
-        max-width: 200px;
+        max-width: 180px;
+        height: 32px;
     }
 
     .media-item:hover {
         border-color: var(--primary);
-        background: rgba(37,99,235,0.1);
+        background: rgba(37,99,235,0.15);
+        transform: scale(1.02);
     }
 
     .media-item .media-thumb {
-        width: 28px;
-        height: 28px;
+        width: 24px;
+        height: 24px;
         border-radius: 4px;
         overflow: hidden;
         display: flex;
         align-items: center;
         justify-content: center;
         background: rgba(0,0,0,0.3);
-        font-size: 16px;
+        font-size: 14px;
         flex-shrink: 0;
     }
 
@@ -732,19 +764,27 @@
         color: #ef4444;
     }
 
+    .media-gallery-label {
+        color: var(--text-muted);
+        font-size: 10px;
+        padding: 0 4px;
+        opacity: 0.6;
+    }
+
     @media (max-width: 768px) {
         .editor-container { height: calc(100vh - 140px); }
-        .preview-area { min-height: 160px; }
+        .preview-area { min-height: 180px; }
         .toolbar { padding: 6px 10px; gap: 4px; }
         .toolbar-group { padding: 0 4px; }
         .tool-btn { font-size: 11px; padding: 2px 6px; }
-        .preview-controls { padding: 4px 10px; gap: 4px; }
-        .preview-controls input[type="range"] { width: 60px; }
-        .preview-controls .time-display { min-width: 60px; font-size: 11px; }
-        .layers-panel { max-height: 100px; }
+        .controls-bar { padding: 4px 8px; gap: 6px; }
+        .controls-bar input[type="range"] { width: 60px; }
+        .controls-bar .time-display { min-width: 50px; font-size: 11px; }
+        .layers-panel { max-height: 80px; }
         .track-label { width: 40px; font-size: 8px; }
         .clip-block { font-size: 9px; padding: 0 4px; }
-        .media-gallery { max-height: 80px; }
+        .media-gallery { max-height: 60px; padding: 4px 8px; }
+        .media-item { max-width: 120px; height: 28px; font-size: 9px; }
     }
 </style>
 {% endblock %}
@@ -792,34 +832,56 @@
 <div class="editor-container">
     <!-- ====== منطقة المعاينة ====== -->
     <div class="preview-area" id="previewArea">
-        <!-- فيديو المعاينة -->
+        <!-- عناصر الفيديو/الصورة -->
         <video id="previewVideo" style="display:none;"></video>
         <canvas id="previewCanvas" width="1280" height="720"></canvas>
 
-        <div class="preview-overlay">
+        <!-- شريط أدوات المعاينة العلوي (خفيف) -->
+        <div class="preview-toolbar">
             <button class="tool-btn" onclick="toggleSafeAreas()" title="مناطق الأمان">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="3" width="18" height="18" rx="2" stroke-width="2"/><rect x="6" y="6" width="12" height="12" rx="1" stroke-width="1.5" stroke-dasharray="4 4"/></svg>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="14" height="14"><rect x="3" y="3" width="18" height="18" rx="2" stroke-width="2"/><rect x="6" y="6" width="12" height="12" rx="1" stroke-width="1.5" stroke-dasharray="4 4"/></svg>
             </button>
             <button class="tool-btn" onclick="toggleGrid()" title="شبكة">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 3h18v18H3z" stroke-width="2"/><path d="M3 9h18M3 15h18M9 3v18M15 3v18" stroke-width="1.5"/></svg>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="14" height="14"><path d="M3 3h18v18H3z" stroke-width="2"/><path d="M3 9h18M3 15h18M9 3v18M15 3v18" stroke-width="1.5"/></svg>
             </button>
             <button class="record-btn" id="recordBtn" onclick="toggleRecording()" title="تسجيل الصوت">
                 🎙️ تسجيل
             </button>
+            <button class="tool-btn" onclick="toggleFullscreen()" title="شاشة كاملة">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="14" height="14"><path d="M8 3H5a2 2 0 00-2 2v3m18 0V5a2 2 0 00-2-2h-3m0 18h3a2 2 0 002-2v-3M3 16v3a2 2 0 002 2h3" stroke-width="2"/></svg>
+            </button>
         </div>
 
-        <!-- ====== أدوات التحكم المتقدمة ====== -->
-        <div class="preview-controls" id="previewControls">
-            <button onclick="seekTo(0)" title="البداية">⏮</button>
+        <!-- معلومات المؤشر على الفيديو -->
+        <div style="position:absolute;bottom:70px;right:16px;color:rgba(255,255,255,0.5);font-size:11px;font-family:monospace;z-index:5;background:rgba(0,0,0,0.5);padding:4px 10px;border-radius:4px;display:none;" id="videoTimeInfo">
+            <span id="videoCurrentTime">00:00:00</span> / <span id="videoTotalTime">00:00:00</span>
+        </div>
+    </div>
+
+    <!-- ====== معرض الوسائط المستوردة ====== -->
+    <div class="media-gallery" id="mediaGallery">
+        <span class="media-gallery-label">📁 الوسائط:</span>
+        <!-- يتم توليده بواسطة JavaScript -->
+        <span style="color:var(--text-muted);font-size:10px;opacity:0.5;">اسحب أو استورد ملفات</span>
+    </div>
+
+    <!-- ====== شريط التحكم السفلي (مثل اليوتيوب) ====== -->
+    <div class="controls-bar" id="controlsBar">
+        <div class="control-group">
+            <button onclick="seekTo(0)" title="البداية (Home)">⏮</button>
             <button onclick="stepBackward()" title="رجوع خطوة (←)">⏪</button>
-            <button onclick="togglePlay()" id="playBtn">▶</button>
+            <button onclick="togglePlay()" id="playBtn" style="font-size:20px;">▶</button>
             <button onclick="stepForward()" title="تقديم خطوة (→)">⏩</button>
-            <button onclick="seekTo(totalDuration)" title="النهاية">⏭</button>
-            
+            <button onclick="seekTo(totalDuration)" title="النهاية (End)">⏭</button>
+        </div>
+
+        <div class="control-group">
             <span class="time-display" id="currentTimeDisplay">00:00:00</span>
             <input type="range" id="seekSlider" min="0" max="100" value="0">
             <span class="time-display" id="totalTimeDisplay">00:00:00</span>
-            
+        </div>
+
+        <div class="control-group">
             <div class="speed-control">
                 <span style="font-size:11px;color:var(--text-muted);">🐢</span>
                 <select id="speedSelect" onchange="changeSpeed()">
@@ -834,17 +896,13 @@
                 </select>
                 <span style="font-size:11px;color:var(--text-muted);">🐇</span>
             </div>
-            
+        </div>
+
+        <div class="control-group">
             <button onclick="toggleLoop()" id="loopBtn" title="تكرار">🔁</button>
             <button onclick="toggleMute()" id="muteBtn" title="كتم الصوت">🔊</button>
             <button onclick="toggleFullscreen()" title="شاشة كاملة">⛶</button>
         </div>
-    </div>
-
-    <!-- ====== معرض الوسائط المستوردة ====== -->
-    <div class="media-gallery" id="mediaGallery">
-        <!-- يتم توليده بواسطة JavaScript -->
-        <span style="color:var(--text-muted);font-size:11px;padding:4px 8px;">📁 اسحب أو استورد ملفات للمعاينة</span>
     </div>
 
     <!-- ====== شريط الأدوات ====== -->
@@ -1071,7 +1129,6 @@ document.addEventListener('DOMContentLoaded', function() {
     loadProjectData();
     renderPreview();
     
-    // تحديث المعاينة كل 100ms
     setInterval(renderPreview, 100);
 });
 
@@ -1080,10 +1137,16 @@ document.addEventListener('DOMContentLoaded', function() {
 // ============================================================
 function renderMediaGallery() {
     const gallery = document.getElementById('mediaGallery');
+    // الاحتفاظ بالعنوان
+    const label = gallery.querySelector('.media-gallery-label');
     gallery.innerHTML = '';
+    gallery.appendChild(label);
     
     if (mediaFiles.length === 0) {
-        gallery.innerHTML = `<span style="color:var(--text-muted);font-size:11px;padding:4px 8px;">📁 اسحب أو استورد ملفات للمعاينة</span>`;
+        const empty = document.createElement('span');
+        empty.style.cssText = 'color:var(--text-muted);font-size:10px;opacity:0.5;';
+        empty.textContent = 'اسحب أو استورد ملفات';
+        gallery.appendChild(empty);
         return;
     }
     
@@ -1091,24 +1154,23 @@ function renderMediaGallery() {
         const item = document.createElement('div');
         item.className = 'media-item';
         
-        const isVideo = file.type.startsWith('video/');
-        const isImage = file.type.startsWith('image/');
-        const isAudio = file.type.startsWith('audio/');
+        const isVideo = file.type && file.type.startsWith('video/');
+        const isImage = file.type && file.type.startsWith('image/');
+        const isAudio = file.type && file.type.startsWith('audio/');
         
         let thumbContent = '';
-        if (isImage) {
-            thumbContent = `<img src="${file.url}" alt="${file.name}">`;
-        } else if (isVideo) {
-            thumbContent = `<video src="${file.url}" muted></video>`;
+        if (isImage && file.url) {
+            thumbContent = `<img src="${file.url}" alt="${file.name}" loading="lazy">`;
+        } else if (isVideo && file.url) {
+            thumbContent = `<video src="${file.url}" muted preload="metadata"></video>`;
         } else {
             thumbContent = isAudio ? '🎵' : '📄';
         }
         
         item.innerHTML = `
             <div class="media-thumb">${thumbContent}</div>
-            <span class="media-name">${file.name.slice(0, 20)}</span>
-            <span style="font-size:9px;color:var(--text-muted);">${(file.size / 1024).toFixed(0)}KB</span>
-            <button class="media-remove" onclick="removeMediaFile(${index})">✕</button>
+            <span class="media-name">${file.name.slice(0, 18)}</span>
+            <button class="media-remove" onclick="event.stopPropagation();removeMediaFile(${index})" title="حذف">✕</button>
         `;
         
         item.onclick = () => {
@@ -1122,28 +1184,37 @@ function renderMediaGallery() {
 }
 
 function previewMediaFile(file) {
-    if (file.type.startsWith('video/') || file.type.startsWith('audio/')) {
-        previewVideo.src = file.url;
-        previewVideo.style.display = 'block';
-        previewVideo.play();
-        showToast(`▶️ تشغيل: ${file.name}`, 'info');
-    } else if (file.type.startsWith('image/')) {
-        // عرض الصورة على الكانفاس
+    if (file.type && (file.type.startsWith('video/') || file.type.startsWith('audio/'))) {
+        if (file.url) {
+            previewVideo.src = file.url;
+            previewVideo.style.display = 'block';
+            previewVideo.play().catch(() => {});
+            showToast(`▶️ تشغيل: ${file.name}`, 'info');
+        }
+    } else if (file.type && file.type.startsWith('image/')) {
         const img = new Image();
         img.onload = function() {
             const canvas = document.getElementById('previewCanvas');
             const ctx = canvas.getContext('2d');
-            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+            const w = canvas.width, h = canvas.height;
+            ctx.fillStyle = '#0a0a15';
+            ctx.fillRect(0, 0, w, h);
+            const scale = Math.min(w / img.width, h / img.height);
+            const x = (w - img.width * scale) / 2;
+            const y = (h - img.height * scale) / 2;
+            ctx.drawImage(img, x, y, img.width * scale, img.height * scale);
             previewVideo.style.display = 'none';
         };
         img.src = file.url;
         showToast(`🖼️ معاينة: ${file.name}`, 'info');
+    } else {
+        showToast(`📄 ${file.name} (${(file.size / 1024).toFixed(0)} KB)`, 'info');
     }
 }
 
 function removeMediaFile(index) {
     const file = mediaFiles[index];
-    if (file.url) {
+    if (file.url && file.url.startsWith('blob:')) {
         URL.revokeObjectURL(file.url);
     }
     mediaFiles.splice(index, 1);
@@ -1165,16 +1236,14 @@ function addMediaFile(file) {
 }
 
 // ============================================================
-//  FILE HANDLING - معالجة الملفات
+//  FILE HANDLING
 // ============================================================
 function handleFiles(files) {
     Array.from(files).forEach(file => {
         const type = file.type.split('/')[0];
         if (['video', 'audio', 'image'].includes(type)) {
-            // إضافة للمعرض
             addMediaFile(file);
             
-            // إضافة للتايم لاين
             const clip = {
                 id: clipIdCounter++,
                 type: type,
@@ -1193,13 +1262,14 @@ function handleFiles(files) {
         }
     });
     renderTimeline();
+    renderMediaGallery();
     updateStatus();
     saveProjectData();
     closeImportModal();
 }
 
 // ============================================================
-//  PLAYBACK CONTROLS - أدوات التشغيل المتقدمة
+//  PLAYBACK CONTROLS
 // ============================================================
 function togglePlay() {
     if (isPlaying) {
@@ -1216,17 +1286,23 @@ function startPlay() {
     isPlaying = true;
     document.getElementById('playBtn').textContent = '⏸';
     
-    // تشغيل الفيديو إذا كان موجوداً
     if (previewVideo && previewVideo.src) {
         previewVideo.playbackRate = playbackSpeed;
         previewVideo.play().catch(() => {});
     }
+    
+    // إظهار معلومات الوقت على الفيديو
+    document.getElementById('videoTimeInfo').style.display = 'block';
     
     playInterval = setInterval(() => {
         currentTime += 0.04 * playbackSpeed;
         if (currentTime >= totalDuration) {
             if (isLooping) {
                 currentTime = 0;
+                if (previewVideo && previewVideo.src) {
+                    previewVideo.currentTime = 0;
+                    previewVideo.play().catch(() => {});
+                }
             } else {
                 pausePlay();
                 return;
@@ -1234,6 +1310,7 @@ function startPlay() {
         }
         updatePlayhead();
         renderPreview();
+        updateVideoInfo();
     }, 40);
 }
 
@@ -1247,6 +1324,12 @@ function pausePlay() {
         clearInterval(playInterval);
         playInterval = null;
     }
+    document.getElementById('videoTimeInfo').style.display = 'none';
+}
+
+function updateVideoInfo() {
+    document.getElementById('videoCurrentTime').textContent = formatTime(currentTime);
+    document.getElementById('videoTotalTime').textContent = formatTime(totalDuration);
 }
 
 function stepForward() {
@@ -1293,6 +1376,7 @@ function seekTo(time) {
     pausePlay();
     updatePlayhead();
     renderPreview();
+    updateVideoInfo();
     if (previewVideo && previewVideo.src) {
         previewVideo.currentTime = currentTime;
     }
@@ -1304,7 +1388,7 @@ document.getElementById('seekSlider').addEventListener('input', function() {
 });
 
 // ============================================================
-//  RECORDING - تسجيل الصوت
+//  RECORDING
 // ============================================================
 async function toggleRecording() {
     const btn = document.getElementById('recordBtn');
@@ -1571,7 +1655,7 @@ function renderTimeline() {
                 <span class="clip-thumb">${clip.icon || '🎬'}</span>
                 <span class="clip-label">${clip.title || 'مقطع'}</span>
                 <span class="clip-duration">${durationStr}</span>
-                <span class="clip-options">
+                <span class="clip-options" style="display:none;">
                     <button onclick="editClipProperties(${clip.id})" title="خصائص">⚙️</button>
                     <button onclick="deleteClip(${clip.id})" title="حذف">🗑️</button>
                 </span>
@@ -1665,7 +1749,6 @@ function selectClip(id) {
 
 function addClip(type) {
     if (type === 'video' || type === 'audio' || type === 'image' || type === 'music') {
-        // فتح نافذة اختيار الملف
         const input = document.createElement('input');
         input.type = 'file';
         input.accept = type === 'video' ? 'video/*' : 
@@ -1843,6 +1926,7 @@ function renderPreview() {
     
     const sortedClips = [...visibleClips].sort((a, b) => a.layer - b.layer);
     
+    // عرض الكليبات
     sortedClips.forEach(clip => {
         const progress = (currentTime - clip.start) / clip.duration;
         const x = (progress * w * 0.7) + w * 0.15;
@@ -1881,22 +1965,14 @@ function renderPreview() {
         ctx.stroke();
     });
     
-    // عرض معلومات الوقت والسرعة
-    ctx.fillStyle = 'rgba(0,0,0,0.6)';
-    ctx.fillRect(10, 10, 180, 22);
-    ctx.fillStyle = 'rgba(255,255,255,0.7)';
+    // معلومات الوقت على الكانفاس
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.fillRect(10, 10, 160, 22);
+    ctx.fillStyle = 'rgba(255,255,255,0.6)';
     ctx.font = '11px monospace';
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
-    ctx.fillText(`⏱ ${formatTime(currentTime)} / ${formatTime(totalDuration)}  ⚡ ${playbackSpeed}x`, 16, 22);
-    
-    ctx.fillStyle = 'rgba(255,255,255,0.2)';
-    ctx.fillRect(10, h - 30, 120, 22);
-    ctx.fillStyle = 'white';
-    ctx.font = '12px monospace';
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(formatTime(currentTime) + ' / ' + formatTime(totalDuration), 18, h - 19);
+    ctx.fillText(`⏱ ${formatTime(currentTime)} / ${formatTime(totalDuration)}`, 16, 22);
 }
 
 // ============================================================
@@ -1948,7 +2024,6 @@ function setupDragDrop() {
         fileInput.value = '';
     });
     
-    // سلة المحذوفات
     document.getElementById('trashZone').addEventListener('dragover', (e) => {
         e.preventDefault();
     });
@@ -1995,6 +2070,14 @@ function setupKeyboardShortcuts() {
             case 'ArrowRight':
                 e.preventDefault();
                 stepForward();
+                break;
+            case 'Home':
+                e.preventDefault();
+                seekTo(0);
+                break;
+            case 'End':
+                e.preventDefault();
+                seekTo(totalDuration);
                 break;
             case 'ArrowUp':
                 e.preventDefault();
@@ -2187,10 +2270,10 @@ window.addEventListener('beforeunload', function() {
     }
 });
 
-console.log('🎬 محرر الفيديو المتقدم جاهز');
+console.log('🎬 محرر الفيديو الاحترافي جاهز');
 console.log(`📁 المشروع: ${projectId}`);
 console.log(`📊 المقاطع: ${clips.length}`);
 console.log(`🧩 الطبقات: ${layers.length}`);
-console.log(`📁 الملفات المستوردة: ${mediaFiles.length}`);
+console.log(`📁 الملفات: ${mediaFiles.length}`);
 </script>
 {% endblock %}
