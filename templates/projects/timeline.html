@@ -30,6 +30,7 @@
         border: 1px solid var(--border-color);
     }
 
+    /* ====== منطقة المعاينة ====== */
     .preview-area {
         flex: 1;
         background: #000;
@@ -37,9 +38,10 @@
         display: flex;
         align-items: center;
         justify-content: center;
-        min-height: 240px;
+        min-height: 280px;
         background: radial-gradient(ellipse at center, #1a1a2e 0%, #0a0a15 100%);
         border-bottom: 2px solid var(--border-color);
+        overflow: hidden;
     }
 
     .preview-area video,
@@ -48,6 +50,11 @@
         max-height: 100%;
         object-fit: contain;
         background: #000;
+    }
+
+    .preview-area video {
+        width: 100%;
+        height: 100%;
     }
 
     .preview-overlay {
@@ -60,6 +67,7 @@
         flex-wrap: wrap;
     }
 
+    /* ====== أدوات التحكم المتقدمة ====== */
     .preview-controls {
         position: absolute;
         bottom: 16px;
@@ -67,13 +75,16 @@
         transform: translateX(-50%);
         display: flex;
         align-items: center;
-        gap: 12px;
-        background: rgba(0,0,0,0.75);
-        backdrop-filter: blur(8px);
+        gap: 8px;
+        background: rgba(0,0,0,0.85);
+        backdrop-filter: blur(12px);
         padding: 8px 16px;
         border-radius: 30px;
         border: 1px solid rgba(255,255,255,0.1);
         z-index: 10;
+        flex-wrap: wrap;
+        justify-content: center;
+        min-width: 200px;
     }
 
     .preview-controls button {
@@ -84,11 +95,22 @@
         padding: 4px 8px;
         border-radius: 4px;
         transition: all 0.2s;
-        font-size: 18px;
+        font-size: 16px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 32px;
+        height: 32px;
     }
 
     .preview-controls button:hover {
         background: rgba(255,255,255,0.15);
+        transform: scale(1.05);
+    }
+
+    .preview-controls button.active {
+        background: var(--primary);
+        color: white;
     }
 
     .preview-controls .time-display {
@@ -98,14 +120,52 @@
         min-width: 100px;
         text-align: center;
         font-family: monospace;
+        background: rgba(0,0,0,0.3);
+        padding: 2px 8px;
+        border-radius: 4px;
     }
 
     .preview-controls input[type="range"] {
-        width: 120px;
+        width: 100px;
         accent-color: var(--primary);
+        cursor: pointer;
+        background: transparent;
+        height: 4px;
+    }
+
+    .preview-controls input[type="range"]::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        background: var(--primary);
         cursor: pointer;
     }
 
+    .preview-controls .speed-control {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        background: rgba(255,255,255,0.05);
+        padding: 2px 8px;
+        border-radius: 12px;
+    }
+
+    .preview-controls .speed-control select {
+        background: transparent;
+        border: none;
+        color: white;
+        font-size: 12px;
+        cursor: pointer;
+        outline: none;
+        padding: 2px 4px;
+    }
+
+    .preview-controls .speed-control select option {
+        background: var(--bg-dark);
+    }
+
+    /* ====== شريط الأدوات ====== */
     .toolbar {
         display: flex;
         flex-wrap: wrap;
@@ -161,6 +221,7 @@
         height: 16px;
     }
 
+    /* ====== الطبقات ====== */
     .layers-panel {
         display: flex;
         flex-direction: column;
@@ -249,6 +310,7 @@
 
     .layer-item .layer-actions button:hover { color: #ef4444; }
 
+    /* ====== التايم لاين ====== */
     .timeline-area {
         flex: 1;
         overflow: hidden;
@@ -596,17 +658,93 @@
         display: none;
     }
 
+    /* ====== معرض الوسائط ====== */
+    .media-gallery {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        padding: 8px;
+        max-height: 120px;
+        overflow-y: auto;
+        background: rgba(0,0,0,0.2);
+        border-top: 1px solid var(--border-color);
+    }
+
+    .media-item {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        background: var(--bg-panel);
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+        padding: 4px 10px 4px 6px;
+        font-size: 11px;
+        color: var(--text-light);
+        cursor: pointer;
+        transition: all 0.2s;
+        max-width: 200px;
+    }
+
+    .media-item:hover {
+        border-color: var(--primary);
+        background: rgba(37,99,235,0.1);
+    }
+
+    .media-item .media-thumb {
+        width: 28px;
+        height: 28px;
+        border-radius: 4px;
+        overflow: hidden;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(0,0,0,0.3);
+        font-size: 16px;
+        flex-shrink: 0;
+    }
+
+    .media-item .media-thumb img,
+    .media-item .media-thumb video {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+    }
+
+    .media-item .media-name {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        flex: 1;
+        font-size: 10px;
+    }
+
+    .media-item .media-remove {
+        background: none;
+        border: none;
+        color: var(--text-muted);
+        cursor: pointer;
+        padding: 0 4px;
+        font-size: 12px;
+        transition: color 0.2s;
+    }
+
+    .media-item .media-remove:hover {
+        color: #ef4444;
+    }
+
     @media (max-width: 768px) {
         .editor-container { height: calc(100vh - 140px); }
         .preview-area { min-height: 160px; }
         .toolbar { padding: 6px 10px; gap: 4px; }
         .toolbar-group { padding: 0 4px; }
         .tool-btn { font-size: 11px; padding: 2px 6px; }
-        .preview-controls { padding: 4px 10px; gap: 6px; }
-        .preview-controls input[type="range"] { width: 80px; }
+        .preview-controls { padding: 4px 10px; gap: 4px; }
+        .preview-controls input[type="range"] { width: 60px; }
+        .preview-controls .time-display { min-width: 60px; font-size: 11px; }
         .layers-panel { max-height: 100px; }
         .track-label { width: 40px; font-size: 8px; }
         .clip-block { font-size: 9px; padding: 0 4px; }
+        .media-gallery { max-height: 80px; }
     }
 </style>
 {% endblock %}
@@ -654,6 +792,10 @@
 <div class="editor-container">
     <!-- ====== منطقة المعاينة ====== -->
     <div class="preview-area" id="previewArea">
+        <!-- فيديو المعاينة -->
+        <video id="previewVideo" style="display:none;"></video>
+        <canvas id="previewCanvas" width="1280" height="720"></canvas>
+
         <div class="preview-overlay">
             <button class="tool-btn" onclick="toggleSafeAreas()" title="مناطق الأمان">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="3" width="18" height="18" rx="2" stroke-width="2"/><rect x="6" y="6" width="12" height="12" rx="1" stroke-width="1.5" stroke-dasharray="4 4"/></svg>
@@ -666,17 +808,43 @@
             </button>
         </div>
 
-        <canvas id="previewCanvas" width="1280" height="720"></canvas>
-
-        <div class="preview-controls">
+        <!-- ====== أدوات التحكم المتقدمة ====== -->
+        <div class="preview-controls" id="previewControls">
             <button onclick="seekTo(0)" title="البداية">⏮</button>
+            <button onclick="stepBackward()" title="رجوع خطوة (←)">⏪</button>
             <button onclick="togglePlay()" id="playBtn">▶</button>
+            <button onclick="stepForward()" title="تقديم خطوة (→)">⏩</button>
             <button onclick="seekTo(totalDuration)" title="النهاية">⏭</button>
+            
             <span class="time-display" id="currentTimeDisplay">00:00:00</span>
             <input type="range" id="seekSlider" min="0" max="100" value="0">
             <span class="time-display" id="totalTimeDisplay">00:00:00</span>
+            
+            <div class="speed-control">
+                <span style="font-size:11px;color:var(--text-muted);">🐢</span>
+                <select id="speedSelect" onchange="changeSpeed()">
+                    <option value="0.25">0.25x</option>
+                    <option value="0.5">0.5x</option>
+                    <option value="0.75">0.75x</option>
+                    <option value="1" selected>1x</option>
+                    <option value="1.25">1.25x</option>
+                    <option value="1.5">1.5x</option>
+                    <option value="2">2x</option>
+                    <option value="4">4x</option>
+                </select>
+                <span style="font-size:11px;color:var(--text-muted);">🐇</span>
+            </div>
+            
             <button onclick="toggleLoop()" id="loopBtn" title="تكرار">🔁</button>
+            <button onclick="toggleMute()" id="muteBtn" title="كتم الصوت">🔊</button>
+            <button onclick="toggleFullscreen()" title="شاشة كاملة">⛶</button>
         </div>
+    </div>
+
+    <!-- ====== معرض الوسائط المستوردة ====== -->
+    <div class="media-gallery" id="mediaGallery">
+        <!-- يتم توليده بواسطة JavaScript -->
+        <span style="color:var(--text-muted);font-size:11px;padding:4px 8px;">📁 اسحب أو استورد ملفات للمعاينة</span>
     </div>
 
     <!-- ====== شريط الأدوات ====== -->
@@ -694,21 +862,11 @@
         </div>
 
         <div class="toolbar-group">
-            <button class="tool-btn" onclick="addClip('video')" title="إضافة فيديو">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M15 10l4.553-2.069A1 1 0 0121 8.87v6.26a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" stroke-width="2"/></svg>
-            </button>
-            <button class="tool-btn" onclick="addClip('audio')" title="إضافة صوت">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" stroke-width="2"/></svg>
-            </button>
-            <button class="tool-btn" onclick="addClip('image')" title="إضافة صورة">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="3" width="18" height="18" rx="2" stroke-width="2"/><circle cx="8.5" cy="8.5" r="1.5" stroke-width="2"/><path d="M21 15l-5-5L5 21" stroke-width="2"/></svg>
-            </button>
-            <button class="tool-btn" onclick="addClip('text')" title="إضافة نص">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 7h16M4 12h8m-8 6h16" stroke-width="2"/></svg>
-            </button>
-            <button class="tool-btn" onclick="addClip('music')" title="إضافة موسيقى">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2z" stroke-width="2"/></svg>
-            </button>
+            <button class="tool-btn" onclick="addClip('video')" title="إضافة فيديو">🎬</button>
+            <button class="tool-btn" onclick="addClip('audio')" title="إضافة صوت">🎤</button>
+            <button class="tool-btn" onclick="addClip('image')" title="إضافة صورة">🖼️</button>
+            <button class="tool-btn" onclick="addClip('text')" title="إضافة نص">📝</button>
+            <button class="tool-btn" onclick="addClip('music')" title="إضافة موسيقى">🎵</button>
         </div>
 
         <div class="toolbar-group">
@@ -757,6 +915,7 @@
                 <span id="statusDuration">المدة: 00:00</span>
                 <span id="statusFps">25 إطار/ث</span>
                 <span id="statusLayers">0 طبقة</span>
+                <span id="statusMedia">0 ملف</span>
             </div>
             <div>
                 <span id="statusZoom">تكبير: 80%</span>
@@ -825,22 +984,6 @@
     </div>
 </div>
 
-<!-- ====== مودال اختيار ملف ====== -->
-<div id="filePickerModal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
-    <div class="bg-slate-800 rounded-xl p-6 max-w-md w-full border border-slate-700">
-        <h3 class="text-white text-lg font-semibold mb-4">📁 اختر ملف</h3>
-        <div class="drop-zone" id="filePickerDropZone">
-            <p class="text-slate-400">اسحب الملف هنا أو انقر للاختيار</p>
-            <p class="text-xs text-slate-500 mt-2" id="filePickerInfo">يدعم: MP4, MOV, MP3, WAV, PNG, JPG, GIF</p>
-            <input type="file" id="filePickerInput" accept="video/*,audio/*,image/*">
-        </div>
-        <div class="flex justify-end mt-4 gap-2">
-            <button onclick="closeFilePicker()" class="btn-secondary btn-sm">إلغاء</button>
-            <button onclick="confirmFilePicker()" class="btn-primary btn-sm">تأكيد</button>
-        </div>
-    </div>
-</div>
-
 {% endblock %}
 
 {% block scripts %}
@@ -852,6 +995,7 @@ const scenes = {{ scenes_json | safe }};
 const projectId = "{{ project.id }}";
 let clips = [];
 let layers = [];
+let mediaFiles = [];
 let selectedClipId = null;
 let selectedLayerIndex = 0;
 let cellWidth = 80;
@@ -864,8 +1008,10 @@ let clipIdCounter = 0;
 let isRecording = false;
 let mediaRecorder = null;
 let recordedChunks = [];
-let pendingFileType = null;
-let pendingFileData = null;
+let playbackSpeed = 1;
+let isMuted = false;
+let isLooping = false;
+let previewVideo = null;
 
 const COLORS = {
     video: '#2563eb',
@@ -891,6 +1037,8 @@ const TYPE_ICONS = {
 //  INITIALIZE
 // ============================================================
 document.addEventListener('DOMContentLoaded', function() {
+    previewVideo = document.getElementById('previewVideo');
+    
     if (scenes && scenes.length > 0) {
         scenes.forEach((scene, i) => {
             const clip = {
@@ -917,173 +1065,251 @@ document.addEventListener('DOMContentLoaded', function() {
     renderLayers();
     renderTimeline();
     updateStatus();
+    renderMediaGallery();
     setupDragDrop();
     setupKeyboardShortcuts();
     loadProjectData();
     renderPreview();
+    
+    // تحديث المعاينة كل 100ms
     setInterval(renderPreview, 100);
-
-    // إعداد اختيار الملفات
-    setupFilePicker();
 });
 
 // ============================================================
-//  FILE PICKER - اختيار ملف من الجهاز
+//  MEDIA GALLERY - معرض الوسائط
 // ============================================================
-function setupFilePicker() {
-    const dropZone = document.getElementById('filePickerDropZone');
-    const fileInput = document.getElementById('filePickerInput');
-
-    dropZone.addEventListener('click', () => {
-        fileInput.click();
-    });
-
-    dropZone.addEventListener('dragover', (e) => {
-        e.preventDefault();
-        dropZone.classList.add('dragover');
-    });
-
-    dropZone.addEventListener('dragleave', () => {
-        dropZone.classList.remove('dragover');
-    });
-
-    dropZone.addEventListener('drop', (e) => {
-        e.preventDefault();
-        dropZone.classList.remove('dragover');
-        if (e.dataTransfer.files.length > 0) {
-            pendingFileData = e.dataTransfer.files[0];
-            document.getElementById('filePickerInfo').textContent = `📄 ${pendingFileData.name} (${(pendingFileData.size / 1024).toFixed(1)} KB)`;
-            document.getElementById('filePickerInfo').style.color = '#34d399';
+function renderMediaGallery() {
+    const gallery = document.getElementById('mediaGallery');
+    gallery.innerHTML = '';
+    
+    if (mediaFiles.length === 0) {
+        gallery.innerHTML = `<span style="color:var(--text-muted);font-size:11px;padding:4px 8px;">📁 اسحب أو استورد ملفات للمعاينة</span>`;
+        return;
+    }
+    
+    mediaFiles.forEach((file, index) => {
+        const item = document.createElement('div');
+        item.className = 'media-item';
+        
+        const isVideo = file.type.startsWith('video/');
+        const isImage = file.type.startsWith('image/');
+        const isAudio = file.type.startsWith('audio/');
+        
+        let thumbContent = '';
+        if (isImage) {
+            thumbContent = `<img src="${file.url}" alt="${file.name}">`;
+        } else if (isVideo) {
+            thumbContent = `<video src="${file.url}" muted></video>`;
+        } else {
+            thumbContent = isAudio ? '🎵' : '📄';
         }
+        
+        item.innerHTML = `
+            <div class="media-thumb">${thumbContent}</div>
+            <span class="media-name">${file.name.slice(0, 20)}</span>
+            <span style="font-size:9px;color:var(--text-muted);">${(file.size / 1024).toFixed(0)}KB</span>
+            <button class="media-remove" onclick="removeMediaFile(${index})">✕</button>
+        `;
+        
+        item.onclick = () => {
+            previewMediaFile(file);
+        };
+        
+        gallery.appendChild(item);
     });
-
-    fileInput.addEventListener('change', (e) => {
-        if (e.target.files.length > 0) {
-            pendingFileData = e.target.files[0];
-            document.getElementById('filePickerInfo').textContent = `📄 ${pendingFileData.name} (${(pendingFileData.size / 1024).toFixed(1)} KB)`;
-            document.getElementById('filePickerInfo').style.color = '#34d399';
-        }
-    });
+    
+    document.getElementById('statusMedia').textContent = `${mediaFiles.length} ملف`;
 }
 
-function openFilePicker(type) {
-    pendingFileType = type;
-    pendingFileData = null;
-    document.getElementById('filePickerInfo').textContent = `يدعم: MP4, MOV, MP3, WAV, PNG, JPG, GIF`;
-    document.getElementById('filePickerInfo').style.color = '#94a3b8';
-    document.getElementById('filePickerInput').value = '';
-    document.getElementById('filePickerModal').classList.remove('hidden');
+function previewMediaFile(file) {
+    if (file.type.startsWith('video/') || file.type.startsWith('audio/')) {
+        previewVideo.src = file.url;
+        previewVideo.style.display = 'block';
+        previewVideo.play();
+        showToast(`▶️ تشغيل: ${file.name}`, 'info');
+    } else if (file.type.startsWith('image/')) {
+        // عرض الصورة على الكانفاس
+        const img = new Image();
+        img.onload = function() {
+            const canvas = document.getElementById('previewCanvas');
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+            previewVideo.style.display = 'none';
+        };
+        img.src = file.url;
+        showToast(`🖼️ معاينة: ${file.name}`, 'info');
+    }
 }
 
-function closeFilePicker() {
-    document.getElementById('filePickerModal').classList.add('hidden');
-    pendingFileType = null;
-    pendingFileData = null;
+function removeMediaFile(index) {
+    const file = mediaFiles[index];
+    if (file.url) {
+        URL.revokeObjectURL(file.url);
+    }
+    mediaFiles.splice(index, 1);
+    renderMediaGallery();
+    showToast('تم حذف الملف من المعرض', 'success');
 }
 
-function confirmFilePicker() {
-    if (!pendingFileData) {
-        showToast('الرجاء اختيار ملف أولاً', 'warning');
-        return;
-    }
-    
-    const type = pendingFileType;
-    const file = pendingFileData;
-    const fileType = file.type.split('/')[0];
-    
-    // التحقق من توافق النوع
-    if (type === 'video' && !file.type.startsWith('video/')) {
-        showToast('الرجاء اختيار ملف فيديو', 'error');
-        return;
-    }
-    if (type === 'audio' && !file.type.startsWith('audio/')) {
-        showToast('الرجاء اختيار ملف صوتي', 'error');
-        return;
-    }
-    if (type === 'image' && !file.type.startsWith('image/')) {
-        showToast('الرجاء اختيار ملف صورة', 'error');
-        return;
-    }
-    
+function addMediaFile(file) {
     const url = URL.createObjectURL(file);
-    const duration = type === 'image' ? 3 : 2;
-    
-    const clip = {
-        id: clipIdCounter++,
-        type: type,
-        layer: selectedLayerIndex,
-        start: currentTime,
-        duration: duration,
-        title: file.name.split('.')[0].slice(0, 25),
-        content: url,
-        color: COLORS[type] || '#666',
-        icon: TYPE_ICONS[type] || '📄',
-        metadata: { 
-            file: file.name, 
-            size: file.size,
-            type: file.type
-        }
-    };
-    
-    clips.push(clip);
-    totalDuration = Math.max(totalDuration, clip.start + clip.duration + 2);
-    renderTimeline();
-    updateStatus();
-    saveProjectData();
-    closeFilePicker();
+    mediaFiles.push({
+        name: file.name,
+        size: file.size,
+        type: file.type,
+        url: url,
+        file: file
+    });
+    renderMediaGallery();
     showToast(`✅ تم استيراد ${file.name}`, 'success');
 }
 
 // ============================================================
-//  ADD CLIP - إضافة مقطع (محدث)
+//  FILE HANDLING - معالجة الملفات
 // ============================================================
-function addClip(type) {
-    if (type === 'video' || type === 'audio' || type === 'image') {
-        // فتح نافذة اختيار الملف
-        openFilePicker(type);
-        return;
-    }
-    
-    // للنص والموسيقى
-    if (type === 'text') {
-        const text = prompt('نص المقطع:');
-        if (!text) return;
-        const clip = {
-            id: clipIdCounter++,
-            type: 'text',
-            layer: selectedLayerIndex,
-            start: currentTime,
-            duration: 2,
-            title: text.slice(0, 20) + (text.length > 20 ? '...' : ''),
-            content: text,
-            color: COLORS.text,
-            icon: '📝',
-            metadata: {}
-        };
-        clips.push(clip);
-        totalDuration = Math.max(totalDuration, clip.start + clip.duration + 2);
-        renderTimeline();
-        updateStatus();
-        saveProjectData();
-        showToast('✅ تم إضافة النص', 'success');
-        return;
-    }
-    
-    if (type === 'music') {
-        // فتح اختيار ملف موسيقى
-        openFilePicker('audio');
-        return;
-    }
+function handleFiles(files) {
+    Array.from(files).forEach(file => {
+        const type = file.type.split('/')[0];
+        if (['video', 'audio', 'image'].includes(type)) {
+            // إضافة للمعرض
+            addMediaFile(file);
+            
+            // إضافة للتايم لاين
+            const clip = {
+                id: clipIdCounter++,
+                type: type,
+                layer: selectedLayerIndex,
+                start: currentTime,
+                duration: type === 'image' ? 3 : 2,
+                title: file.name.split('.')[0].slice(0, 20),
+                content: URL.createObjectURL(file),
+                color: COLORS[type] || '#666',
+                icon: TYPE_ICONS[type] || '📄',
+                metadata: { file: file.name, size: file.size }
+            };
+            clips.push(clip);
+            totalDuration = Math.max(totalDuration, clip.start + clip.duration + 2);
+            showToast(`تم استيراد ${file.name}`, 'success');
+        }
+    });
+    renderTimeline();
+    updateStatus();
+    saveProjectData();
+    closeImportModal();
 }
 
 // ============================================================
-//  RECORDING - تسجيل الصوت (محدث)
+//  PLAYBACK CONTROLS - أدوات التشغيل المتقدمة
+// ============================================================
+function togglePlay() {
+    if (isPlaying) {
+        pausePlay();
+    } else {
+        startPlay();
+    }
+}
+
+function startPlay() {
+    if (currentTime >= totalDuration) {
+        currentTime = 0;
+    }
+    isPlaying = true;
+    document.getElementById('playBtn').textContent = '⏸';
+    
+    // تشغيل الفيديو إذا كان موجوداً
+    if (previewVideo && previewVideo.src) {
+        previewVideo.playbackRate = playbackSpeed;
+        previewVideo.play().catch(() => {});
+    }
+    
+    playInterval = setInterval(() => {
+        currentTime += 0.04 * playbackSpeed;
+        if (currentTime >= totalDuration) {
+            if (isLooping) {
+                currentTime = 0;
+            } else {
+                pausePlay();
+                return;
+            }
+        }
+        updatePlayhead();
+        renderPreview();
+    }, 40);
+}
+
+function pausePlay() {
+    isPlaying = false;
+    document.getElementById('playBtn').textContent = '▶';
+    if (previewVideo && previewVideo.src) {
+        previewVideo.pause();
+    }
+    if (playInterval) {
+        clearInterval(playInterval);
+        playInterval = null;
+    }
+}
+
+function stepForward() {
+    seekTo(Math.min(currentTime + 0.5, totalDuration));
+}
+
+function stepBackward() {
+    seekTo(Math.max(currentTime - 0.5, 0));
+}
+
+function changeSpeed() {
+    playbackSpeed = parseFloat(document.getElementById('speedSelect').value);
+    if (previewVideo && previewVideo.src) {
+        previewVideo.playbackRate = playbackSpeed;
+    }
+    showToast(`سرعة: ${playbackSpeed}x`, 'info');
+}
+
+function toggleLoop() {
+    isLooping = !isLooping;
+    document.getElementById('loopBtn').textContent = isLooping ? '🔂' : '🔁';
+    document.getElementById('loopBtn').classList.toggle('active', isLooping);
+}
+
+function toggleMute() {
+    isMuted = !isMuted;
+    document.getElementById('muteBtn').textContent = isMuted ? '🔇' : '🔊';
+    if (previewVideo) {
+        previewVideo.muted = isMuted;
+    }
+}
+
+function toggleFullscreen() {
+    const area = document.getElementById('previewArea');
+    if (!document.fullscreenElement) {
+        area.requestFullscreen().catch(() => {});
+    } else {
+        document.exitFullscreen();
+    }
+}
+
+function seekTo(time) {
+    currentTime = Math.max(0, Math.min(time, totalDuration));
+    pausePlay();
+    updatePlayhead();
+    renderPreview();
+    if (previewVideo && previewVideo.src) {
+        previewVideo.currentTime = currentTime;
+    }
+}
+
+document.getElementById('seekSlider').addEventListener('input', function() {
+    const time = (this.value / 100) * totalDuration;
+    seekTo(time);
+});
+
+// ============================================================
+//  RECORDING - تسجيل الصوت
 // ============================================================
 async function toggleRecording() {
     const btn = document.getElementById('recordBtn');
     
     if (isRecording) {
-        // إيقاف التسجيل
         if (mediaRecorder && mediaRecorder.state !== 'inactive') {
             mediaRecorder.stop();
         }
@@ -1095,7 +1321,6 @@ async function toggleRecording() {
     }
     
     try {
-        // طلب إذن الميكروفون
         const stream = await navigator.mediaDevices.getUserMedia({ 
             audio: {
                 echoCancellation: true,
@@ -1124,6 +1349,15 @@ async function toggleRecording() {
             const url = URL.createObjectURL(blob);
             const duration = Math.min(10, Math.max(1, recordedChunks.length * 0.04));
             
+            // إضافة للمعرض
+            mediaFiles.push({
+                name: `تسجيل ${new Date().toLocaleTimeString()}.webm`,
+                size: blob.size,
+                type: 'audio/webm',
+                url: url,
+                file: blob
+            });
+            
             const clip = {
                 id: clipIdCounter++,
                 type: 'audio',
@@ -1144,6 +1378,7 @@ async function toggleRecording() {
             clips.push(clip);
             totalDuration = Math.max(totalDuration, clip.start + clip.duration + 2);
             renderTimeline();
+            renderMediaGallery();
             updateStatus();
             saveProjectData();
             showToast('✅ تم تسجيل الصوت وإضافته', 'success');
@@ -1151,8 +1386,7 @@ async function toggleRecording() {
             stream.getTracks().forEach(track => track.stop());
         };
         
-        // بدء التسجيل
-        mediaRecorder.start(1000); // تسجيل كل ثانية
+        mediaRecorder.start(1000);
         isRecording = true;
         btn.textContent = '⏹️ إيقاف';
         btn.classList.add('recording');
@@ -1427,9 +1661,46 @@ function deleteClip(id) {
 function selectClip(id) {
     selectedClipId = id;
     renderTimeline();
-    const clip = clips.find(c => c.id === id);
-    if (clip) {
-        console.log('مقطع مختار:', clip);
+}
+
+function addClip(type) {
+    if (type === 'video' || type === 'audio' || type === 'image' || type === 'music') {
+        // فتح نافذة اختيار الملف
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = type === 'video' ? 'video/*' : 
+                       type === 'audio' || type === 'music' ? 'audio/*' : 
+                       'image/*';
+        input.onchange = (e) => {
+            if (e.target.files.length > 0) {
+                handleFiles(e.target.files);
+            }
+        };
+        input.click();
+        return;
+    }
+    
+    if (type === 'text') {
+        const text = prompt('نص المقطع:');
+        if (!text) return;
+        const clip = {
+            id: clipIdCounter++,
+            type: 'text',
+            layer: selectedLayerIndex,
+            start: currentTime,
+            duration: 2,
+            title: text.slice(0, 20) + (text.length > 20 ? '...' : ''),
+            content: text,
+            color: COLORS.text,
+            icon: '📝',
+            metadata: {}
+        };
+        clips.push(clip);
+        totalDuration = Math.max(totalDuration, clip.start + clip.duration + 2);
+        renderTimeline();
+        updateStatus();
+        saveProjectData();
+        showToast('✅ تم إضافة النص', 'success');
     }
 }
 
@@ -1553,64 +1824,6 @@ function saveClipProperties() {
 }
 
 // ============================================================
-//  PLAYBACK
-// ============================================================
-function togglePlay() {
-    if (isPlaying) {
-        pausePlay();
-    } else {
-        startPlay();
-    }
-}
-
-function startPlay() {
-    if (currentTime >= totalDuration) {
-        currentTime = 0;
-    }
-    isPlaying = true;
-    document.getElementById('playBtn').textContent = '⏸';
-    playInterval = setInterval(() => {
-        currentTime += 0.04;
-        if (currentTime >= totalDuration) {
-            pausePlay();
-            if (document.getElementById('loopBtn').textContent === '🔁') {
-                currentTime = 0;
-                startPlay();
-            }
-            return;
-        }
-        updatePlayhead();
-        renderPreview();
-    }, 40);
-}
-
-function pausePlay() {
-    isPlaying = false;
-    document.getElementById('playBtn').textContent = '▶';
-    if (playInterval) {
-        clearInterval(playInterval);
-        playInterval = null;
-    }
-}
-
-function toggleLoop() {
-    const btn = document.getElementById('loopBtn');
-    btn.textContent = btn.textContent === '🔁' ? '🔂' : '🔁';
-}
-
-function seekTo(time) {
-    currentTime = Math.max(0, Math.min(time, totalDuration));
-    pausePlay();
-    updatePlayhead();
-    renderPreview();
-}
-
-document.getElementById('seekSlider').addEventListener('input', function() {
-    const time = (this.value / 100) * totalDuration;
-    seekTo(time);
-});
-
-// ============================================================
 //  PREVIEW
 // ============================================================
 function renderPreview() {
@@ -1667,6 +1880,15 @@ function renderPreview() {
         ctx.lineWidth = 2;
         ctx.stroke();
     });
+    
+    // عرض معلومات الوقت والسرعة
+    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+    ctx.fillRect(10, 10, 180, 22);
+    ctx.fillStyle = 'rgba(255,255,255,0.7)';
+    ctx.font = '11px monospace';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(`⏱ ${formatTime(currentTime)} / ${formatTime(totalDuration)}  ⚡ ${playbackSpeed}x`, 16, 22);
     
     ctx.fillStyle = 'rgba(255,255,255,0.2)';
     ctx.fillRect(10, h - 30, 120, 22);
@@ -1726,6 +1948,7 @@ function setupDragDrop() {
         fileInput.value = '';
     });
     
+    // سلة المحذوفات
     document.getElementById('trashZone').addEventListener('dragover', (e) => {
         e.preventDefault();
     });
@@ -1739,33 +1962,6 @@ function setupDragDrop() {
             showToast('تم حذف المقطع', 'success');
         }
     });
-}
-
-function handleFiles(files) {
-    Array.from(files).forEach(file => {
-        const type = file.type.split('/')[0];
-        if (['video', 'audio', 'image'].includes(type)) {
-            const clip = {
-                id: clipIdCounter++,
-                type: type,
-                layer: selectedLayerIndex,
-                start: currentTime,
-                duration: type === 'image' ? 3 : 2,
-                title: file.name.split('.')[0].slice(0, 20),
-                content: URL.createObjectURL(file),
-                color: COLORS[type] || '#666',
-                icon: TYPE_ICONS[type] || '📄',
-                metadata: { file: file.name, size: file.size }
-            };
-            clips.push(clip);
-            totalDuration = Math.max(totalDuration, clip.start + clip.duration + 2);
-            showToast(`تم استيراد ${file.name}`, 'success');
-        }
-    });
-    renderTimeline();
-    updateStatus();
-    saveProjectData();
-    closeImportModal();
 }
 
 function openImportModal() {
@@ -1792,6 +1988,32 @@ function setupKeyboardShortcuts() {
                 e.preventDefault();
                 togglePlay();
                 break;
+            case 'ArrowLeft':
+                e.preventDefault();
+                stepBackward();
+                break;
+            case 'ArrowRight':
+                e.preventDefault();
+                stepForward();
+                break;
+            case 'ArrowUp':
+                e.preventDefault();
+                if (selectedClipId !== null) {
+                    const clip = clips.find(c => c.id === selectedClipId);
+                    if (clip && clip.layer < layers.length - 1) {
+                        moveClip(clip.id, clip.layer + 1, clip.start);
+                    }
+                }
+                break;
+            case 'ArrowDown':
+                e.preventDefault();
+                if (selectedClipId !== null) {
+                    const clip = clips.find(c => c.id === selectedClipId);
+                    if (clip && clip.layer > 0) {
+                        moveClip(clip.id, clip.layer - 1, clip.start);
+                    }
+                }
+                break;
             case 'v':
             case 'V':
                 selectTool('select');
@@ -1812,31 +2034,17 @@ function setupKeyboardShortcuts() {
             case 'Backspace':
                 deleteSelected();
                 break;
-            case 'ArrowLeft':
-                seekTo(currentTime - 0.5);
-                break;
-            case 'ArrowRight':
-                seekTo(currentTime + 0.5);
-                break;
-            case 'ArrowUp':
-                if (selectedClipId !== null) {
-                    const clip = clips.find(c => c.id === selectedClipId);
-                    if (clip && clip.layer < layers.length - 1) {
-                        moveClip(clip.id, clip.layer + 1, clip.start);
-                    }
-                }
-                break;
-            case 'ArrowDown':
-                if (selectedClipId !== null) {
-                    const clip = clips.find(c => c.id === selectedClipId);
-                    if (clip && clip.layer > 0) {
-                        moveClip(clip.id, clip.layer - 1, clip.start);
-                    }
-                }
-                break;
             case 'r':
             case 'R':
                 toggleRecording();
+                break;
+            case 'f':
+            case 'F':
+                toggleFullscreen();
+                break;
+            case 'm':
+            case 'M':
+                toggleMute();
                 break;
         }
     });
@@ -1861,7 +2069,8 @@ function saveProjectData() {
             clips: clips,
             layers: layers,
             totalDuration: totalDuration,
-            cellWidth: cellWidth
+            cellWidth: cellWidth,
+            mediaFiles: mediaFiles.map(f => ({ name: f.name, size: f.size, type: f.type }))
         };
         localStorage.setItem(`project_${projectId}`, JSON.stringify(data));
     } catch(e) {}
@@ -1982,5 +2191,6 @@ console.log('🎬 محرر الفيديو المتقدم جاهز');
 console.log(`📁 المشروع: ${projectId}`);
 console.log(`📊 المقاطع: ${clips.length}`);
 console.log(`🧩 الطبقات: ${layers.length}`);
+console.log(`📁 الملفات المستوردة: ${mediaFiles.length}`);
 </script>
 {% endblock %}
