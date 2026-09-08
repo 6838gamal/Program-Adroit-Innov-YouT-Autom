@@ -1,11 +1,10 @@
 {% extends "base.html" %}
-{% load static %}
 
 {% block title %}مشروع جديد - إنشاء فيديو بالذكاء الاصطناعي{% endblock %}
 {% block page_title %}إنشاء فيديو بالذكاء الاصطناعي{% endblock %}
 
 {% block extra_head %}
-    <link rel="stylesheet" href="{% static 'css/create.css' %}">
+    <link rel="stylesheet" href="/static/css/create.css">
 {% endblock %}
 
 {% block content %}
@@ -303,5 +302,5 @@
 {% endblock %}
 
 {% block scripts %}
-    <script src="{% static 'js/create.js' %}"></script>
+    <script src="/static/js/create.js"></script>
 {% endblock %}
