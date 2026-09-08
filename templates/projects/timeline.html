@@ -6,7 +6,7 @@
 <style>
     /* ====== المتغيرات العامة ====== */
     :root {
-        --track-height: 48px;
+        --track-height: 52px;
         --ruler-height: 32px;
         --layer-height: 32px;
         --cell-base: 80px;
@@ -595,6 +595,14 @@
         border-top: 8px solid #ef4444;
     }
 
+    .playhead.active {
+        background: #22c55e;
+    }
+
+    .playhead.active::before {
+        border-top-color: #22c55e;
+    }
+
     .drop-zone {
         border: 2px dashed var(--border-color);
         border-radius: 8px;
@@ -632,6 +640,10 @@
         display: flex;
         gap: 16px;
         align-items: center;
+    }
+
+    .status-bar .status-info .highlight {
+        color: #fbbf24;
     }
 
     .trash-zone {
@@ -726,12 +738,6 @@
         transform: scale(1.02);
     }
 
-    .media-item.active {
-        border-color: #fbbf24;
-        background: rgba(251,191,36,0.15);
-        box-shadow: 0 0 20px rgba(251,191,36,0.1);
-    }
-
     .media-item .media-thumb {
         width: 24px;
         height: 24px;
@@ -787,6 +793,14 @@
         font-weight: bold;
     }
 
+    .media-item .media-index {
+        font-size: 8px;
+        color: var(--text-muted);
+        background: rgba(0,0,0,0.3);
+        padding: 0 4px;
+        border-radius: 3px;
+    }
+
     .media-gallery-label {
         color: var(--text-muted);
         font-size: 10px;
@@ -794,34 +808,26 @@
         opacity: 0.6;
     }
 
-    /* ====== عنصر المعاينة الدائم ====== */
-    .preview-content {
-        width: 100%;
-        height: 100%;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        position: relative;
+    /* ====== معلومات التشغيل ====== */
+    .playback-info {
+        position: absolute;
+        bottom: 70px;
+        right: 16px;
+        color: rgba(255,255,255,0.7);
+        font-size: 12px;
+        font-family: monospace;
+        z-index: 5;
+        background: rgba(0,0,0,0.6);
+        padding: 4px 10px;
+        border-radius: 4px;
+        display: none;
+        backdrop-filter: blur(4px);
+        border: 1px solid rgba(255,255,255,0.05);
     }
 
-    .preview-content img,
-    .preview-content video {
-        max-width: 100%;
-        max-height: 100%;
-        object-fit: contain;
-    }
-
-    .preview-content .preview-placeholder {
-        color: rgba(255,255,255,0.1);
-        font-size: 48px;
-        text-align: center;
-    }
-
-    .preview-content .preview-placeholder span {
-        display: block;
-        font-size: 14px;
-        color: rgba(255,255,255,0.2);
-        margin-top: 12px;
+    .playback-info .current-clip {
+        color: #fbbf24;
+        font-weight: bold;
     }
 
     @media (max-width: 768px) {
@@ -885,11 +891,11 @@
 <div class="editor-container">
     <!-- ====== منطقة المعاينة ====== -->
     <div class="preview-area" id="previewArea">
-        <!-- محتوى المعاينة الدائم -->
+        <!-- محتوى المعاينة -->
         <div class="preview-content" id="previewContent">
-            <div class="preview-placeholder" id="previewPlaceholder">
+            <div class="preview-placeholder" id="previewPlaceholder" style="color:rgba(255,255,255,0.1);font-size:48px;text-align:center;">
                 🎬
-                <span>اسحب أو استورد وسائط للمعاينة</span>
+                <span style="display:block;font-size:14px;color:rgba(255,255,255,0.2);margin-top:12px;">اسحب أو استورد وسائط للمعاينة</span>
             </div>
             <img id="previewImage" style="display:none;width:100%;height:100%;object-fit:contain;" alt="معاينة الصورة">
             <video id="previewVideo" style="display:none;width:100%;height:100%;" controls></video>
@@ -911,16 +917,16 @@
             </button>
         </div>
 
-        <!-- معلومات المؤشر على الفيديو -->
-        <div style="position:absolute;bottom:70px;right:16px;color:rgba(255,255,255,0.5);font-size:11px;font-family:monospace;z-index:5;background:rgba(0,0,0,0.5);padding:4px 10px;border-radius:4px;display:none;" id="videoTimeInfo">
-            <span id="videoCurrentTime">00:00:00</span> / <span id="videoTotalTime">00:00:00</span>
+        <!-- معلومات التشغيل -->
+        <div class="playback-info" id="playbackInfo">
+            <span id="playbackTime">00:00:00</span> | 
+            <span class="current-clip" id="currentClipName">-</span>
         </div>
     </div>
 
     <!-- ====== معرض الوسائط المستوردة ====== -->
     <div class="media-gallery" id="mediaGallery">
         <span class="media-gallery-label">📁 الوسائط:</span>
-        <!-- يتم توليده بواسطة JavaScript -->
         <span style="color:var(--text-muted);font-size:10px;opacity:0.5;" id="mediaGalleryEmpty">اسحب أو استورد ملفات</span>
     </div>
 
@@ -1033,6 +1039,7 @@
                 <span id="statusFps">25 إطار/ث</span>
                 <span id="statusLayers">0 طبقة</span>
                 <span id="statusMedia">0 ملف</span>
+                <span id="statusCurrentClip" class="highlight">⏸️ متوقف</span>
             </div>
             <div>
                 <span id="statusZoom">تكبير: 80%</span>
@@ -1130,7 +1137,7 @@ let isMuted = false;
 let isLooping = false;
 let previewVideo = null;
 let previewImage = null;
-let activeMediaIndex = -1;
+let currentClipAtTime = null;
 
 const COLORS = {
     video: '#2563eb',
@@ -1189,79 +1196,155 @@ document.addEventListener('DOMContentLoaded', function() {
     setupDragDrop();
     setupKeyboardShortcuts();
     loadProjectData();
+    renderPreview();
 });
 
 // ============================================================
-//  PREVIEW - عرض المعاينة الدائم
+//  RENDER PREVIEW - عرض المحتوى حسب موقع المؤشر
 // ============================================================
-function showPreviewMedia(file) {
-    const placeholder = document.getElementById('previewPlaceholder');
-    const img = document.getElementById('previewImage');
-    const video = document.getElementById('previewVideo');
-    
-    // إخفاء كل شيء أولاً
-    placeholder.style.display = 'none';
-    img.style.display = 'none';
-    video.style.display = 'none';
-    video.pause();
-    
-    if (!file) {
-        placeholder.style.display = 'flex';
+function renderPreview() {
+    const canvas = document.getElementById('previewCanvas');
+    if (canvas) {
+        // إذا كان هناك كانفاس قديم نستخدمه
+        renderPreviewOnCanvas();
         return;
     }
     
-    const isVideo = file.type && file.type.startsWith('video/');
-    const isImage = file.type && file.type.startsWith('image/');
+    // عرض الصورة أو الفيديو مباشرة
+    const img = document.getElementById('previewImage');
+    const video = document.getElementById('previewVideo');
+    const placeholder = document.getElementById('previewPlaceholder');
     
-    if (isImage && file.url) {
-        img.src = file.url;
-        img.style.display = 'block';
-        img.onload = function() {
-            // الصورة ظهرت
-        };
-        img.onerror = function() {
-            showToast('⚠️ خطأ في تحميل الصورة', 'error');
-        };
-        showToast(`🖼️ عرض: ${file.name}`, 'info');
-    } else if (isVideo && file.url) {
-        video.src = file.url;
-        video.style.display = 'block';
-        video.load();
-        video.onloadeddata = function() {
-            video.play().catch(() => {});
-            document.getElementById('videoTimeInfo').style.display = 'block';
-            document.getElementById('videoTotalTime').textContent = formatTime(video.duration || 0);
-        };
-        showToast(`▶️ تشغيل: ${file.name}`, 'info');
+    // البحث عن المقطع النشط في الوقت الحالي
+    const activeClip = clips.find(c => {
+        const layer = layers[c.layer];
+        return layer && layer.visible && 
+               currentTime >= c.start && 
+               currentTime < c.start + c.duration;
+    });
+    
+    if (activeClip) {
+        currentClipAtTime = activeClip;
+        const isImage = activeClip.type === 'image';
+        const isVideo = activeClip.type === 'video';
+        
+        if (isImage && activeClip.content) {
+            img.src = activeClip.content;
+            img.style.display = 'block';
+            video.style.display = 'none';
+            placeholder.style.display = 'none';
+            document.getElementById('currentClipName').textContent = activeClip.title || 'صورة';
+        } else if (isVideo && activeClip.content) {
+            video.src = activeClip.content;
+            video.style.display = 'block';
+            img.style.display = 'none';
+            placeholder.style.display = 'none';
+            document.getElementById('currentClipName').textContent = activeClip.title || 'فيديو';
+            if (isPlaying) {
+                video.play().catch(() => {});
+            }
+        } else {
+            placeholder.style.display = 'flex';
+            img.style.display = 'none';
+            video.style.display = 'none';
+            document.getElementById('currentClipName').textContent = 'لا يوجد محتوى';
+        }
+        
+        document.getElementById('playbackInfo').style.display = 'block';
+        document.getElementById('playbackTime').textContent = formatTime(currentTime);
+        document.getElementById('statusCurrentClip').textContent = `▶️ ${activeClip.title || 'مقطع'}`;
     } else {
         placeholder.style.display = 'flex';
-        showToast(`📄 ${file.name} (${(file.size / 1024).toFixed(0)} KB)`, 'info');
+        img.style.display = 'none';
+        video.style.display = 'none';
+        video.pause();
+        document.getElementById('playbackInfo').style.display = 'none';
+        document.getElementById('statusCurrentClip').textContent = isPlaying ? '⏸️ تشغيل' : '⏸️ متوقف';
+        currentClipAtTime = null;
     }
 }
 
-function clearPreview() {
-    const placeholder = document.getElementById('previewPlaceholder');
-    const img = document.getElementById('previewImage');
-    const video = document.getElementById('previewVideo');
+function renderPreviewOnCanvas() {
+    const canvas = document.getElementById('previewCanvas');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const w = canvas.width, h = canvas.height;
     
-    img.style.display = 'none';
-    video.style.display = 'none';
-    video.pause();
-    video.src = '';
-    placeholder.style.display = 'flex';
-    document.getElementById('videoTimeInfo').style.display = 'none';
-    activeMediaIndex = -1;
+    ctx.fillStyle = '#0a0a15';
+    ctx.fillRect(0, 0, w, h);
+    
+    const visibleClips = clips.filter(c => {
+        const layer = layers[c.layer];
+        return layer && layer.visible && 
+               currentTime >= c.start && 
+               currentTime < c.start + c.duration;
+    });
+    
+    const sortedClips = [...visibleClips].sort((a, b) => a.layer - b.layer);
+    
+    if (sortedClips.length > 0) {
+        const clip = sortedClips[0];
+        currentClipAtTime = clip;
+        const progress = (currentTime - clip.start) / clip.duration;
+        const x = (progress * w * 0.7) + w * 0.15;
+        const y = h * 0.3 + (clip.layer * 30);
+        
+        ctx.fillStyle = clip.color + '40';
+        ctx.strokeStyle = clip.color;
+        ctx.lineWidth = 2;
+        const rectW = 80, rectH = 50;
+        ctx.fillRect(x - rectW/2, y - rectH/2, rectW, rectH);
+        ctx.strokeRect(x - rectW/2, y - rectH/2, rectW, rectH);
+        
+        ctx.font = '24px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = 'white';
+        ctx.fillText(clip.icon || '📄', x, y - 5);
+        
+        ctx.font = '11px sans-serif';
+        ctx.fillStyle = '#f1f5f9';
+        ctx.fillText(clip.title || 'مقطع', x, y + 25);
+        
+        ctx.font = '9px sans-serif';
+        ctx.fillStyle = '#94a3b8';
+        ctx.fillText(clip.type, x, y + 40);
+        
+        ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.arc(x + 35, y - 15, 8, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(x + 35, y - 15, 8, -Math.PI/2, -Math.PI/2 + Math.PI * 2 * progress);
+        ctx.strokeStyle = clip.color;
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        
+        document.getElementById('currentClipName').textContent = clip.title || 'مقطع';
+        document.getElementById('statusCurrentClip').textContent = `▶️ ${clip.title || 'مقطع'}`;
+    } else {
+        document.getElementById('statusCurrentClip').textContent = isPlaying ? '⏸️ تشغيل' : '⏸️ متوقف';
+        currentClipAtTime = null;
+    }
+    
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.fillRect(10, 10, 160, 22);
+    ctx.fillStyle = 'rgba(255,255,255,0.6)';
+    ctx.font = '11px monospace';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(`⏱ ${formatTime(currentTime)} / ${formatTime(totalDuration)}`, 16, 22);
 }
 
 // ============================================================
-//  MEDIA GALLERY - معرض الوسائط الدائم
+//  MEDIA GALLERY - معرض الوسائط
 // ============================================================
 function renderMediaGallery() {
     const gallery = document.getElementById('mediaGallery');
     const label = gallery.querySelector('.media-gallery-label');
     const empty = document.getElementById('mediaGalleryEmpty');
     
-    // إزالة جميع عناصر الوسائط مع الاحتفاظ بالعنوان
     const items = gallery.querySelectorAll('.media-item');
     items.forEach(item => item.remove());
     
@@ -1282,7 +1365,7 @@ function renderMediaGallery() {
     
     mediaFiles.forEach((file, index) => {
         const item = document.createElement('div');
-        item.className = `media-item${index === activeMediaIndex ? ' active' : ''}`;
+        item.className = 'media-item';
         item.dataset.index = index;
         
         const isVideo = file.type && file.type.startsWith('video/');
@@ -1298,15 +1381,19 @@ function renderMediaGallery() {
             thumbContent = isAudio ? '🎵' : '📄';
         }
         
+        // معرفة إذا كان هذا الملف موجوداً في التايم لاين
+        const clipExists = clips.some(c => c.metadata && c.metadata.file === file.name);
+        
         item.innerHTML = `
             <div class="media-thumb">${thumbContent}</div>
             <span class="media-name">${file.name.slice(0, 18)}</span>
-            ${index === activeMediaIndex ? '<span class="media-badge">مُعاين</span>' : ''}
+            <span class="media-index">#${index + 1}</span>
+            ${clipExists ? '<span class="media-badge">✅</span>' : ''}
             <button class="media-remove" onclick="event.stopPropagation();removeMediaFile(${index})" title="حذف">✕</button>
         `;
         
         item.onclick = () => {
-            selectMediaFile(index);
+            addMediaToTimeline(index);
         };
         
         gallery.appendChild(item);
@@ -1315,12 +1402,40 @@ function renderMediaGallery() {
     document.getElementById('statusMedia').textContent = `${mediaFiles.length} ملف`;
 }
 
-function selectMediaFile(index) {
-    if (index < 0 || index >= mediaFiles.length) return;
-    activeMediaIndex = index;
+function addMediaToTimeline(index) {
     const file = mediaFiles[index];
-    showPreviewMedia(file);
+    if (!file) return;
+    
+    // حساب وقت البداية
+    let startTime = 0;
+    if (clips.length > 0) {
+        const lastClip = clips[clips.length - 1];
+        startTime = lastClip.start + lastClip.duration;
+    }
+    
+    const type = file.type.split('/')[0];
+    const duration = type === 'image' ? 3 : (type === 'video' ? 3 : 2);
+    
+    const clip = {
+        id: clipIdCounter++,
+        type: type === 'video' ? 'video' : (type === 'audio' ? 'audio' : 'image'),
+        layer: selectedLayerIndex,
+        start: startTime,
+        duration: duration,
+        title: file.name.split('.')[0].slice(0, 20),
+        content: file.url,
+        color: COLORS[type] || '#666',
+        icon: TYPE_ICONS[type] || '📄',
+        metadata: { file: file.name, size: file.size, index: index }
+    };
+    
+    clips.push(clip);
+    totalDuration = Math.max(totalDuration, clip.start + clip.duration + 1);
+    renderTimeline();
     renderMediaGallery();
+    updateStatus();
+    saveProjectData();
+    showToast(`✅ تم إضافة ${file.name} إلى التايم لاين`, 'success');
 }
 
 function removeMediaFile(index) {
@@ -1329,14 +1444,6 @@ function removeMediaFile(index) {
         URL.revokeObjectURL(file.url);
     }
     mediaFiles.splice(index, 1);
-    
-    if (activeMediaIndex === index) {
-        activeMediaIndex = -1;
-        clearPreview();
-    } else if (activeMediaIndex > index) {
-        activeMediaIndex--;
-    }
-    
     renderMediaGallery();
     updateStatus();
     showToast('تم حذف الملف من المعرض', 'success');
@@ -1351,11 +1458,7 @@ function addMediaFile(file) {
         url: url,
         file: file
     });
-    
-    // عرض الملف الجديد تلقائياً
-    activeMediaIndex = mediaFiles.length - 1;
     renderMediaGallery();
-    showPreviewMedia(mediaFiles[activeMediaIndex]);
     showToast(`✅ تم استيراد ${file.name}`, 'success');
 }
 
@@ -1367,27 +1470,10 @@ function handleFiles(files) {
         const type = file.type.split('/')[0];
         if (['video', 'audio', 'image'].includes(type)) {
             addMediaFile(file);
-            
-            const clip = {
-                id: clipIdCounter++,
-                type: type,
-                layer: selectedLayerIndex,
-                start: currentTime,
-                duration: type === 'image' ? 3 : 2,
-                title: file.name.split('.')[0].slice(0, 20),
-                content: URL.createObjectURL(file),
-                color: COLORS[type] || '#666',
-                icon: TYPE_ICONS[type] || '📄',
-                metadata: { file: file.name, size: file.size }
-            };
-            clips.push(clip);
-            totalDuration = Math.max(totalDuration, clip.start + clip.duration + 2);
         }
     });
-    renderTimeline();
     renderMediaGallery();
     updateStatus();
-    saveProjectData();
     closeImportModal();
 }
 
@@ -1408,21 +1494,25 @@ function startPlay() {
     }
     isPlaying = true;
     document.getElementById('playBtn').textContent = '⏸';
+    document.getElementById('playhead').classList.add('active');
     
-    if (previewVideo && previewVideo.src && previewVideo.style.display !== 'none') {
-        previewVideo.playbackRate = playbackSpeed;
-        previewVideo.play().catch(() => {});
-        document.getElementById('videoTimeInfo').style.display = 'block';
+    const video = document.getElementById('previewVideo');
+    if (video && video.src && video.style.display !== 'none') {
+        video.playbackRate = playbackSpeed;
+        video.play().catch(() => {});
     }
+    
+    document.getElementById('playbackInfo').style.display = 'block';
     
     playInterval = setInterval(() => {
         currentTime += 0.04 * playbackSpeed;
         if (currentTime >= totalDuration) {
             if (isLooping) {
                 currentTime = 0;
-                if (previewVideo && previewVideo.src) {
-                    previewVideo.currentTime = 0;
-                    previewVideo.play().catch(() => {});
+                const video = document.getElementById('previewVideo');
+                if (video && video.src) {
+                    video.currentTime = 0;
+                    video.play().catch(() => {});
                 }
             } else {
                 pausePlay();
@@ -1430,30 +1520,28 @@ function startPlay() {
             }
         }
         updatePlayhead();
-        updateVideoInfo();
+        renderPreview();
+        updatePlaybackInfo();
     }, 40);
 }
 
 function pausePlay() {
     isPlaying = false;
     document.getElementById('playBtn').textContent = '▶';
-    if (previewVideo && previewVideo.src) {
-        previewVideo.pause();
+    document.getElementById('playhead').classList.remove('active');
+    const video = document.getElementById('previewVideo');
+    if (video && video.src) {
+        video.pause();
     }
     if (playInterval) {
         clearInterval(playInterval);
         playInterval = null;
     }
-    document.getElementById('videoTimeInfo').style.display = 'none';
 }
 
-function updateVideoInfo() {
-    document.getElementById('videoCurrentTime').textContent = formatTime(currentTime);
-    if (previewVideo && previewVideo.duration) {
-        document.getElementById('videoTotalTime').textContent = formatTime(previewVideo.duration);
-    } else {
-        document.getElementById('videoTotalTime').textContent = formatTime(totalDuration);
-    }
+function updatePlaybackInfo() {
+    document.getElementById('playbackTime').textContent = formatTime(currentTime);
+    document.getElementById('playbackInfo').style.display = 'block';
 }
 
 function stepForward() {
@@ -1466,8 +1554,9 @@ function stepBackward() {
 
 function changeSpeed() {
     playbackSpeed = parseFloat(document.getElementById('speedSelect').value);
-    if (previewVideo && previewVideo.src) {
-        previewVideo.playbackRate = playbackSpeed;
+    const video = document.getElementById('previewVideo');
+    if (video && video.src) {
+        video.playbackRate = playbackSpeed;
     }
     showToast(`سرعة: ${playbackSpeed}x`, 'info');
 }
@@ -1481,8 +1570,9 @@ function toggleLoop() {
 function toggleMute() {
     isMuted = !isMuted;
     document.getElementById('muteBtn').textContent = isMuted ? '🔇' : '🔊';
-    if (previewVideo) {
-        previewVideo.muted = isMuted;
+    const video = document.getElementById('previewVideo');
+    if (video) {
+        video.muted = isMuted;
     }
 }
 
@@ -1499,9 +1589,11 @@ function seekTo(time) {
     currentTime = Math.max(0, Math.min(time, totalDuration));
     pausePlay();
     updatePlayhead();
-    updateVideoInfo();
-    if (previewVideo && previewVideo.src) {
-        previewVideo.currentTime = currentTime;
+    renderPreview();
+    updatePlaybackInfo();
+    const video = document.getElementById('previewVideo');
+    if (video && video.src) {
+        video.currentTime = currentTime - (currentClipAtTime ? currentClipAtTime.start : 0);
     }
 }
 
@@ -1561,21 +1653,28 @@ async function toggleRecording() {
             
             addMediaFile(fileObj);
             
+            // حساب وقت البداية
+            let startTime = 0;
+            if (clips.length > 0) {
+                const lastClip = clips[clips.length - 1];
+                startTime = lastClip.start + lastClip.duration;
+            }
+            
             const clip = {
                 id: clipIdCounter++,
                 type: 'audio',
                 layer: selectedLayerIndex,
-                start: currentTime,
+                start: startTime,
                 duration: duration,
                 title: `🎤 تسجيل ${new Date().toLocaleTimeString()}`,
                 content: url,
                 color: COLORS.audio,
                 icon: '🎤',
-                metadata: { recorded: true, blob: blob, duration: duration }
+                metadata: { recorded: true, blob: blob, duration: duration, file: fileName }
             };
             
             clips.push(clip);
-            totalDuration = Math.max(totalDuration, clip.start + clip.duration + 2);
+            totalDuration = Math.max(totalDuration, clip.start + clip.duration + 1);
             renderTimeline();
             renderMediaGallery();
             updateStatus();
@@ -1756,7 +1855,10 @@ function renderTimeline() {
         body.dataset.layer = layerIdx;
 
         const layerClips = clips.filter(c => c.layer === layerIdx);
-        layerClips.forEach(clip => {
+        // ترتيب حسب وقت البداية
+        layerClips.sort((a, b) => a.start - b.start);
+        
+        layerClips.forEach((clip, index) => {
             const left = clip.start * pxPerSec;
             const width = Math.max(clip.duration * pxPerSec - 2, 20);
             
@@ -1766,9 +1868,10 @@ function renderTimeline() {
             block.dataset.clipId = clip.id;
             
             const durationStr = formatTime(clip.duration);
+            const clipNumber = index + 1;
             block.innerHTML = `
                 <span class="clip-thumb">${clip.icon || '🎬'}</span>
-                <span class="clip-label">${clip.title || 'مقطع'}</span>
+                <span class="clip-label">#${clipNumber} ${clip.title || 'مقطع'}</span>
                 <span class="clip-duration">${durationStr}</span>
                 <span class="clip-options" style="display:none;">
                     <button onclick="editClipProperties(${clip.id})" title="خصائص">⚙️</button>
@@ -1860,6 +1963,11 @@ function deleteClip(id) {
 function selectClip(id) {
     selectedClipId = id;
     renderTimeline();
+    const clip = clips.find(c => c.id === id);
+    if (clip) {
+        seekTo(clip.start);
+        showToast(`📌 ${clip.title}`, 'info');
+    }
 }
 
 function addClip(type) {
@@ -1881,11 +1989,16 @@ function addClip(type) {
     if (type === 'text') {
         const text = prompt('نص المقطع:');
         if (!text) return;
+        let startTime = 0;
+        if (clips.length > 0) {
+            const lastClip = clips[clips.length - 1];
+            startTime = lastClip.start + lastClip.duration;
+        }
         const clip = {
             id: clipIdCounter++,
             type: 'text',
             layer: selectedLayerIndex,
-            start: currentTime,
+            start: startTime,
             duration: 2,
             title: text.slice(0, 20) + (text.length > 20 ? '...' : ''),
             content: text,
@@ -1894,7 +2007,7 @@ function addClip(type) {
             metadata: {}
         };
         clips.push(clip);
-        totalDuration = Math.max(totalDuration, clip.start + clip.duration + 2);
+        totalDuration = Math.max(totalDuration, clip.start + clip.duration + 1);
         renderTimeline();
         updateStatus();
         saveProjectData();
@@ -1940,14 +2053,22 @@ function duplicateClip() {
     const clip = clips.find(c => c.id === selectedClipId);
     if (!clip) return;
     
+    let startTime = clip.start + clip.duration + 0.5;
+    // إعادة ترتيب المقاطع التي تبدأ بعد المقطع المنسوخ
+    clips.forEach(c => {
+        if (c.start > clip.start) {
+            c.start += clip.duration + 0.5;
+        }
+    });
+    
     const newClip = {
         ...clip,
         id: clipIdCounter++,
-        start: clip.start + clip.duration + 0.5,
+        start: startTime,
         title: `${clip.title} (نسخة)`
     };
     clips.push(newClip);
-    totalDuration = Math.max(totalDuration, newClip.start + newClip.duration + 2);
+    totalDuration = Math.max(totalDuration, newClip.start + newClip.duration + 1);
     renderTimeline();
     selectClip(newClip.id);
     saveProjectData();
@@ -1969,7 +2090,7 @@ function moveClip(id, newLayer, newStart) {
     if (!clip) return;
     clip.layer = newLayer;
     clip.start = Math.max(0, newStart);
-    totalDuration = Math.max(totalDuration, clip.start + clip.duration + 2);
+    totalDuration = Math.max(totalDuration, clip.start + clip.duration + 1);
     renderTimeline();
     saveProjectData();
 }
@@ -2014,7 +2135,7 @@ function saveClipProperties() {
     clip.icon = TYPE_ICONS[clip.type] || '📄';
     clip.color = COLORS[clip.type] || '#666';
     
-    totalDuration = Math.max(totalDuration, clip.start + clip.duration + 2);
+    totalDuration = Math.max(totalDuration, clip.start + clip.duration + 1);
     closeClipProperties();
     renderTimeline();
     saveProjectData();
