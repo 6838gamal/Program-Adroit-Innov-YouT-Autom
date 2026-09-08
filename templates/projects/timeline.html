@@ -45,11 +45,18 @@
     }
 
     .preview-area video,
-    .preview-area canvas {
+    .preview-area canvas,
+    .preview-area img {
         max-width: 100%;
         max-height: 100%;
         object-fit: contain;
         background: #000;
+    }
+
+    .preview-area img {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
     }
 
     .preview-area video {
@@ -682,10 +689,6 @@
         50% { opacity: 0.5; }
     }
 
-    .file-input-hidden {
-        display: none;
-    }
-
     /* ====== معرض الوسائط ====== */
     .media-gallery {
         display: flex;
@@ -705,7 +708,7 @@
         align-items: center;
         gap: 6px;
         background: var(--bg-panel);
-        border: 1px solid var(--border-color);
+        border: 2px solid var(--border-color);
         border-radius: 6px;
         padding: 3px 8px 3px 4px;
         font-size: 10px;
@@ -714,12 +717,19 @@
         transition: all 0.2s;
         max-width: 180px;
         height: 32px;
+        position: relative;
     }
 
     .media-item:hover {
         border-color: var(--primary);
         background: rgba(37,99,235,0.15);
         transform: scale(1.02);
+    }
+
+    .media-item.active {
+        border-color: #fbbf24;
+        background: rgba(251,191,36,0.15);
+        box-shadow: 0 0 20px rgba(251,191,36,0.1);
     }
 
     .media-item .media-thumb {
@@ -758,10 +768,23 @@
         padding: 0 4px;
         font-size: 12px;
         transition: color 0.2s;
+        z-index: 2;
     }
 
     .media-item .media-remove:hover {
         color: #ef4444;
+    }
+
+    .media-item .media-badge {
+        position: absolute;
+        top: -6px;
+        right: -6px;
+        background: var(--primary);
+        color: white;
+        font-size: 8px;
+        padding: 1px 5px;
+        border-radius: 8px;
+        font-weight: bold;
     }
 
     .media-gallery-label {
@@ -769,6 +792,36 @@
         font-size: 10px;
         padding: 0 4px;
         opacity: 0.6;
+    }
+
+    /* ====== عنصر المعاينة الدائم ====== */
+    .preview-content {
+        width: 100%;
+        height: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        position: relative;
+    }
+
+    .preview-content img,
+    .preview-content video {
+        max-width: 100%;
+        max-height: 100%;
+        object-fit: contain;
+    }
+
+    .preview-content .preview-placeholder {
+        color: rgba(255,255,255,0.1);
+        font-size: 48px;
+        text-align: center;
+    }
+
+    .preview-content .preview-placeholder span {
+        display: block;
+        font-size: 14px;
+        color: rgba(255,255,255,0.2);
+        margin-top: 12px;
     }
 
     @media (max-width: 768px) {
@@ -832,11 +885,17 @@
 <div class="editor-container">
     <!-- ====== منطقة المعاينة ====== -->
     <div class="preview-area" id="previewArea">
-        <!-- عناصر الفيديو/الصورة -->
-        <video id="previewVideo" style="display:none;"></video>
-        <canvas id="previewCanvas" width="1280" height="720"></canvas>
+        <!-- محتوى المعاينة الدائم -->
+        <div class="preview-content" id="previewContent">
+            <div class="preview-placeholder" id="previewPlaceholder">
+                🎬
+                <span>اسحب أو استورد وسائط للمعاينة</span>
+            </div>
+            <img id="previewImage" style="display:none;width:100%;height:100%;object-fit:contain;" alt="معاينة الصورة">
+            <video id="previewVideo" style="display:none;width:100%;height:100%;" controls></video>
+        </div>
 
-        <!-- شريط أدوات المعاينة العلوي (خفيف) -->
+        <!-- شريط أدوات المعاينة العلوي -->
         <div class="preview-toolbar">
             <button class="tool-btn" onclick="toggleSafeAreas()" title="مناطق الأمان">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="14" height="14"><rect x="3" y="3" width="18" height="18" rx="2" stroke-width="2"/><rect x="6" y="6" width="12" height="12" rx="1" stroke-width="1.5" stroke-dasharray="4 4"/></svg>
@@ -862,10 +921,10 @@
     <div class="media-gallery" id="mediaGallery">
         <span class="media-gallery-label">📁 الوسائط:</span>
         <!-- يتم توليده بواسطة JavaScript -->
-        <span style="color:var(--text-muted);font-size:10px;opacity:0.5;">اسحب أو استورد ملفات</span>
+        <span style="color:var(--text-muted);font-size:10px;opacity:0.5;" id="mediaGalleryEmpty">اسحب أو استورد ملفات</span>
     </div>
 
-    <!-- ====== شريط التحكم السفلي (مثل اليوتيوب) ====== -->
+    <!-- ====== شريط التحكم السفلي ====== -->
     <div class="controls-bar" id="controlsBar">
         <div class="control-group">
             <button onclick="seekTo(0)" title="البداية (Home)">⏮</button>
@@ -1070,6 +1129,8 @@ let playbackSpeed = 1;
 let isMuted = false;
 let isLooping = false;
 let previewVideo = null;
+let previewImage = null;
+let activeMediaIndex = -1;
 
 const COLORS = {
     video: '#2563eb',
@@ -1096,6 +1157,7 @@ const TYPE_ICONS = {
 // ============================================================
 document.addEventListener('DOMContentLoaded', function() {
     previewVideo = document.getElementById('previewVideo');
+    previewImage = document.getElementById('previewImage');
     
     if (scenes && scenes.length > 0) {
         scenes.forEach((scene, i) => {
@@ -1127,32 +1189,101 @@ document.addEventListener('DOMContentLoaded', function() {
     setupDragDrop();
     setupKeyboardShortcuts();
     loadProjectData();
-    renderPreview();
-    
-    setInterval(renderPreview, 100);
 });
 
 // ============================================================
-//  MEDIA GALLERY - معرض الوسائط
+//  PREVIEW - عرض المعاينة الدائم
 // ============================================================
-function renderMediaGallery() {
-    const gallery = document.getElementById('mediaGallery');
-    // الاحتفاظ بالعنوان
-    const label = gallery.querySelector('.media-gallery-label');
-    gallery.innerHTML = '';
-    gallery.appendChild(label);
+function showPreviewMedia(file) {
+    const placeholder = document.getElementById('previewPlaceholder');
+    const img = document.getElementById('previewImage');
+    const video = document.getElementById('previewVideo');
     
-    if (mediaFiles.length === 0) {
-        const empty = document.createElement('span');
-        empty.style.cssText = 'color:var(--text-muted);font-size:10px;opacity:0.5;';
-        empty.textContent = 'اسحب أو استورد ملفات';
-        gallery.appendChild(empty);
+    // إخفاء كل شيء أولاً
+    placeholder.style.display = 'none';
+    img.style.display = 'none';
+    video.style.display = 'none';
+    video.pause();
+    
+    if (!file) {
+        placeholder.style.display = 'flex';
         return;
     }
     
+    const isVideo = file.type && file.type.startsWith('video/');
+    const isImage = file.type && file.type.startsWith('image/');
+    
+    if (isImage && file.url) {
+        img.src = file.url;
+        img.style.display = 'block';
+        img.onload = function() {
+            // الصورة ظهرت
+        };
+        img.onerror = function() {
+            showToast('⚠️ خطأ في تحميل الصورة', 'error');
+        };
+        showToast(`🖼️ عرض: ${file.name}`, 'info');
+    } else if (isVideo && file.url) {
+        video.src = file.url;
+        video.style.display = 'block';
+        video.load();
+        video.onloadeddata = function() {
+            video.play().catch(() => {});
+            document.getElementById('videoTimeInfo').style.display = 'block';
+            document.getElementById('videoTotalTime').textContent = formatTime(video.duration || 0);
+        };
+        showToast(`▶️ تشغيل: ${file.name}`, 'info');
+    } else {
+        placeholder.style.display = 'flex';
+        showToast(`📄 ${file.name} (${(file.size / 1024).toFixed(0)} KB)`, 'info');
+    }
+}
+
+function clearPreview() {
+    const placeholder = document.getElementById('previewPlaceholder');
+    const img = document.getElementById('previewImage');
+    const video = document.getElementById('previewVideo');
+    
+    img.style.display = 'none';
+    video.style.display = 'none';
+    video.pause();
+    video.src = '';
+    placeholder.style.display = 'flex';
+    document.getElementById('videoTimeInfo').style.display = 'none';
+    activeMediaIndex = -1;
+}
+
+// ============================================================
+//  MEDIA GALLERY - معرض الوسائط الدائم
+// ============================================================
+function renderMediaGallery() {
+    const gallery = document.getElementById('mediaGallery');
+    const label = gallery.querySelector('.media-gallery-label');
+    const empty = document.getElementById('mediaGalleryEmpty');
+    
+    // إزالة جميع عناصر الوسائط مع الاحتفاظ بالعنوان
+    const items = gallery.querySelectorAll('.media-item');
+    items.forEach(item => item.remove());
+    
+    if (mediaFiles.length === 0) {
+        if (!empty) {
+            const newEmpty = document.createElement('span');
+            newEmpty.id = 'mediaGalleryEmpty';
+            newEmpty.style.cssText = 'color:var(--text-muted);font-size:10px;opacity:0.5;';
+            newEmpty.textContent = 'اسحب أو استورد ملفات';
+            gallery.appendChild(newEmpty);
+        } else {
+            empty.style.display = 'inline';
+        }
+        return;
+    }
+    
+    if (empty) empty.style.display = 'none';
+    
     mediaFiles.forEach((file, index) => {
         const item = document.createElement('div');
-        item.className = 'media-item';
+        item.className = `media-item${index === activeMediaIndex ? ' active' : ''}`;
+        item.dataset.index = index;
         
         const isVideo = file.type && file.type.startsWith('video/');
         const isImage = file.type && file.type.startsWith('image/');
@@ -1170,11 +1301,12 @@ function renderMediaGallery() {
         item.innerHTML = `
             <div class="media-thumb">${thumbContent}</div>
             <span class="media-name">${file.name.slice(0, 18)}</span>
+            ${index === activeMediaIndex ? '<span class="media-badge">مُعاين</span>' : ''}
             <button class="media-remove" onclick="event.stopPropagation();removeMediaFile(${index})" title="حذف">✕</button>
         `;
         
         item.onclick = () => {
-            previewMediaFile(file);
+            selectMediaFile(index);
         };
         
         gallery.appendChild(item);
@@ -1183,33 +1315,12 @@ function renderMediaGallery() {
     document.getElementById('statusMedia').textContent = `${mediaFiles.length} ملف`;
 }
 
-function previewMediaFile(file) {
-    if (file.type && (file.type.startsWith('video/') || file.type.startsWith('audio/'))) {
-        if (file.url) {
-            previewVideo.src = file.url;
-            previewVideo.style.display = 'block';
-            previewVideo.play().catch(() => {});
-            showToast(`▶️ تشغيل: ${file.name}`, 'info');
-        }
-    } else if (file.type && file.type.startsWith('image/')) {
-        const img = new Image();
-        img.onload = function() {
-            const canvas = document.getElementById('previewCanvas');
-            const ctx = canvas.getContext('2d');
-            const w = canvas.width, h = canvas.height;
-            ctx.fillStyle = '#0a0a15';
-            ctx.fillRect(0, 0, w, h);
-            const scale = Math.min(w / img.width, h / img.height);
-            const x = (w - img.width * scale) / 2;
-            const y = (h - img.height * scale) / 2;
-            ctx.drawImage(img, x, y, img.width * scale, img.height * scale);
-            previewVideo.style.display = 'none';
-        };
-        img.src = file.url;
-        showToast(`🖼️ معاينة: ${file.name}`, 'info');
-    } else {
-        showToast(`📄 ${file.name} (${(file.size / 1024).toFixed(0)} KB)`, 'info');
-    }
+function selectMediaFile(index) {
+    if (index < 0 || index >= mediaFiles.length) return;
+    activeMediaIndex = index;
+    const file = mediaFiles[index];
+    showPreviewMedia(file);
+    renderMediaGallery();
 }
 
 function removeMediaFile(index) {
@@ -1218,7 +1329,16 @@ function removeMediaFile(index) {
         URL.revokeObjectURL(file.url);
     }
     mediaFiles.splice(index, 1);
+    
+    if (activeMediaIndex === index) {
+        activeMediaIndex = -1;
+        clearPreview();
+    } else if (activeMediaIndex > index) {
+        activeMediaIndex--;
+    }
+    
     renderMediaGallery();
+    updateStatus();
     showToast('تم حذف الملف من المعرض', 'success');
 }
 
@@ -1231,7 +1351,11 @@ function addMediaFile(file) {
         url: url,
         file: file
     });
+    
+    // عرض الملف الجديد تلقائياً
+    activeMediaIndex = mediaFiles.length - 1;
     renderMediaGallery();
+    showPreviewMedia(mediaFiles[activeMediaIndex]);
     showToast(`✅ تم استيراد ${file.name}`, 'success');
 }
 
@@ -1258,7 +1382,6 @@ function handleFiles(files) {
             };
             clips.push(clip);
             totalDuration = Math.max(totalDuration, clip.start + clip.duration + 2);
-            showToast(`تم استيراد ${file.name}`, 'success');
         }
     });
     renderTimeline();
@@ -1286,13 +1409,11 @@ function startPlay() {
     isPlaying = true;
     document.getElementById('playBtn').textContent = '⏸';
     
-    if (previewVideo && previewVideo.src) {
+    if (previewVideo && previewVideo.src && previewVideo.style.display !== 'none') {
         previewVideo.playbackRate = playbackSpeed;
         previewVideo.play().catch(() => {});
+        document.getElementById('videoTimeInfo').style.display = 'block';
     }
-    
-    // إظهار معلومات الوقت على الفيديو
-    document.getElementById('videoTimeInfo').style.display = 'block';
     
     playInterval = setInterval(() => {
         currentTime += 0.04 * playbackSpeed;
@@ -1309,7 +1430,6 @@ function startPlay() {
             }
         }
         updatePlayhead();
-        renderPreview();
         updateVideoInfo();
     }, 40);
 }
@@ -1329,7 +1449,11 @@ function pausePlay() {
 
 function updateVideoInfo() {
     document.getElementById('videoCurrentTime').textContent = formatTime(currentTime);
-    document.getElementById('videoTotalTime').textContent = formatTime(totalDuration);
+    if (previewVideo && previewVideo.duration) {
+        document.getElementById('videoTotalTime').textContent = formatTime(previewVideo.duration);
+    } else {
+        document.getElementById('videoTotalTime').textContent = formatTime(totalDuration);
+    }
 }
 
 function stepForward() {
@@ -1375,7 +1499,6 @@ function seekTo(time) {
     currentTime = Math.max(0, Math.min(time, totalDuration));
     pausePlay();
     updatePlayhead();
-    renderPreview();
     updateVideoInfo();
     if (previewVideo && previewVideo.src) {
         previewVideo.currentTime = currentTime;
@@ -1433,14 +1556,10 @@ async function toggleRecording() {
             const url = URL.createObjectURL(blob);
             const duration = Math.min(10, Math.max(1, recordedChunks.length * 0.04));
             
-            // إضافة للمعرض
-            mediaFiles.push({
-                name: `تسجيل ${new Date().toLocaleTimeString()}.webm`,
-                size: blob.size,
-                type: 'audio/webm',
-                url: url,
-                file: blob
-            });
+            const fileName = `تسجيل ${new Date().toLocaleTimeString()}.webm`;
+            const fileObj = new File([blob], fileName, { type: 'audio/webm' });
+            
+            addMediaFile(fileObj);
             
             const clip = {
                 id: clipIdCounter++,
@@ -1452,11 +1571,7 @@ async function toggleRecording() {
                 content: url,
                 color: COLORS.audio,
                 icon: '🎤',
-                metadata: { 
-                    recorded: true, 
-                    blob: blob,
-                    duration: duration
-                }
+                metadata: { recorded: true, blob: blob, duration: duration }
             };
             
             clips.push(clip);
@@ -1904,75 +2019,6 @@ function saveClipProperties() {
     renderTimeline();
     saveProjectData();
     showToast('تم تحديث خصائص المقطع', 'success');
-}
-
-// ============================================================
-//  PREVIEW
-// ============================================================
-function renderPreview() {
-    const canvas = document.getElementById('previewCanvas');
-    const ctx = canvas.getContext('2d');
-    const w = canvas.width, h = canvas.height;
-    
-    ctx.fillStyle = '#0a0a15';
-    ctx.fillRect(0, 0, w, h);
-    
-    const visibleClips = clips.filter(c => {
-        const layer = layers[c.layer];
-        return layer && layer.visible && 
-               currentTime >= c.start && 
-               currentTime < c.start + c.duration;
-    });
-    
-    const sortedClips = [...visibleClips].sort((a, b) => a.layer - b.layer);
-    
-    // عرض الكليبات
-    sortedClips.forEach(clip => {
-        const progress = (currentTime - clip.start) / clip.duration;
-        const x = (progress * w * 0.7) + w * 0.15;
-        const y = h * 0.3 + (clip.layer * 30);
-        
-        ctx.fillStyle = clip.color + '40';
-        ctx.strokeStyle = clip.color;
-        ctx.lineWidth = 2;
-        const rectW = 80, rectH = 50;
-        ctx.fillRect(x - rectW/2, y - rectH/2, rectW, rectH);
-        ctx.strokeRect(x - rectW/2, y - rectH/2, rectW, rectH);
-        
-        ctx.font = '24px sans-serif';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillStyle = 'white';
-        ctx.fillText(clip.icon || '📄', x, y - 5);
-        
-        ctx.font = '11px sans-serif';
-        ctx.fillStyle = '#f1f5f9';
-        ctx.fillText(clip.title || 'مقطع', x, y + 25);
-        
-        ctx.font = '9px sans-serif';
-        ctx.fillStyle = '#94a3b8';
-        ctx.fillText(clip.type, x, y + 40);
-        
-        ctx.strokeStyle = 'rgba(255,255,255,0.2)';
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.arc(x + 35, y - 15, 8, 0, Math.PI * 2);
-        ctx.stroke();
-        ctx.beginPath();
-        ctx.arc(x + 35, y - 15, 8, -Math.PI/2, -Math.PI/2 + Math.PI * 2 * progress);
-        ctx.strokeStyle = clip.color;
-        ctx.lineWidth = 2;
-        ctx.stroke();
-    });
-    
-    // معلومات الوقت على الكانفاس
-    ctx.fillStyle = 'rgba(0,0,0,0.5)';
-    ctx.fillRect(10, 10, 160, 22);
-    ctx.fillStyle = 'rgba(255,255,255,0.6)';
-    ctx.font = '11px monospace';
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(`⏱ ${formatTime(currentTime)} / ${formatTime(totalDuration)}`, 16, 22);
 }
 
 // ============================================================
