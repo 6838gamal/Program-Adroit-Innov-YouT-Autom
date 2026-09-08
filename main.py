@@ -2,7 +2,7 @@
 Content Production & Publishing Platform
 Entry point — FastAPI application factory.
 """
-import os  # ✅ تم إضافة الاستيراد
+import os
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -30,11 +30,7 @@ from interfaces.websocket.render_ws import router as ws_router
 from interfaces.api.youtube_routes import router as youtube_router
 #from interfaces.api.video_routes import router as video_router
 
-
-from fastapi.staticfiles import StaticFiles
-
-# إضافة مجلد static
-app.mount("/static", StaticFiles(directory="static"), name="static")
+# ✅ تم إزالة الأسطر الخاطئة من هنا
 
 # Configure logging
 logging.basicConfig(
