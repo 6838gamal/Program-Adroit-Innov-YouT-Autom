@@ -30,6 +30,12 @@ from interfaces.websocket.render_ws import router as ws_router
 from interfaces.api.youtube_routes import router as youtube_router
 #from interfaces.api.video_routes import router as video_router
 
+
+from fastapi.staticfiles import StaticFiles
+
+# إضافة مجلد static
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
 # Configure logging
 logging.basicConfig(
     level=settings.LOG_LEVEL if hasattr(settings, 'LOG_LEVEL') else logging.INFO,
