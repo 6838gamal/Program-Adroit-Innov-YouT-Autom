@@ -118,23 +118,44 @@ class ProductionService:
             except Exception as e:
                 logger.warning(f"⚠️ Could not save project data: {str(e)}")
 
+        # ====== Reset project status if already in production ======
+        if hasattr(project, 'status'):
+            current_status = project.status
+            if current_status == "in_production":
+                logger.info(f"🔄 Project {project_id} is already in production. Resetting status.")
+                # Try to reset production status
+                if hasattr(project, 'reset_production'):
+                    project.reset_production()
+                elif hasattr(project, 'mark_draft'):
+                    project.mark_draft()
+                else:
+                    # Try direct attribute assignment
+                    try:
+                        project.status = "draft"
+                    except Exception as e:
+                        logger.warning(f"⚠️ Could not reset project status: {str(e)}")
+
         # ====== Create RenderJob correctly ======
-        # Get renderer from settings or use default
         renderer = render_settings.get('renderer', 'ffmpeg') if render_settings else 'ffmpeg'
         
-        # Create job with only the parameters that RenderJob.__init__ accepts
         job = RenderJob(
             project_id=project_id,
             renderer=renderer,
             settings=render_settings or {}
         )
-        
-        # Note: status defaults to JobStatus.PENDING, progress defaults to 0.0
-        # created_at is set automatically by BaseEntity
 
-        # Update project status
+        # ====== Start production ======
         if hasattr(project, 'start_production'):
-            project.start_production()
+            try:
+                project.start_production()
+            except Exception as e:
+                logger.warning(f"⚠️ Could not start production: {str(e)}")
+                # Try to set status directly
+                if hasattr(project, 'status'):
+                    try:
+                        project.status = "in_production"
+                    except:
+                        pass
 
         # Save job and project
         await self._jobs.save(job)
@@ -216,11 +237,9 @@ class ProductionService:
             clips = project_data_data.get("clips", [])
             
             if clips:
-                # Use client-provided clips
                 raw_scenes = self._build_scenes_from_clips(clips)
                 logger.info(f"📽️ Using {len(raw_scenes)} scenes from client clips")
             else:
-                # Fallback: split script into scenes
                 raw_scenes = _split_script_to_scenes(script, title)
                 logger.info(f"📝 Using {len(raw_scenes)} scenes from script")
 
@@ -368,7 +387,6 @@ class ProductionService:
             else:
                 scenes.append(clip.get('title', 'مقطع'))
         
-        # If no scenes were built, create a default one
         if not scenes:
             scenes = ["مشهد بدون نص"]
         
@@ -411,20 +429,17 @@ def _split_script_to_scenes(script: str, title: str = "") -> list[str]:
     if not script or not script.strip():
         return [title or "مشهد بدون نص"]
 
-    # Split by double newline first
     paragraphs = [p.strip() for p in re.split(r"\n{2,}", script.strip()) if p.strip()]
 
     if len(paragraphs) >= 2:
         return paragraphs
 
-    # Single paragraph — split by sentence punctuation (Arabic + Latin)
     sentences = re.split(r"(?<=[.!?؟،\n])\s+", paragraphs[0])
     sentences = [s.strip() for s in sentences if s.strip()]
 
     if not sentences:
         return [paragraphs[0]]
 
-    # Group sentences into scenes of ~80 words each
     scenes, current, current_words = [], [], 0
     for sentence in sentences:
         words = len(sentence.split())
