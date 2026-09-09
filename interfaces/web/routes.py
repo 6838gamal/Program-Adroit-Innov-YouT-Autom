@@ -1,12 +1,12 @@
-"""Jinja2 HTML page routes."""
+"""Jinja2 HTML page routes with modern Supabase configuration."""
 import uuid
 import json
 import logging
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from fastapi import APIRouter, Request, Depends
-from fastapi.responses import HTMLResponse
+from fastapi import APIRouter, Request, Depends, HTTPException
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,6 +14,7 @@ from config.settings import settings
 from infrastructure.database.session import get_db
 from infrastructure.repositories.sql_project_repository import SQLProjectRepository
 from infrastructure.repositories.sql_render_job_repository import SQLRenderJobRepository
+from infrastructure.storage.supabase_storage_adapter import SupabaseStorageAdapter
 
 templates = Jinja2Templates(
     directory=str(Path(__file__).resolve().parent.parent.parent / "templates")
@@ -22,7 +23,25 @@ router = APIRouter(tags=["web"])
 logger = logging.getLogger(__name__)
 
 
-# ─────────────────────────────────────────────────────────── DASHBOARD ──────
+# ============================================================
+# HELPERS
+# ============================================================
+
+def get_supabase_config() -> dict:
+    """Get Supabase configuration for frontend."""
+    return {
+        "url": settings.SUPABASE_URL,
+        "public_key": settings.supabase_public_key_value,
+        "bucket": settings.SUPABASE_BUCKET,
+        "configured": settings.supabase_configured,
+        "storage_type": settings.STORAGE_TYPE,
+    }
+
+
+# ============================================================
+# DASHBOARD
+# ============================================================
+
 @router.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request, session: AsyncSession = Depends(get_db)):
     project_repo = SQLProjectRepository(session)
@@ -37,10 +56,14 @@ async def dashboard(request: Request, session: AsyncSession = Depends(get_db)):
         "recent_projects": recent_projects,
         "recent_jobs": recent_jobs,
         "active_page": "dashboard",
+        "supabase": get_supabase_config(),
     })
 
 
-# ──────────────────────────────────────────────────────────── PROJECTS ───────
+# ============================================================
+# PROJECTS
+# ============================================================
+
 @router.get("/projects", response_class=HTMLResponse)
 async def projects_page(
     request: Request,
@@ -61,6 +84,7 @@ async def projects_page(
         "search": search,
         "status_filter": status,
         "active_page": "projects",
+        "supabase": get_supabase_config(),
     })
 
 
@@ -68,6 +92,7 @@ async def projects_page(
 async def new_project_page(request: Request):
     return templates.TemplateResponse(request, "projects/create.html", {
         "active_page": "projects",
+        "supabase": get_supabase_config(),
     })
 
 
@@ -104,7 +129,6 @@ async def project_timeline(
         paragraphs = [p.strip() for p in project.script.split("\n\n") if p.strip()]
         t = 0.0
         for i, para in enumerate(paragraphs):
-            # Estimate ~1 word/second
             words = len(para.split())
             duration = max(words / 2.5, 2.0)
             scenes.append({
@@ -122,6 +146,7 @@ async def project_timeline(
         "scenes": scenes,
         "scenes_json": json.dumps(scenes, ensure_ascii=False),
         "active_page": "projects",
+        "supabase": get_supabase_config(),
     })
 
 
@@ -141,24 +166,43 @@ async def project_detail(
         "project": project,
         "render_jobs": render_jobs,
         "active_page": "projects",
+        "supabase": get_supabase_config(),
     })
 
 
-# ──────────────────────────────────────────────────────────── ASSETS ─────────
+# ============================================================
+# ASSETS - WITH SUPABASE STORAGE
+# ============================================================
+
 @router.get("/assets", response_class=HTMLResponse)
 async def assets_page(request: Request, session: AsyncSession = Depends(get_db)):
     from infrastructure.repositories.sql_asset_repository import SQLAssetRepository
     repo = SQLAssetRepository(session)
     assets = await repo.list_all(limit=50)
     total = await repo.count()
+    
+    # Get assets from Supabase storage
+    supabase_files = []
+    try:
+        if settings.supabase_configured:
+            storage = SupabaseStorageAdapter()
+            supabase_files = await storage.list_files()
+    except Exception as e:
+        logger.warning(f"Failed to list Supabase files: {e}")
+    
     return templates.TemplateResponse(request, "assets/library.html", {
         "assets": assets,
         "total": total,
+        "supabase_files": supabase_files,
         "active_page": "assets",
+        "supabase": get_supabase_config(),
     })
 
 
-# ─────────────────────────────────────────────────────────── TEMPLATES ───────
+# ============================================================
+# TEMPLATES
+# ============================================================
+
 @router.get("/templates", response_class=HTMLResponse)
 async def templates_page(request: Request):
     builtin_templates = [
@@ -212,10 +256,14 @@ async def templates_page(request: Request):
         "builtin_templates": builtin_templates,
         "custom_templates": [],
         "active_page": "templates",
+        "supabase": get_supabase_config(),
     })
 
 
-# ──────────────────────────────────────────────────────────── VOICES ─────────
+# ============================================================
+# VOICES
+# ============================================================
+
 @router.get("/voices", response_class=HTMLResponse)
 async def voices_page(request: Request):
     voice_engines = [
@@ -284,10 +332,14 @@ async def voices_page(request: Request):
         "voice_engines": voice_engines,
         "active_voice": "Silent",
         "active_page": "voices",
+        "supabase": get_supabase_config(),
     })
 
 
-# ─────────────────────────────────────────────────────── RENDER QUEUE ────────
+# ============================================================
+# RENDER QUEUE
+# ============================================================
+
 @router.get("/render-queue", response_class=HTMLResponse)
 async def render_queue_page(request: Request, session: AsyncSession = Depends(get_db)):
     repo = SQLRenderJobRepository(session)
@@ -295,10 +347,14 @@ async def render_queue_page(request: Request, session: AsyncSession = Depends(ge
     return templates.TemplateResponse(request, "render/queue.html", {
         "jobs": jobs,
         "active_page": "render_queue",
+        "supabase": get_supabase_config(),
     })
 
 
-# ──────────────────────────────────────────────────── PUBLISHING QUEUE ────────
+# ============================================================
+# PUBLISHING QUEUE
+# ============================================================
+
 @router.get("/publishing-queue", response_class=HTMLResponse)
 async def publishing_queue_page(request: Request, session: AsyncSession = Depends(get_db)):
     from infrastructure.repositories.sql_publishing_repository import SQLPublishingJobRepository
@@ -307,10 +363,14 @@ async def publishing_queue_page(request: Request, session: AsyncSession = Depend
     return templates.TemplateResponse(request, "publishing/queue.html", {
         "jobs": jobs,
         "active_page": "publishing_queue",
+        "supabase": get_supabase_config(),
     })
 
 
-# ──────────────────────────────────────────────────────────── PLATFORMS ───────
+# ============================================================
+# PLATFORMS
+# ============================================================
+
 @router.get("/platforms", response_class=HTMLResponse)
 async def platforms_page(request: Request, session: AsyncSession = Depends(get_db)):
     from infrastructure.repositories.sql_publishing_repository import SQLAccountRepository
@@ -319,10 +379,14 @@ async def platforms_page(request: Request, session: AsyncSession = Depends(get_d
     return templates.TemplateResponse(request, "publishing/platforms.html", {
         "accounts": accounts,
         "active_page": "platforms",
+        "supabase": get_supabase_config(),
     })
 
 
-# ──────────────────────────────────────────────────────────── SCHEDULES ───────
+# ============================================================
+# SCHEDULES
+# ============================================================
+
 @router.get("/schedules", response_class=HTMLResponse)
 async def schedules_page(request: Request, session: AsyncSession = Depends(get_db)):
     from infrastructure.repositories.sql_publishing_repository import (
@@ -336,15 +400,12 @@ async def schedules_page(request: Request, session: AsyncSession = Depends(get_d
     all_jobs = await pub_repo.list_recent(limit=100)
     accounts = await acc_repo.list_all()
 
-    # Separate scheduled vs recent
     scheduled_jobs = [j for j in all_jobs if j.status.value == "scheduled"]
     recent_published = [j for j in all_jobs if j.status.value in ("completed", "failed")][:20]
 
-    # Build rendered projects list for the schedule form
     project_repo = SQLProjectRepository(session)
     rendered_projects = await project_repo.list_all(limit=50, status="rendered")
 
-    # Add project title to jobs (best effort)
     for job in scheduled_jobs + recent_published:
         job.project_title = None
         job.platform_name = getattr(job, "platform_name", "—")
@@ -367,10 +428,14 @@ async def schedules_page(request: Request, session: AsyncSession = Depends(get_d
         "rendered_projects": rendered_projects,
         "accounts": accounts,
         "active_page": "schedules",
+        "supabase": get_supabase_config(),
     })
 
 
-# ──────────────────────────────────────────────────────────── ANALYTICS ───────
+# ============================================================
+# ANALYTICS
+# ============================================================
+
 @router.get("/analytics", response_class=HTMLResponse)
 async def analytics_page(request: Request, session: AsyncSession = Depends(get_db)):
     from infrastructure.repositories.sql_asset_repository import SQLAssetRepository
@@ -386,7 +451,6 @@ async def analytics_page(request: Request, session: AsyncSession = Depends(get_d
     all_jobs = await job_repo.list_recent(limit=200)
     all_pub = await pub_repo.list_recent(limit=200)
 
-    # KPIs
     completed = sum(1 for j in all_jobs if j.status.value == "completed")
     failed = sum(1 for j in all_jobs if j.status.value == "failed")
     total_renders = len(all_jobs)
@@ -399,7 +463,6 @@ async def analytics_page(request: Request, session: AsyncSession = Depends(get_d
         {"label": "إجمالي الأصول", "value": total_assets, "trend": 0, "sub": "ملف"},
     ]
 
-    # Projects by status
     status_colors = {
         "draft": "bg-slate-500",
         "in_production": "bg-amber-500",
@@ -421,7 +484,6 @@ async def analytics_page(request: Request, session: AsyncSession = Depends(get_d
                 "color": status_colors.get(s, "bg-slate-500"),
             })
 
-    # Render stats
     render_stats = [
         {"label": "مكتمل", "value": completed, "color": "text-green-400"},
         {"label": "فاشل", "value": failed, "color": "text-red-400"},
@@ -429,7 +491,6 @@ async def analytics_page(request: Request, session: AsyncSession = Depends(get_d
         {"label": "في الانتظار", "value": sum(1 for j in all_jobs if j.status.value in ("pending", "queued")), "color": "text-slate-300"},
     ]
 
-    # Publish activity (last 7 days)
     today = datetime.utcnow().date()
     publish_activity = []
     for delta in range(6, -1, -1):
@@ -438,7 +499,6 @@ async def analytics_page(request: Request, session: AsyncSession = Depends(get_d
         short = ["أح", "إث", "ثل", "أر", "خم", "جم", "سب"][day.weekday()]
         publish_activity.append({"label": short, "count": count})
 
-    # Asset type distribution
     asset_type_meta = {
         "image":  ("صور",    "bg-blue-500",   "bg-blue-400"),
         "video":  ("فيديو",  "bg-purple-500", "bg-purple-400"),
@@ -470,22 +530,16 @@ async def analytics_page(request: Request, session: AsyncSession = Depends(get_d
         "asset_types": asset_types,
         "avg_render_time": None,
         "active_page": "analytics",
+        "supabase": get_supabase_config(),
     })
 
 
-# ────────────────────────────────────────────────────────────── LOGS ──────────
+# ============================================================
+# LOGS
+# ============================================================
+
 @router.get("/logs", response_class=HTMLResponse)
 async def logs_page(request: Request):
-    """System log viewer — reads from Python logging records (in-memory demo)."""
-    import logging as _logging
-
-    # Build synthetic log entries from standard Python logging
-    log_entries = []
-    for handler in _logging.root.handlers:
-        # Try to read from any MemoryHandler or similar; otherwise show a sample
-        pass
-
-    # Add some representative demo entries if none found
     now = datetime.utcnow()
     log_entries = [
         {"level": "INFO",    "source": "main",    "timestamp": now - timedelta(seconds=5),  "message": "Platform started successfully"},
@@ -495,17 +549,38 @@ async def logs_page(request: Request):
         {"level": "INFO",    "source": "main",    "timestamp": now - timedelta(seconds=1),  "message": "Platform ready at http://0.0.0.0:5000"},
     ]
 
+    # Add Supabase status
+    if settings.supabase_configured:
+        log_entries.append({
+            "level": "INFO",
+            "source": "supabase",
+            "timestamp": now,
+            "message": f"Supabase configured: {settings.SUPABASE_URL} (bucket: {settings.SUPABASE_BUCKET})"
+        })
+    else:
+        log_entries.append({
+            "level": "WARNING",
+            "source": "supabase",
+            "timestamp": now,
+            "message": "Supabase not configured. Set SUPABASE_URL, SUPABASE_PUBLIC_KEY, SUPABASE_SECRET_KEY"
+        })
+
     return templates.TemplateResponse(request, "logs.html", {
         "log_entries": log_entries,
         "active_page": "logs",
+        "supabase": get_supabase_config(),
     })
 
 
-# ───────────────────────────────────────────────────────── SYSTEM HEALTH ──────
+# ============================================================
+# SYSTEM HEALTH
+# ============================================================
+
 @router.get("/health", response_class=HTMLResponse)
 async def health_page(request: Request, session: AsyncSession = Depends(get_db)):
     import platform
     import sys
+    import shutil
 
     # Test DB
     db_ok = True
@@ -517,19 +592,20 @@ async def health_page(request: Request, session: AsyncSession = Depends(get_db))
         db_detail = str(e)[:60]
 
     # Check FFmpeg
-    import shutil
     ffmpeg_ok = shutil.which("ffmpeg") is not None
 
     # Check media dirs
     media_ok = settings.MEDIA_DIR.exists()
 
-    overall = "healthy" if (db_ok and media_ok) else "degraded"
+    # Check Supabase
+    supabase_ok = settings.supabase_configured
+    supabase_detail = "متصل" if supabase_ok else "غير مهيأ"
 
-    _icon = lambda path: f'<svg class="w-4 h-4 text-{{color}}" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="{path}"/></svg>'
+    overall = "healthy" if (db_ok and media_ok and supabase_ok) else "degraded"
 
     components = [
         {
-            "name": "قاعدة البيانات (SQLite)",
+            "name": "قاعدة البيانات",
             "status": "ok" if db_ok else "error",
             "detail": db_detail,
             "icon": '<svg class="w-4 h-4 text-slate-300" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"/></svg>',
@@ -539,6 +615,12 @@ async def health_page(request: Request, session: AsyncSession = Depends(get_db))
             "status": "ok" if media_ok else "error",
             "detail": str(settings.MEDIA_DIR) if media_ok else "المجلد غير موجود",
             "icon": '<svg class="w-4 h-4 text-slate-300" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>',
+        },
+        {
+            "name": "Supabase Storage",
+            "status": "ok" if supabase_ok else "error",
+            "detail": supabase_detail,
+            "icon": '<svg class="w-4 h-4 text-slate-300" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"/></svg>',
         },
         {
             "name": "FFmpeg",
@@ -553,12 +635,6 @@ async def health_page(request: Request, session: AsyncSession = Depends(get_db))
             "icon": '<svg class="w-4 h-4 text-slate-300" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/></svg>',
         },
         {
-            "name": "FastAPI / Uvicorn",
-            "status": "ok",
-            "detail": "يعمل على المنفذ 5000",
-            "icon": '<svg class="w-4 h-4 text-slate-300" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M12 5l7 7-7 7"/></svg>',
-        },
-        {
             "name": "WebSocket",
             "status": "ok",
             "detail": "/ws/render/{job_id}",
@@ -566,7 +642,6 @@ async def health_page(request: Request, session: AsyncSession = Depends(get_db))
         },
     ]
 
-    # Plugins from request state
     plugins = {}
     try:
         registry = request.app.state.plugin_registry
@@ -579,8 +654,10 @@ async def health_page(request: Request, session: AsyncSession = Depends(get_db))
         {"label": "Platform",     "value": platform.system() + " " + platform.release()},
         {"label": "APP_NAME",     "value": settings.APP_NAME},
         {"label": "APP_VERSION",  "value": settings.APP_VERSION},
-        {"label": "DATABASE",     "value": "SQLite (aiosqlite)"},
-        {"label": "HOST:PORT",    "value": f"{settings.HOST}:{settings.PORT}"},
+        {"label": "Supabase",     "value": "✅ مهيأ" if supabase_ok else "❌ غير مهيأ"},
+        {"label": "Public Key",   "value": "✅ موجود" if settings.supabase_public_key_value else "❌ مفقود"},
+        {"label": "Secret Key",   "value": "✅ موجود" if settings.supabase_secret_key_value else "❌ مفقود"},
+        {"label": "Storage Type", "value": settings.STORAGE_TYPE},
     ]
 
     return templates.TemplateResponse(request, "health.html", {
@@ -590,10 +667,14 @@ async def health_page(request: Request, session: AsyncSession = Depends(get_db))
         "plugins": plugins,
         "system_info": system_info,
         "active_page": "health",
+        "supabase": get_supabase_config(),
     })
 
 
-# ──────────────────────────────────────────────────────── MODEL LIBRARY ───────
+# ============================================================
+# MODEL LIBRARY
+# ============================================================
+
 @router.get("/models", response_class=HTMLResponse)
 async def models_page(request: Request, session: AsyncSession = Depends(get_db)):
     from infrastructure.repositories.sql_hf_model_repository import SQLHFModelRepository
@@ -602,10 +683,14 @@ async def models_page(request: Request, session: AsyncSession = Depends(get_db))
     return templates.TemplateResponse(request, "models.html", {
         "models": [m.to_dict() for m in all_models],
         "active_page": "models",
+        "supabase": get_supabase_config(),
     })
 
 
-# ──────────────────────────────────────────────────────────── SETTINGS ────────
+# ============================================================
+# SETTINGS
+# ============================================================
+
 @router.get("/settings", response_class=HTMLResponse)
 async def settings_page(request: Request):
     return templates.TemplateResponse(request, "settings.html", {
@@ -617,6 +702,60 @@ async def settings_page(request: Request):
             "media_dir": str(settings.MEDIA_DIR),
             "exports_dir": str(settings.EXPORTS_DIR),
             "temp_dir": str(settings.TEMP_DIR),
+            "storage_type": settings.STORAGE_TYPE,
+            "supabase_configured": settings.supabase_configured,
+            "supabase_url": settings.SUPABASE_URL,
+            "supabase_bucket": settings.SUPABASE_BUCKET,
         },
         "active_page": "settings",
+        "supabase": get_supabase_config(),
     })
+
+
+# ============================================================
+# SUPABASE CONFIGURATION API (for frontend)
+# ============================================================
+
+@router.get("/api/supabase/config")
+async def get_supabase_config_api():
+    """API endpoint for frontend to get Supabase configuration."""
+    return {
+        "url": settings.SUPABASE_URL,
+        "public_key": settings.supabase_public_key_value,
+        "bucket": settings.SUPABASE_BUCKET,
+        "configured": settings.supabase_configured,
+        "storage_type": settings.STORAGE_TYPE,
+        "buckets": {
+            "videos": settings.SUPABASE_BUCKET,
+            "thumbnails": settings.SUPABASE_BUCKET_THUMBNAILS,
+            "temp": settings.SUPABASE_BUCKET_TEMP,
+            "exports": settings.SUPABASE_BUCKET_EXPORTS,
+        }
+    }
+
+
+@router.get("/api/supabase/status")
+async def get_supabase_status():
+    """Check Supabase connection status."""
+    try:
+        if not settings.supabase_configured:
+            return {
+                "status": "not_configured",
+                "message": "Supabase is not configured. Set SUPABASE_URL, SUPABASE_PUBLIC_KEY, SUPABASE_SECRET_KEY"
+            }
+        
+        # Test connection
+        storage = SupabaseStorageAdapter()
+        await storage.list_files(prefix="", limit=1)
+        
+        return {
+            "status": "connected",
+            "message": "Supabase is connected and working",
+            "url": settings.SUPABASE_URL,
+            "bucket": settings.SUPABASE_BUCKET
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Supabase connection error: {str(e)}"
+        }
