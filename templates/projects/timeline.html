@@ -799,6 +799,58 @@
 
     #audioPlayer { display: none; }
 
+    /* ====== زر تحميل الرندر ====== */
+    .render-loading {
+        display: none;
+        align-items: center;
+        gap: 8px;
+        background: rgba(37,99,235,0.15);
+        padding: 4px 12px;
+        border-radius: 6px;
+        border: 1px solid rgba(37,99,235,0.3);
+    }
+    .render-loading.active { display: flex; }
+    .render-loading .spinner {
+        width: 16px;
+        height: 16px;
+        border: 2px solid rgba(37,99,235,0.2);
+        border-top-color: var(--primary);
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .render-progress-bar {
+        width: 120px;
+        height: 4px;
+        background: rgba(255,255,255,0.1);
+        border-radius: 4px;
+        overflow: hidden;
+    }
+    .render-progress-bar .fill {
+        height: 100%;
+        background: var(--primary);
+        width: 0%;
+        transition: width 0.3s;
+    }
+
+    /* ====== وضع ملء الشاشة ====== */
+    .preview-area.fullscreen {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100vw;
+        height: 100vh;
+        z-index: 9999;
+        background: #000;
+        border-radius: 0;
+        border: none;
+    }
+    .preview-area.fullscreen canvas {
+        width: 100% !important;
+        height: 100% !important;
+    }
+
     @media (max-width: 768px) {
         .editor-container { height: calc(100vh - 140px); }
         .preview-area { min-height: 160px; }
@@ -816,6 +868,7 @@
         .media-item { max-width: 100px; height: 26px; font-size: 8px; }
         .playback-info { font-size: 10px; min-width: 100px; bottom: 50px; }
         .layer-item { padding: 2px 8px; min-height: 28px; font-size: 11px; }
+        .render-progress-bar { width: 60px; }
     }
 </style>
 {% endblock %}
@@ -825,7 +878,12 @@
     <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/></svg>
     <span class="hidden xs:inline">المشروع</span>
 </a>
-<button onclick="startRender('{{ project.id }}')" class="btn-primary btn-sm">
+<div class="render-loading" id="renderLoading">
+    <div class="spinner"></div>
+    <span id="renderStatus" style="font-size:12px;color:var(--text-muted);">جاري الرندر...</span>
+    <div class="render-progress-bar"><div class="fill" id="renderProgressFill"></div></div>
+</div>
+<button onclick="startRender('{{ project.id }}')" class="btn-primary btn-sm" id="renderBtn">
     <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/></svg>
     <span class="hidden xs:inline">رندر</span>
 </button>
@@ -889,7 +947,7 @@
             <button onclick="stepBackward()" title="رجوع">⏪</button>
             <button onclick="togglePlay()" id="playBtn" style="font-size:20px;">▶</button>
             <button onclick="stepForward()" title="تقديم">⏩</button>
-            <button onclick="seekTo(totalDuration)" title="النهاية">⏭</button>
+            <button onclick="seekTo(projectData.totalDuration)" title="النهاية">⏭</button>
         </div>
 
         <div class="control-group">
@@ -1002,6 +1060,7 @@
             <p class="text-xs text-slate-500 mt-2">يدعم: MP4, MOV, MP3, WAV, PNG, JPG, GIF</p>
             <input type="file" id="fileInput" multiple accept="video/*,audio/*,image/*">
         </div>
+        <div id="importPreview" class="mt-2 flex flex-wrap gap-2 max-h-32 overflow-y-auto"></div>
         <div class="flex justify-end mt-4 gap-2">
             <button onclick="closeImportModal()" class="btn-secondary btn-sm">إلغاء</button>
             <button onclick="importFiles()" class="btn-primary btn-sm">استيراد</button>
@@ -1078,12 +1137,16 @@ let mediaRecorder = null;
 let recordedChunks = [];
 let clipIdCounter = 0;
 let currentClipAtTime = null;
+let renderPollInterval = null;
+let renderJobId = null;
 
 let canvas = null;
 let ctx = null;
 let audioPlayer = null;
 let isCanvasReady = false;
 let imageCache = {};
+let videoCache = {};
+let videoElements = {};
 
 const COLORS = {
     video: '#2563eb',
@@ -1158,7 +1221,7 @@ function resizeCanvas() {
 }
 
 // ============================================================
-//  RENDER PREVIEW - معاينة نظيفة (محتوى فقط)
+//  RENDER PREVIEW - معاينة مع دعم الفيديو
 // ============================================================
 function renderPreview(time) {
     if (!isCanvasReady || !ctx) return;
@@ -1166,11 +1229,9 @@ function renderPreview(time) {
     const w = canvas.width;
     const h = canvas.height;
     
-    // مسح الخلفية
     ctx.fillStyle = '#000000';
     ctx.fillRect(0, 0, w, h);
     
-    // الحصول على المقاطع النشطة
     const activeClips = projectData.clips.filter(c => {
         const layer = projectData.layers[c.layer];
         return layer && layer.visible && 
@@ -1178,11 +1239,9 @@ function renderPreview(time) {
                time < c.start + c.duration;
     });
     
-    // ترتيب حسب الطبقة
     activeClips.sort((a, b) => a.layer - b.layer);
     
     if (activeClips.length > 0) {
-        // رسم كل مقطع - محتوى فقط بدون تفاصيل
         activeClips.forEach((clip) => {
             const x = w / 2;
             const y = h / 2;
@@ -1190,16 +1249,14 @@ function renderPreview(time) {
             if (clip.type === 'image' && clip.content) {
                 drawImageOnly(ctx, clip.content, x, y, w, h);
             } else if (clip.type === 'video' && clip.content) {
-                drawVideoOnly(ctx, clip, x, y, w, h);
+                drawVideoFrame(ctx, clip, x, y, w, h, time);
             } else if (clip.type === 'audio') {
-                // الصوت لا يظهر في المعاينة (يعمل في الخلفية)
                 drawAudioIndicator(ctx, x, y);
             } else if (clip.type === 'text' && clip.content) {
                 drawTextOnly(ctx, clip.content, x, y, w, h);
             }
         });
         
-        // تحديث معلومات التشغيل
         const mainClip = activeClips[0];
         currentClipAtTime = mainClip;
         document.getElementById('playbackInfo').style.display = 'block';
@@ -1209,7 +1266,6 @@ function renderPreview(time) {
         syncAudio(time);
         
     } else {
-        // لا توجد مقاطع
         ctx.fillStyle = 'rgba(255,255,255,0.03)';
         ctx.font = '48px sans-serif';
         ctx.textAlign = 'center';
@@ -1228,7 +1284,6 @@ function renderPreview(time) {
         }
     }
     
-    // فقط الوقت في الزاوية (بدون تفاصيل أخرى)
     ctx.fillStyle = 'rgba(0,0,0,0.5)';
     ctx.fillRect(10, 10, 130, 24);
     ctx.fillStyle = 'rgba(255,255,255,0.3)';
@@ -1237,7 +1292,6 @@ function renderPreview(time) {
     ctx.textBaseline = 'middle';
     ctx.fillText(`${formatTime(time)} / ${formatTime(projectData.totalDuration)}`, 16, 23);
     
-    // تحديث شريط التقدم
     document.getElementById('currentTimeDisplay').textContent = formatTime(time);
     document.getElementById('totalTimeDisplay').textContent = formatTime(projectData.totalDuration);
     const slider = document.getElementById('seekSlider');
@@ -1246,7 +1300,7 @@ function renderPreview(time) {
     }
 }
 
-// ====== دوال الرسم النظيف (محتوى فقط) ======
+// ====== دوال الرسم ======
 
 function drawImageOnly(ctx, src, x, y, w, h) {
     if (!imageCache[src]) {
@@ -1273,7 +1327,6 @@ function drawImageOnly(ctx, src, x, y, w, h) {
         return;
     }
     
-    // عرض الصورة بملء الشاشة مع الحفاظ على النسبة
     const ratio = Math.min(w / img.width, h / img.height);
     const drawW = img.width * ratio;
     const drawH = img.height * ratio;
@@ -1285,42 +1338,79 @@ function drawImageOnly(ctx, src, x, y, w, h) {
     ctx.restore();
 }
 
-function drawVideoOnly(ctx, clip, x, y, w, h) {
-    // عرض خلفية سوداء مع أيقونة فيديو بسيطة
-    ctx.fillStyle = '#0a0a0a';
-    ctx.fillRect(x - w/2, y - h/2, w, h);
+function drawVideoFrame(ctx, clip, x, y, w, h, time) {
+    const src = clip.content;
     
-    ctx.fillStyle = 'rgba(255,255,255,0.05)';
-    ctx.font = '60px sans-serif';
+    if (!videoElements[src]) {
+        const video = document.createElement('video');
+        video.src = src;
+        video.muted = true;
+        video.crossOrigin = 'anonymous';
+        video.preload = 'auto';
+        videoElements[src] = video;
+        video.load();
+    }
+    
+    const video = videoElements[src];
+    const localTime = Math.max(0, time - clip.start);
+    
+    if (video.readyState >= 2) {
+        try {
+            const targetTime = Math.min(localTime, clip.duration);
+            if (Math.abs(video.currentTime - targetTime) > 0.05) {
+                video.currentTime = targetTime;
+            }
+            
+            const ratio = Math.min(w / video.videoWidth, h / video.videoHeight);
+            const drawW = video.videoWidth * ratio;
+            const drawH = video.videoHeight * ratio;
+            
+            ctx.save();
+            ctx.shadowColor = 'rgba(0,0,0,0.3)';
+            ctx.shadowBlur = 10;
+            ctx.drawImage(video, x - drawW/2, y - drawH/2, drawW, drawH);
+            ctx.restore();
+            
+            if (isPlaying && video.paused) {
+                video.play().catch(() => {});
+            } else if (!isPlaying && !video.paused) {
+                video.pause();
+            }
+            
+            video.muted = isMuted;
+            video.playbackRate = playbackSpeed;
+            
+            return;
+        } catch(e) {}
+    }
+    
+    // Fallback: عرض أيقونة التحميل
+    ctx.fillStyle = 'rgba(0,0,0,0.7)';
+    ctx.fillRect(x - w/4, y - h/4, w/2, h/2);
+    ctx.fillStyle = 'rgba(255,255,255,0.1)';
+    ctx.font = '40px sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText('▶', x, y);
-    
-    // شريط تقدم بسيط في الأسفل
-    const progress = (currentTime - clip.start) / clip.duration;
-    const barW = w * 0.3;
-    const barH = 3;
-    const barX = x - barW/2;
-    const barY = y + h/2 - 20;
-    
-    ctx.fillStyle = 'rgba(255,255,255,0.05)';
-    ctx.fillRect(barX, barY, barW, barH);
+    ctx.fillText('🎬', x, y - 5);
+    ctx.font = '12px sans-serif';
     ctx.fillStyle = 'rgba(255,255,255,0.2)';
-    ctx.fillRect(barX, barY, barW * progress, barH);
+    ctx.fillText('جاري التحميل...', x, y + 30);
 }
 
 function drawAudioIndicator(ctx, x, y) {
-    // مؤشر صوت بسيط جداً
     const size = 20;
-    ctx.fillStyle = 'rgba(5,150,105,0.15)';
-    ctx.strokeStyle = 'rgba(5,150,105,0.1)';
+    const time = Date.now() / 1000;
+    const pulse = 0.5 + 0.5 * Math.sin(time * 4);
+    
+    ctx.fillStyle = `rgba(5,150,105,${0.05 + 0.1 * pulse})`;
+    ctx.strokeStyle = `rgba(5,150,105,${0.1 + 0.1 * pulse})`;
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.arc(x, y, size, 0, Math.PI * 2);
+    ctx.arc(x, y, size + 4 * pulse, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
     
-    ctx.fillStyle = 'rgba(5,150,105,0.2)';
+    ctx.fillStyle = `rgba(5,150,105,${0.2 + 0.3 * pulse})`;
     ctx.font = '16px sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
@@ -1339,7 +1429,6 @@ function drawTextOnly(ctx, text, x, y, w, h) {
     ctx.shadowBlur = 20;
     ctx.fillStyle = 'rgba(255,255,255,0.95)';
     
-    // تقسيم النص إلى سطور
     const words = text.split(' ');
     let lines = [];
     let currentLine = '';
@@ -1360,6 +1449,19 @@ function drawTextOnly(ctx, text, x, y, w, h) {
     const totalHeight = lines.length * lineHeight;
     const startY = y - totalHeight / 2 + lineHeight / 2;
     
+    // إضافة خلفية شفافة للنص
+    if (lines.length > 1) {
+        ctx.shadowBlur = 0;
+        ctx.fillStyle = 'rgba(0,0,0,0.3)';
+        const textW = Math.min(w * 0.8, ctx.measureText(lines.join(' ')).width + 40);
+        const textH = lines.length * lineHeight + 20;
+        ctx.beginPath();
+        ctx.roundRect(x - textW/2, y - totalHeight/2 - 10, textW, textH, 8);
+        ctx.fill();
+        ctx.shadowBlur = 20;
+        ctx.shadowColor = 'rgba(0,0,0,0.9)';
+    }
+    
     lines.forEach((line, i) => {
         ctx.fillText(line, x, startY + i * lineHeight);
     });
@@ -1368,12 +1470,14 @@ function drawTextOnly(ctx, text, x, y, w, h) {
 }
 
 // ============================================================
-//  SYNC AUDIO
+//  SYNC AUDIO - دعم مقاطع صوتية متعددة
 // ============================================================
+let audioContext = null;
+let audioBuffers = {};
+let audioNodes = [];
+
 function syncAudio(time) {
-    if (!audioPlayer) return;
-    
-    const activeAudio = projectData.clips.filter(c => {
+    const activeAudios = projectData.clips.filter(c => {
         const layer = projectData.layers[c.layer];
         return layer && layer.visible && 
                c.type === 'audio' &&
@@ -1381,44 +1485,106 @@ function syncAudio(time) {
                time < c.start + c.duration;
     });
     
-    if (activeAudio.length > 0) {
-        const audioClip = activeAudio[0];
-        const audioSrc = audioClip.content;
+    if (activeAudios.length > 0) {
+        // استخدام Web Audio API لتشغيل عدة مقاطع صوتية
+        if (!audioContext) {
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        }
         
-        if (!audioSrc || audioSrc === 'blob') {
-            if (audioClip.metadata && audioClip.metadata.file) {
-                const mediaFile = projectData.mediaFiles.find(f => f.name === audioClip.metadata.file);
-                if (mediaFile && mediaFile.url) {
-                    audioClip.content = mediaFile.url;
+        // تشغيل كل مقطع صوتي
+        activeAudios.forEach(audioClip => {
+            const src = audioClip.content;
+            if (!src || src === 'blob') return;
+            
+            // تحميل الصوت إذا لم يكن محملاً
+            if (!audioBuffers[src]) {
+                fetch(src)
+                    .then(res => res.arrayBuffer())
+                    .then(buffer => audioContext.decodeAudioData(buffer))
+                    .then(decoded => {
+                        audioBuffers[src] = decoded;
+                        playAudioBuffer(src, decoded, audioClip, time);
+                    })
+                    .catch(() => {});
+                return;
+            }
+            
+            playAudioBuffer(src, audioBuffers[src], audioClip, time);
+        });
+        
+        // إزالة العقد القديمة
+        audioNodes = audioNodes.filter(node => {
+            if (node.isPlaying && node.clipId) {
+                const clip = projectData.clips.find(c => c.id === node.clipId);
+                if (clip && time >= clip.start && time < clip.start + clip.duration) {
+                    return true;
                 }
             }
-            return;
-        }
-        
-        if (audioPlayer.src !== audioSrc) {
-            audioPlayer.src = audioSrc;
-            audioPlayer.load();
-        }
-        
-        const localTime = Math.max(0, time - audioClip.start);
-        if (audioPlayer.readyState >= 2 && Math.abs(audioPlayer.currentTime - localTime) > 0.15) {
-            audioPlayer.currentTime = localTime;
-        }
-        
-        if (isPlaying && audioPlayer.paused) {
-            audioPlayer.play().catch(() => {});
-        } else if (!isPlaying && !audioPlayer.paused) {
-            audioPlayer.pause();
-        }
-        
-        audioPlayer.muted = isMuted;
-        audioPlayer.playbackRate = playbackSpeed;
+            if (node.source) {
+                try { node.source.stop(); } catch(e) {}
+            }
+            return false;
+        });
         
     } else {
-        if (!audioPlayer.paused) {
+        // إيقاف جميع الصوتيات
+        audioNodes.forEach(node => {
+            if (node.source) {
+                try { node.source.stop(); } catch(e) {}
+            }
+        });
+        audioNodes = [];
+        if (audioPlayer && !audioPlayer.paused) {
             audioPlayer.pause();
         }
     }
+}
+
+function playAudioBuffer(src, buffer, clip, time) {
+    const localTime = time - clip.start;
+    if (localTime < 0 || localTime > clip.duration) return;
+    
+    // التحقق من وجود عقدة تشغيل لهذا المقطع
+    const existingNode = audioNodes.find(n => n.clipId === clip.id && n.isPlaying);
+    if (existingNode) {
+        if (Math.abs(existingNode.startTime - localTime) > 0.1) {
+            existingNode.source.stop();
+            existingNode.isPlaying = false;
+        } else {
+            return;
+        }
+    }
+    
+    if (!audioContext) return;
+    
+    try {
+        const source = audioContext.createBufferSource();
+        source.buffer = buffer;
+        
+        const gain = audioContext.createGain();
+        gain.gain.value = isMuted ? 0 : 0.8;
+        
+        source.connect(gain);
+        gain.connect(audioContext.destination);
+        
+        source.start(0, localTime);
+        
+        audioNodes.push({
+            clipId: clip.id,
+            source: source,
+            gain: gain,
+            startTime: localTime,
+            isPlaying: true
+        });
+        
+        source.onended = () => {
+            const idx = audioNodes.findIndex(n => n.clipId === clip.id);
+            if (idx !== -1) {
+                audioNodes[idx].isPlaying = false;
+            }
+        };
+        
+    } catch(e) {}
 }
 
 // ============================================================
@@ -1548,6 +1714,7 @@ function removeMediaFile(index) {
     projectData.mediaFiles.splice(index, 1);
     renderMediaGallery();
     updateStatus();
+    saveProjectData();
 }
 
 function addMediaFile(file) {
@@ -1760,6 +1927,23 @@ function renderTimeline() {
                 editClipProperties(clip.id);
             };
             
+            // سحب لإعادة تحديد المدة من الأطراف
+            const resizeHandle = document.createElement('div');
+            resizeHandle.style.cssText = 'position:absolute;right:-4px;top:0;width:8px;height:100%;cursor:ew-resize;z-index:5;';
+            resizeHandle.onmousedown = (e) => {
+                e.stopPropagation();
+                startResizeClip(e, clip.id, 'right');
+            };
+            block.appendChild(resizeHandle);
+            
+            const resizeHandleLeft = document.createElement('div');
+            resizeHandleLeft.style.cssText = 'position:absolute;left:-4px;top:0;width:8px;height:100%;cursor:ew-resize;z-index:5;';
+            resizeHandleLeft.onmousedown = (e) => {
+                e.stopPropagation();
+                startResizeClip(e, clip.id, 'left');
+            };
+            block.appendChild(resizeHandleLeft);
+            
             block.draggable = true;
             block.ondragstart = (e) => {
                 e.dataTransfer.setData('text/plain', JSON.stringify({
@@ -1797,6 +1981,56 @@ function renderTimeline() {
 
     updatePlayhead();
     updateStatus();
+}
+
+// ====== تغيير حجم المقطع ======
+let resizeClipData = null;
+
+function startResizeClip(e, clipId, side) {
+    const clip = projectData.clips.find(c => c.id === clipId);
+    if (!clip) return;
+    
+    resizeClipData = {
+        clipId: clipId,
+        side: side,
+        startX: e.clientX,
+        originalStart: clip.start,
+        originalDuration: clip.duration,
+        pxPerSec: projectData.cellWidth / 2
+    };
+    
+    document.addEventListener('mousemove', onResizeMove);
+    document.addEventListener('mouseup', onResizeEnd);
+    e.preventDefault();
+}
+
+function onResizeMove(e) {
+    if (!resizeClipData) return;
+    
+    const clip = projectData.clips.find(c => c.id === resizeClipData.clipId);
+    if (!clip) return;
+    
+    const dx = (e.clientX - resizeClipData.startX) / resizeClipData.pxPerSec;
+    
+    if (resizeClipData.side === 'right') {
+        const newDuration = Math.max(0.3, resizeClipData.originalDuration + dx);
+        clip.duration = newDuration;
+    } else {
+        const newStart = Math.max(0, resizeClipData.originalStart + dx);
+        const newDuration = Math.max(0.3, resizeClipData.originalDuration - dx);
+        clip.start = newStart;
+        clip.duration = newDuration;
+    }
+    
+    updateTotalDuration();
+    renderTimeline();
+}
+
+function onResizeEnd() {
+    resizeClipData = null;
+    document.removeEventListener('mousemove', onResizeMove);
+    document.removeEventListener('mouseup', onResizeEnd);
+    saveProjectData();
 }
 
 function updatePlayhead() {
@@ -1976,7 +2210,7 @@ function saveClipProperties() {
     
     clip.title = document.getElementById('clipPropTitle').value || 'مقطع';
     clip.start = parseFloat(document.getElementById('clipPropStart').value) || 0;
-    clip.duration = Math.max(0.5, parseFloat(document.getElementById('clipPropDuration').value) || 1);
+    clip.duration = Math.max(0.3, parseFloat(document.getElementById('clipPropDuration').value) || 1);
     clip.layer = parseInt(document.getElementById('clipPropLayer').value);
     clip.type = document.getElementById('clipPropType').value;
     clip.icon = TYPE_ICONS[clip.type] || '📄';
@@ -2008,9 +2242,19 @@ function startPlay() {
     document.getElementById('playBtn').textContent = '⏸';
     document.getElementById('playhead').classList.add('active');
     
+    if (audioContext && audioContext.state === 'suspended') {
+        audioContext.resume();
+    }
+    
     if (audioPlayer && audioPlayer.src) {
         audioPlayer.play().catch(() => {});
     }
+    
+    // تشغيل فيديوهات المعاينة
+    Object.values(videoElements).forEach(v => {
+        if (!v.paused) return;
+        v.play().catch(() => {});
+    });
     
     playInterval = setInterval(() => {
         currentTime += 0.04 * playbackSpeed;
@@ -2021,6 +2265,10 @@ function startPlay() {
                     audioPlayer.currentTime = 0;
                     audioPlayer.play().catch(() => {});
                 }
+                Object.values(videoElements).forEach(v => {
+                    v.currentTime = 0;
+                    v.play().catch(() => {});
+                });
             } else {
                 pausePlay();
                 return;
@@ -2038,6 +2286,9 @@ function pausePlay() {
     if (audioPlayer) {
         audioPlayer.pause();
     }
+    Object.values(videoElements).forEach(v => {
+        v.pause();
+    });
     if (playInterval) {
         clearInterval(playInterval);
         playInterval = null;
@@ -2057,6 +2308,9 @@ function changeSpeed() {
     if (audioPlayer) {
         audioPlayer.playbackRate = playbackSpeed;
     }
+    Object.values(videoElements).forEach(v => {
+        v.playbackRate = playbackSpeed;
+    });
 }
 
 function toggleLoop() {
@@ -2070,23 +2324,43 @@ function toggleMute() {
     if (audioPlayer) {
         audioPlayer.muted = isMuted;
     }
+    Object.values(videoElements).forEach(v => {
+        v.muted = isMuted;
+    });
 }
 
 function toggleFullscreen() {
     const area = document.getElementById('previewArea');
     if (!document.fullscreenElement) {
-        area.requestFullscreen().catch(() => {});
+        area.classList.add('fullscreen');
+        area.requestFullscreen().catch(() => {
+            area.classList.remove('fullscreen');
+        });
     } else {
         document.exitFullscreen();
+        area.classList.remove('fullscreen');
     }
 }
 
+document.addEventListener('fullscreenchange', () => {
+    const area = document.getElementById('previewArea');
+    if (!document.fullscreenElement) {
+        area.classList.remove('fullscreen');
+        setTimeout(resizeCanvas, 100);
+    }
+});
+
 function seekTo(time) {
     currentTime = Math.max(0, Math.min(time, projectData.totalDuration));
-    pausePlay();
-    updatePlayhead();
-    renderPreview(currentTime);
+    if (isPlaying) {
+        pausePlay();
+        setTimeout(() => startPlay(), 50);
+    } else {
+        updatePlayhead();
+        renderPreview(currentTime);
+    }
     
+    // مزامنة الصوت
     if (audioPlayer && audioPlayer.src) {
         const activeAudio = projectData.clips.find(c => {
             const layer = projectData.layers[c.layer];
@@ -2197,19 +2471,31 @@ async function toggleRecording() {
 //  FILE HANDLING
 // ============================================================
 function handleFiles(files) {
+    const previewContainer = document.getElementById('importPreview');
+    previewContainer.innerHTML = '';
+    
     Array.from(files).forEach(file => {
         const type = file.type.split('/')[0];
         if (['video', 'audio', 'image'].includes(type)) {
             addMediaFile(file);
+            
+            // إضافة معاينة
+            const preview = document.createElement('span');
+            preview.className = 'text-xs bg-slate-700 text-slate-300 px-2 py-1 rounded';
+            preview.textContent = `${TYPE_ICONS[type] || '📄'} ${file.name.slice(0, 12)}`;
+            previewContainer.appendChild(preview);
         }
     });
+    
     renderMediaGallery();
     updateStatus();
     closeImportModal();
+    showToast(`✅ تم استيراد ${files.length} ملف`, 'success');
 }
 
 function openImportModal() {
     document.getElementById('importModal').classList.remove('hidden');
+    document.getElementById('importPreview').innerHTML = '';
 }
 
 function importFiles() {
@@ -2244,7 +2530,9 @@ function setupDragDrop() {
     });
     
     fileInput.addEventListener('change', (e) => {
-        handleFiles(e.target.files);
+        if (e.target.files.length > 0) {
+            handleFiles(e.target.files);
+        }
         fileInput.value = '';
     });
     
@@ -2303,6 +2591,10 @@ function setupKeyboardShortcuts() {
             case 'D':
                 duplicateClip();
                 break;
+            case 'f':
+            case 'F':
+                toggleFullscreen();
+                break;
         }
     });
 }
@@ -2323,21 +2615,42 @@ document.getElementById('zoom-slider').addEventListener('input', function() {
 function saveProjectData() {
     try {
         const data = {
-            clips: projectData.clips.map(c => ({
-                ...c,
-                content: c.content && c.content.startsWith('blob:') ? 'blob' : c.content
-            })),
+            clips: projectData.clips.map(c => {
+                // تحويل محتوى blob إلى placeholder للحفظ
+                let content = c.content;
+                if (content && content.startsWith('blob:')) {
+                    // محاولة العثور على الملف الأصلي
+                    const mediaFile = projectData.mediaFiles.find(f => f.url === content);
+                    if (mediaFile && mediaFile.file) {
+                        // لا يمكن حفظ Blob في localStorage، نستخدم placeholder
+                        content = 'blob';
+                    } else {
+                        content = 'blob';
+                    }
+                }
+                return {
+                    ...c,
+                    content: content,
+                    // حفظ بيانات الملف للاستعادة
+                    _fileRef: c.metadata && c.metadata.file ? c.metadata.file : null
+                };
+            }),
             layers: projectData.layers,
             totalDuration: projectData.totalDuration,
             cellWidth: projectData.cellWidth,
             mediaFiles: projectData.mediaFiles.map(f => ({ 
                 name: f.name, 
                 size: f.size, 
-                type: f.type 
+                type: f.type,
+                // لا نحفظ url لأنها blob
+                _hasBlob: !!f.url
             }))
         };
         localStorage.setItem(`project_${projectId}`, JSON.stringify(data));
-    } catch(e) {}
+    } catch(e) {
+        // في حال تجاوز حجم localStorage
+        showToast('⚠️ تعذر حفظ المشروع (حجم كبير)', 'warning');
+    }
 }
 
 function loadProjectData() {
@@ -2348,12 +2661,21 @@ function loadProjectData() {
             
             if (data.clips) {
                 projectData.clips = data.clips.map(c => {
-                    if (c.metadata && c.metadata.file) {
-                        const mediaFile = projectData.mediaFiles.find(f => f.name === c.metadata.file);
+                    // استعادة المراجع للملفات
+                    if (c._fileRef) {
+                        const mediaFile = projectData.mediaFiles.find(f => f.name === c._fileRef);
                         if (mediaFile && mediaFile.url) {
                             c.content = mediaFile.url;
                         }
                     }
+                    // إذا كان المحتوى placeholder ووجدنا ملف مطابق
+                    if (c.content === 'blob' && c._fileRef) {
+                        const mediaFile = projectData.mediaFiles.find(f => f.name === c._fileRef);
+                        if (mediaFile && mediaFile.url) {
+                            c.content = mediaFile.url;
+                        }
+                    }
+                    delete c._fileRef;
                     return c;
                 });
             }
@@ -2371,17 +2693,21 @@ function loadProjectData() {
             updateStatus();
             renderPreview(currentTime);
         }
-    } catch(e) {}
+    } catch(e) {
+        console.warn('Failed to load project data:', e);
+    }
 }
 
 function exportProject() {
     const data = {
         project: projectId,
-        version: '1.0',
+        version: '2.0',
         exportedAt: new Date().toISOString(),
         clips: projectData.clips.map(c => ({
             ...c,
-            content: c.content && c.content.startsWith('blob:') ? 'blob' : c.content
+            content: c.content && c.content.startsWith('blob:') ? 'blob' : c.content,
+            // حفظ مرجع الملف للتصدير
+            _fileRef: c.metadata && c.metadata.file ? c.metadata.file : null
         })),
         layers: projectData.layers,
         totalDuration: projectData.totalDuration,
@@ -2403,9 +2729,20 @@ function exportProject() {
 }
 
 // ============================================================
-//  RENDER - استدعاء API الرندر
+//  RENDER - مع دعم التقدم
 // ============================================================
 function startRender(projectId) {
+    const btn = document.getElementById('renderBtn');
+    const loading = document.getElementById('renderLoading');
+    const status = document.getElementById('renderStatus');
+    const progressFill = document.getElementById('renderProgressFill');
+    
+    btn.disabled = true;
+    btn.style.opacity = '0.5';
+    loading.classList.add('active');
+    status.textContent = 'جاري التجهيز...';
+    progressFill.style.width = '0%';
+    
     const renderData = {
         project_id: projectId,
         clips: projectData.clips.map(c => ({
@@ -2413,11 +2750,17 @@ function startRender(projectId) {
             start: c.start,
             duration: c.duration,
             layer: c.layer,
-            content: c.content,
-            title: c.title
+            content: c.content && c.content.startsWith('blob:') ? null : c.content,
+            title: c.title,
+            metadata: c.metadata
         })),
         layers: projectData.layers,
-        duration: projectData.totalDuration
+        duration: projectData.totalDuration,
+        mediaFiles: projectData.mediaFiles.map(f => ({
+            name: f.name,
+            type: f.type,
+            size: f.size
+        }))
     };
     
     fetch('/api/v1/production/render', {
@@ -2426,14 +2769,92 @@ function startRender(projectId) {
         body: JSON.stringify(renderData)
     })
     .then(resp => {
-        if (resp.ok) {
-            showToast('✅ بدأت عملية الرندر', 'success');
-            setTimeout(() => window.location.href = '/render-queue', 1000);
+        if (!resp.ok) {
+            return resp.json().then(err => { throw new Error(err.detail || 'فشل الرندر'); });
+        }
+        return resp.json();
+    })
+    .then(data => {
+        if (data.job_id) {
+            renderJobId = data.job_id;
+            status.textContent = 'جاري الرندر...';
+            pollRenderStatus(renderJobId);
+        } else if (data.status === 'completed') {
+            showToast('✅ تم الرندر بنجاح!', 'success');
+            loading.classList.remove('active');
+            btn.disabled = false;
+            btn.style.opacity = '1';
+            setTimeout(() => window.location.href = '/render-queue', 1500);
         } else {
-            resp.json().then(err => showToast(err.detail || '❌ فشل الرندر', 'error'));
+            throw new Error('استجابة غير متوقعة');
         }
     })
-    .catch(() => showToast('❌ خطأ في الاتصال', 'error'));
+    .catch(err => {
+        showToast('❌ ' + err.message, 'error');
+        loading.classList.remove('active');
+        btn.disabled = false;
+        btn.style.opacity = '1';
+    });
+}
+
+function pollRenderStatus(jobId) {
+    if (renderPollInterval) {
+        clearInterval(renderPollInterval);
+    }
+    
+    let attempts = 0;
+    const maxAttempts = 60; // 5 دقائق
+    
+    renderPollInterval = setInterval(() => {
+        attempts++;
+        
+        fetch(`/api/v1/production/render/status/${jobId}`)
+            .then(resp => {
+                if (!resp.ok) return null;
+                return resp.json();
+            })
+            .then(data => {
+                if (!data) return;
+                
+                const status = document.getElementById('renderStatus');
+                const progressFill = document.getElementById('renderProgressFill');
+                
+                if (data.progress !== undefined) {
+                    progressFill.style.width = Math.min(data.progress, 100) + '%';
+                }
+                
+                if (data.status === 'completed') {
+                    clearInterval(renderPollInterval);
+                    renderPollInterval = null;
+                    document.getElementById('renderLoading').classList.remove('active');
+                    document.getElementById('renderBtn').disabled = false;
+                    document.getElementById('renderBtn').style.opacity = '1';
+                    showToast('✅ تم الرندر بنجاح!', 'success');
+                    setTimeout(() => window.location.href = '/render-queue', 1500);
+                } else if (data.status === 'failed') {
+                    clearInterval(renderPollInterval);
+                    renderPollInterval = null;
+                    document.getElementById('renderLoading').classList.remove('active');
+                    document.getElementById('renderBtn').disabled = false;
+                    document.getElementById('renderBtn').style.opacity = '1';
+                    showToast('❌ فشل الرندر: ' + (data.error || 'خطأ غير معروف'), 'error');
+                } else if (data.status === 'processing') {
+                    status.textContent = `جاري الرندر... ${Math.round(data.progress || 0)}%`;
+                } else {
+                    status.textContent = `في انتظار البدء...`;
+                }
+                
+                if (attempts >= maxAttempts) {
+                    clearInterval(renderPollInterval);
+                    renderPollInterval = null;
+                    document.getElementById('renderLoading').classList.remove('active');
+                    document.getElementById('renderBtn').disabled = false;
+                    document.getElementById('renderBtn').style.opacity = '1';
+                    showToast('⏰ انتهت مهلة الرندر', 'warning');
+                }
+            })
+            .catch(() => {});
+    }, 5000);
 }
 
 // ============================================================
@@ -2480,8 +2901,32 @@ window.addEventListener('beforeunload', function() {
     if (playInterval) {
         clearInterval(playInterval);
     }
+    if (renderPollInterval) {
+        clearInterval(renderPollInterval);
+    }
+    
+    // تحرير موارد الصوت
+    if (audioContext) {
+        try { audioContext.close(); } catch(e) {}
+    }
+    
+    // تحرير Blob URLs
+    projectData.mediaFiles.forEach(f => {
+        if (f.url && f.url.startsWith('blob:')) {
+            try { URL.revokeObjectURL(f.url); } catch(e) {}
+        }
+    });
+    
+    // إيقاف فيديوهات المعاينة
+    Object.values(videoElements).forEach(v => {
+        try {
+            v.pause();
+            v.src = '';
+            v.load();
+        } catch(e) {}
+    });
 });
 
-console.log('🎬 المحرر جاهز');
+console.log('🎬 المحرر جاهز (الإصدار المحسن)');
 </script>
 {% endblock %}
