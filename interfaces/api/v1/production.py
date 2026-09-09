@@ -10,7 +10,12 @@ from infrastructure.database.session import get_db
 from infrastructure.repositories.sql_project_repository import SQLProjectRepository
 from infrastructure.repositories.sql_render_job_repository import SQLRenderJobRepository
 from infrastructure.event_bus.in_memory_event_bus import InMemoryEventBus
-from interfaces.schemas.production_schemas import StartRenderRequest, RenderJobResponse
+from interfaces.schemas.production_schemas import (
+    StartRenderRequest, 
+    RenderJobResponse,
+    RenderStatusResponse,
+    CancelRenderResponse
+)
 from shared.exceptions import ProjectNotFoundError, RenderJobNotFoundError
 
 logger = logging.getLogger(__name__)
@@ -71,9 +76,10 @@ async def start_render(
                 
                 # تحويل البيانات إلى تنسيق مناسب للتخزين
                 clips_data = []
-                for clip in body.clips:
-                    clip_dict = clip.dict() if hasattr(clip, 'dict') else clip
-                    clips_data.append(clip_dict)
+                if body.clips:
+                    for clip in body.clips:
+                        clip_dict = clip.dict() if hasattr(clip, 'dict') else clip
+                        clips_data.append(clip_dict)
                 
                 layers_data = []
                 if body.layers:
@@ -100,9 +106,18 @@ async def start_render(
             except Exception as e:
                 logger.warning(f"⚠️ فشل حفظ بيانات المشروع: {str(e)}")
                 # نستمر في الرندر حتى لو فشل الحفظ
-                # لأن الرندر هو الهدف الأساسي
         
-        # ====== 3. بدء الرندر ======
+        # ====== 3. تحويل data إلى dict للمشروع ======
+        project_data = None
+        if body.clips is not None or body.layers is not None:
+            project_data = {
+                "clips": [c.dict() if hasattr(c, 'dict') else c for c in (body.clips or [])],
+                "layers": [l.dict() if hasattr(l, 'dict') else l for l in (body.layers or [])],
+                "total_duration": body.duration or 10.0,
+                "media_files": [m.dict() if hasattr(m, 'dict') else m for m in (body.mediaFiles or [])]
+            }
+        
+        # ====== 4. بدء الرندر ======
         render_settings = {
             "fps": body.fps or 30,
             "width": body.width or 1920,
@@ -115,21 +130,25 @@ async def start_render(
         job = await service.start_render(
             project_id=body.project_id,
             render_settings=render_settings,
+            project_data=project_data,
         )
         
         logger.info(f"✅ تم إنشاء مهمة الرندر: {job.id} للمشروع {body.project_id}")
         
-        # ====== 4. إرجاع النتيجة ======
+        # ====== 5. إرجاع النتيجة (باستخدام getattr للوصول الآمن) ======
         return RenderJobResponse(
-            job_id=job.id,
+            id=job.id,
             project_id=job.project_id,
-            status=job.status,
+            renderer=getattr(job, 'renderer', 'default'),
+            status=job.status.value if hasattr(job.status, 'value') else str(job.status),
             progress=job.progress or 0,
+            current_stage=getattr(job, 'current_stage', ''),
+            output_path=getattr(job, 'output_path', None),
+            error_message=getattr(job, 'error_message', None),
+            started_at=getattr(job, 'started_at', None),
+            completed_at=getattr(job, 'completed_at', None),
             created_at=job.created_at,
-            updated_at=job.updated_at,
-            render_settings=job.render_settings,
-            error=job.error,
-            output_url=job.output_url,
+            render_settings=getattr(job, 'settings', render_settings),
         )
         
     except ProjectNotFoundError as e:
@@ -158,15 +177,18 @@ async def list_render_jobs(
         
         return [
             RenderJobResponse(
-                job_id=job.id,
+                id=job.id,
                 project_id=job.project_id,
-                status=job.status,
+                renderer=getattr(job, 'renderer', 'default'),
+                status=job.status.value if hasattr(job.status, 'value') else str(job.status),
                 progress=job.progress or 0,
+                current_stage=getattr(job, 'current_stage', ''),
+                output_path=getattr(job, 'output_path', None),
+                error_message=getattr(job, 'error_message', None),
+                started_at=getattr(job, 'started_at', None),
+                completed_at=getattr(job, 'completed_at', None),
                 created_at=job.created_at,
-                updated_at=job.updated_at,
-                render_settings=job.render_settings,
-                error=job.error,
-                output_url=job.output_url,
+                render_settings=getattr(job, 'settings', {}),
             )
             for job in jobs
         ]
@@ -188,15 +210,18 @@ async def get_render_job(
         logger.info(f"📄 تم جلب تفاصيل المهمة: {job_id}")
         
         return RenderJobResponse(
-            job_id=job.id,
+            id=job.id,
             project_id=job.project_id,
-            status=job.status,
+            renderer=getattr(job, 'renderer', 'default'),
+            status=job.status.value if hasattr(job.status, 'value') else str(job.status),
             progress=job.progress or 0,
+            current_stage=getattr(job, 'current_stage', ''),
+            output_path=getattr(job, 'output_path', None),
+            error_message=getattr(job, 'error_message', None),
+            started_at=getattr(job, 'started_at', None),
+            completed_at=getattr(job, 'completed_at', None),
             created_at=job.created_at,
-            updated_at=job.updated_at,
-            render_settings=job.render_settings,
-            error=job.error,
-            output_url=job.output_url,
+            render_settings=getattr(job, 'settings', {}),
         )
         
     except RenderJobNotFoundError as e:
@@ -208,7 +233,7 @@ async def get_render_job(
         raise HTTPException(status_code=500, detail=f"Failed to get job: {str(e)}")
 
 
-@router.get("/jobs/{job_id}/status", response_model=dict)
+@router.get("/jobs/{job_id}/status", response_model=RenderStatusResponse)
 async def get_render_status(
     job_id: UUID,
     service: ProductionService = Depends(get_production_service),
@@ -219,15 +244,16 @@ async def get_render_status(
     try:
         job = await service.get_job(job_id)
         
-        return {
-            "job_id": str(job.id),
-            "project_id": str(job.project_id),
-            "status": job.status,
-            "progress": job.progress or 0,
-            "error": job.error,
-            "output_url": job.output_url,
-            "updated_at": job.updated_at.isoformat() if job.updated_at else None,
-        }
+        return RenderStatusResponse(
+            job_id=str(job.id),
+            project_id=str(job.project_id),
+            status=job.status.value if hasattr(job.status, 'value') else str(job.status),
+            progress=int(job.progress or 0),
+            current_stage=getattr(job, 'current_stage', None),
+            error=getattr(job, 'error_message', None),
+            output_url=getattr(job, 'output_path', None),
+            updated_at=datetime.utcnow().isoformat(),
+        )
         
     except RenderJobNotFoundError:
         raise HTTPException(status_code=404, detail="Render job not found")
@@ -237,7 +263,7 @@ async def get_render_status(
         raise HTTPException(status_code=500, detail=f"Failed to get status: {str(e)}")
 
 
-@router.delete("/jobs/{job_id}", status_code=204)
+@router.delete("/jobs/{job_id}", response_model=CancelRenderResponse, status_code=200)
 async def cancel_render_job(
     job_id: UUID,
     service: ProductionService = Depends(get_production_service),
@@ -248,16 +274,21 @@ async def cancel_render_job(
     try:
         job = await service.get_job(job_id)
         
-        if job.status not in ["pending", "processing"]:
+        current_status = job.status.value if hasattr(job.status, 'value') else str(job.status)
+        if current_status not in ["pending", "processing"]:
             raise HTTPException(
                 status_code=400, 
-                detail=f"Cannot cancel job with status: {job.status}"
+                detail=f"Cannot cancel job with status: {current_status}"
             )
         
         await service.cancel_job(job_id)
         logger.info(f"🛑 تم إلغاء المهمة: {job_id}")
         
-        return None
+        return CancelRenderResponse(
+            job_id=str(job_id),
+            status="cancelled",
+            message="Render job cancelled successfully"
+        )
         
     except RenderJobNotFoundError as e:
         logger.warning(f"⚠️ مهمة غير موجودة للإلغاء: {job_id}")
