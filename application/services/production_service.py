@@ -207,6 +207,13 @@ class ProductionService:
             await job_repo.save(job)
             await session.commit()
 
+        # ====== Extract project_id once ======
+        project_id_str = project_data.get("id")
+        if not project_id_str:
+            # If not in project_data, use job.project_id
+            project_id_str = str(job.project_id) if job else str(job_id)
+        project_id_obj = uuid.UUID(project_id_str)
+
         try:
             renderer = self._registry.get_renderer()
             temp_dir = settings.TEMP_DIR / str(job_id)
@@ -301,7 +308,7 @@ class ProductionService:
 
             # ── Render ────────────────────────────────────────────────────────
             result = await renderer.render(
-                project_id=uuid.UUID(project_data.get("id", str(project_id))),
+                project_id=project_id_obj,
                 timeline_data={"scenes": scenes_data},
                 assets={},
                 settings=rs,
@@ -327,7 +334,6 @@ class ProductionService:
                 job_repo = SQLRenderJobRepository(session)
                 proj_repo = SQLProjectRepository(session)
                 job = await job_repo.get(job_id)
-                project_id_obj = uuid.UUID(project_data.get("id", str(project_id)))
                 project = await proj_repo.get(project_id_obj)
                 if job:
                     job.complete(str(result.output_path))
@@ -339,7 +345,7 @@ class ProductionService:
 
             await self._bus.publish(RenderCompleted(
                 job_id=job_id,
-                project_id=uuid.UUID(project_data.get("id", str(project_id))),
+                project_id=project_id_obj,
                 output_path=str(result.output_path),
             ))
             logger.info("✅ Render completed: job=%s output=%s", job_id, result.output_path)
@@ -350,7 +356,6 @@ class ProductionService:
                 job_repo = SQLRenderJobRepository(session)
                 proj_repo = SQLProjectRepository(session)
                 job = await job_repo.get(job_id)
-                project_id_obj = uuid.UUID(project_data.get("id", str(project_id)))
                 project = await proj_repo.get(project_id_obj)
                 if job:
                     job.fail(str(exc))
@@ -361,7 +366,7 @@ class ProductionService:
                 await session.commit()
             await self._bus.publish(RenderFailed(
                 job_id=job_id,
-                project_id=uuid.UUID(project_data.get("id", str(project_id))),
+                project_id=project_id_obj,
                 error=str(exc),
             ))
         finally:
@@ -387,6 +392,7 @@ class ProductionService:
             else:
                 scenes.append(clip.get('title', 'مقطع'))
         
+        # If no scenes were built, create a default one
         if not scenes:
             scenes = ["مشهد بدون نص"]
         
@@ -429,17 +435,20 @@ def _split_script_to_scenes(script: str, title: str = "") -> list[str]:
     if not script or not script.strip():
         return [title or "مشهد بدون نص"]
 
+    # Split by double newline first
     paragraphs = [p.strip() for p in re.split(r"\n{2,}", script.strip()) if p.strip()]
 
     if len(paragraphs) >= 2:
         return paragraphs
 
+    # Single paragraph — split by sentence punctuation (Arabic + Latin)
     sentences = re.split(r"(?<=[.!?؟،\n])\s+", paragraphs[0])
     sentences = [s.strip() for s in sentences if s.strip()]
 
     if not sentences:
         return [paragraphs[0]]
 
+    # Group sentences into scenes of ~80 words each
     scenes, current, current_words = [], [], 0
     for sentence in sentences:
         words = len(sentence.split())
