@@ -18,10 +18,13 @@ class SupabaseStorageAdapter(StoragePort):
     """
     
     def __init__(self):
-        # Load configuration from environment
+        # ✅ استخراج القيم النصية من SecretStr
         self.supabase_url = settings.SUPABASE_URL
-        self.public_key = settings.SUPABASE_PUBLIC_KEY      # For read operations
-        self.secret_key = settings.SUPABASE_SECRET_KEY      # For write/admin operations
+        
+        # ✅ تحويل SecretStr إلى str باستخدام get_secret_value()
+        self.public_key = settings.supabase_public_key_value  # الآن هي str
+        self.secret_key = settings.supabase_secret_key_value  # الآن هي str
+        
         self.bucket_name = settings.SUPABASE_BUCKET
         
         # Validate configuration
@@ -32,7 +35,7 @@ class SupabaseStorageAdapter(StoragePort):
         if not self.secret_key:
             raise ValueError("SUPABASE_SECRET_KEY environment variable is required")
         
-        # Create clients with different keys for different operations
+        # ✅ إنشاء العملاء باستخدام القيم النصية
         self.public_client: Client = create_client(self.supabase_url, self.public_key)
         self.secret_client: Client = create_client(self.supabase_url, self.secret_key)
         
@@ -46,7 +49,7 @@ class SupabaseStorageAdapter(StoragePort):
             # Try to get bucket info
             self.secret_client.storage.get_bucket(self.bucket_name)
             print(f"✅ Bucket '{self.bucket_name}' already exists")
-        except Exception:
+        except Exception as e:
             # Create bucket with SECRET_KEY
             try:
                 self.secret_client.storage.create_bucket(
@@ -63,8 +66,8 @@ class SupabaseStorageAdapter(StoragePort):
                     }
                 )
                 print(f"✅ Bucket '{self.bucket_name}' created successfully")
-            except Exception as e:
-                raise Exception(f"Failed to create bucket: {str(e)}")
+            except Exception as create_error:
+                raise Exception(f"Failed to create bucket: {str(create_error)}")
     
     def _setup_bucket_policies(self) -> None:
         """Set up RLS policies for the bucket using SECRET_KEY."""
@@ -92,6 +95,7 @@ class SupabaseStorageAdapter(StoragePort):
             "role": "authenticated"
         }
         
+        # ✅ استخدام secret_key (str) وليس SecretStr
         return jwt.encode(payload, self.secret_key, algorithm=settings.JWT_ALGORITHM)
     
     def verify_token(self, token: str) -> Dict[str, Any]:
@@ -99,7 +103,7 @@ class SupabaseStorageAdapter(StoragePort):
         Verify a JWT token using PUBLIC_KEY.
         """
         try:
-            # Verify with PUBLIC_KEY
+            # ✅ استخدام public_key (str) وليس SecretStr
             payload = jwt.decode(
                 token,
                 self.public_key,
@@ -244,18 +248,19 @@ class SupabaseStorageAdapter(StoragePort):
         except Exception as e:
             raise Exception(f"Failed to generate signed URL: {str(e)}")
     
-    async def list_files(self, prefix: str = "") -> list:
+    async def list_files(self, prefix: str = "", limit: int = 1000) -> list:
         """
         List files using PUBLIC_KEY.
         """
         try:
             files = self.public_client.storage.from_(self.bucket_name).list(
                 path=prefix,
-                options={"limit": 1000}
+                options={"limit": limit}
             )
             return files
         except Exception as e:
-            raise Exception(f"Failed to list files: {str(e)}")
+            print(f"⚠️ Failed to list files: {str(e)}")
+            return []
     
     async def copy_file(self, source_key: str, destination_key: str) -> str:
         """
