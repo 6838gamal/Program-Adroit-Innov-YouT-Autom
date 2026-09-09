@@ -253,12 +253,9 @@
         background: var(--bg-panel);
         border-bottom: 1px solid var(--border-color);
         flex-shrink: 0;
-        max-height: 180px;
+        max-height: 160px;
         overflow-y: auto;
     }
-    .layers-panel::-webkit-scrollbar { width: 4px; }
-    .layers-panel::-webkit-scrollbar-track { background: var(--bg-dark); }
-    .layers-panel::-webkit-scrollbar-thumb { background: var(--border-color); border-radius: 4px; }
 
     .layers-header {
         display: flex;
@@ -494,6 +491,7 @@
         min-height: var(--track-height);
     }
 
+    /* ====== Clip blocks - اختصارات في التايم لاين ====== */
     .clip-block {
         position: absolute;
         top: 4px;
@@ -501,8 +499,8 @@
         border-radius: 4px;
         display: flex;
         align-items: center;
-        padding: 0 8px;
-        font-size: 11px;
+        padding: 0 6px;
+        font-size: 10px;
         font-weight: 500;
         cursor: grab;
         user-select: none;
@@ -512,7 +510,7 @@
         border: 1px solid transparent;
         min-width: 20px;
         z-index: 2;
-        gap: 4px;
+        gap: 2px;
     }
 
     .clip-block:hover {
@@ -536,28 +534,36 @@
     }
 
     .clip-block .clip-thumb {
-        width: 20px;
-        height: 20px;
+        width: 24px;
+        height: 24px;
         border-radius: 3px;
-        background: rgba(0,0,0,0.3);
+        overflow: hidden;
         flex-shrink: 0;
+        background: rgba(0,0,0,0.3);
         display: flex;
         align-items: center;
         justify-content: center;
         font-size: 12px;
     }
 
+    .clip-block .clip-thumb img,
+    .clip-block .clip-thumb video {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+    }
+
     .clip-block .clip-label {
         overflow: hidden;
         text-overflow: ellipsis;
-        font-size: 10px;
+        font-size: 9px;
+        flex: 1;
     }
 
     .clip-block .clip-duration {
-        font-size: 9px;
+        font-size: 8px;
         opacity: 0.7;
         font-family: monospace;
-        margin-left: auto;
         flex-shrink: 0;
     }
 
@@ -567,10 +573,11 @@
         color: white;
         border-radius: 3px;
         padding: 0 4px;
-        font-size: 10px;
+        font-size: 9px;
         cursor: pointer;
         opacity: 0;
         transition: opacity 0.2s;
+        flex-shrink: 0;
     }
     .clip-block:hover .clip-delete-btn { opacity: 1; }
     .clip-block .clip-delete-btn:hover { background: #ef4444; }
@@ -816,7 +823,8 @@
         .controls-bar .time-display { min-width: 50px; font-size: 11px; }
         .layers-panel { max-height: 120px; }
         .track-label { width: 40px; font-size: 8px; }
-        .clip-block { font-size: 9px; padding: 0 4px; }
+        .clip-block { font-size: 8px; padding: 0 4px; }
+        .clip-block .clip-thumb { width: 18px; height: 18px; }
         .media-gallery { max-height: 60px; padding: 4px 8px; }
         .media-item { max-width: 120px; height: 28px; font-size: 9px; }
         .playback-info { font-size: 11px; min-width: 120px; bottom: 60px; }
@@ -1067,21 +1075,19 @@
 {% block scripts %}
 <script>
 // ============================================================
-//  DATA - هيكل البيانات المحسن
+//  DATA - هيكل البيانات
 // ============================================================
 const scenes = {{ scenes_json | safe }};
 const projectId = "{{ project.id }}";
 
-// هيكل البيانات الرئيسي
 let projectData = {
-    clips: [],          // جميع المقاطع
-    layers: [],         // الطبقات
-    mediaFiles: [],     // الملفات المستوردة
-    totalDuration: 30,
+    clips: [],
+    layers: [],
+    mediaFiles: [],
+    totalDuration: 10,
     cellWidth: 80
 };
 
-// متغيرات التشغيل
 let selectedClipId = null;
 let selectedLayerIndex = 0;
 let currentTime = 0;
@@ -1096,15 +1102,12 @@ let recordedChunks = [];
 let clipIdCounter = 0;
 let currentClipAtTime = null;
 
-// عناصر DOM
 let canvas = null;
 let ctx = null;
 let audioPlayer = null;
 let isCanvasReady = false;
+let imageCache = {};
 
-// ============================================================
-//  CONSTANTS
-// ============================================================
 const COLORS = {
     video: '#2563eb',
     audio: '#059669',
@@ -1126,7 +1129,7 @@ const TYPE_ICONS = {
 };
 
 // ============================================================
-//  INITIALIZE - تهيئة المحرر
+//  INITIALIZE
 // ============================================================
 document.addEventListener('DOMContentLoaded', function() {
     canvas = document.getElementById('previewCanvas');
@@ -1136,12 +1139,10 @@ document.addEventListener('DOMContentLoaded', function() {
     resizeCanvas();
     window.addEventListener('resize', resizeCanvas);
     
-    // تهيئة الطبقات
     if (projectData.layers.length === 0) {
         projectData.layers.push({ name: 'طبقة 1', visible: true, locked: false });
     }
     
-    // تهيئة المقاطع من المشاهد إذا وجدت
     if (scenes && scenes.length > 0) {
         scenes.forEach((scene, i) => {
             const clip = {
@@ -1186,7 +1187,7 @@ function resizeCanvas() {
 }
 
 // ============================================================
-//  RENDER PREVIEW - عرض المعاينة على Canvas
+//  RENDER PREVIEW - عرض المحتوى الفعلي للصور والفيديوهات
 // ============================================================
 function renderPreview(time) {
     if (!isCanvasReady || !ctx) return;
@@ -1198,7 +1199,7 @@ function renderPreview(time) {
     ctx.fillStyle = '#0a0a15';
     ctx.fillRect(0, 0, w, h);
     
-    // الحصول على جميع المقاطع النشطة في هذا الوقت
+    // الحصول على المقاطع النشطة
     const activeClips = projectData.clips.filter(c => {
         const layer = projectData.layers[c.layer];
         return layer && layer.visible && 
@@ -1210,77 +1211,31 @@ function renderPreview(time) {
     activeClips.sort((a, b) => a.layer - b.layer);
     
     if (activeClips.length > 0) {
-        // رسم كل مقطع نشط
-        const count = activeClips.length;
+        // رسم كل مقطع نشط - عرض المحتوى الفعلي
         activeClips.forEach((clip, index) => {
             const progress = (time - clip.start) / clip.duration;
-            const x = w * 0.5;
-            const y = h * 0.5 + (index - (count - 1) / 2) * 55;
+            const x = w / 2;
+            const y = h / 2 + (index - (activeClips.length - 1) / 2) * 60;
             
-            const rectW = Math.min(140, w * 0.18);
-            const rectH = 50;
+            if (clip.type === 'image' && clip.content) {
+                // عرض الصورة الفعلية
+                drawImageContent(ctx, clip.content, x, y, Math.min(w * 0.6, 400), Math.min(h * 0.5, 250));
+            } else if (clip.type === 'video' && clip.content) {
+                // عرض فيديو (لقطة ثابتة أو إطار)
+                drawVideoContent(ctx, clip, x, y, Math.min(w * 0.6, 400), Math.min(h * 0.5, 250), progress);
+            } else if (clip.type === 'audio') {
+                // عرض تمثيل صوتي
+                drawAudioVisualization(ctx, x, y, Math.min(w * 0.5, 300), 60, progress);
+            } else if (clip.type === 'text' && clip.content) {
+                // عرض النص
+                drawTextContent(ctx, clip.content, x, y, w * 0.7);
+            } else {
+                // عرض أيقونة عامة
+                drawGenericContent(ctx, clip, x, y);
+            }
             
-            // خلفية المقطع مع ظل
-            ctx.shadowColor = clip.color + '40';
-            ctx.shadowBlur = 25;
-            ctx.fillStyle = clip.color + '25';
-            ctx.strokeStyle = clip.color;
-            ctx.lineWidth = 2;
-            
-            // مستطيل دائري الزوايا
-            const r = 8;
-            ctx.beginPath();
-            ctx.moveTo(x - rectW/2 + r, y - rectH/2);
-            ctx.lineTo(x + rectW/2 - r, y - rectH/2);
-            ctx.quadraticCurveTo(x + rectW/2, y - rectH/2, x + rectW/2, y - rectH/2 + r);
-            ctx.lineTo(x + rectW/2, y + rectH/2 - r);
-            ctx.quadraticCurveTo(x + rectW/2, y + rectH/2, x + rectW/2 - r, y + rectH/2);
-            ctx.lineTo(x - rectW/2 + r, y + rectH/2);
-            ctx.quadraticCurveTo(x - rectW/2, y + rectH/2, x - rectW/2, y + rectH/2 - r);
-            ctx.lineTo(x - rectW/2, y - rectH/2 + r);
-            ctx.quadraticCurveTo(x - rectW/2, y - rectH/2, x - rectW/2 + r, y - rectH/2);
-            ctx.closePath();
-            ctx.fill();
-            ctx.shadowBlur = 0;
-            ctx.stroke();
-            
-            // أيقونة
-            ctx.font = '26px sans-serif';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillStyle = 'white';
-            ctx.fillText(clip.icon || '📄', x, y - 8);
-            
-            // العنوان
-            ctx.font = '11px sans-serif';
-            ctx.fillStyle = '#f1f5f9';
-            ctx.fillText(clip.title || 'مقطع', x, y + 22);
-            
-            // نوع المقطع
-            ctx.font = '9px sans-serif';
-            ctx.fillStyle = '#94a3b8';
-            ctx.fillText(clip.type + ' | ' + formatTime(clip.duration), x, y + 38);
-            
-            // رقم الطبقة
-            ctx.font = '8px sans-serif';
-            ctx.fillStyle = '#64748b';
-            ctx.fillText('طبقة ' + (clip.layer + 1), x - rectW/2 + 4, y - rectH/2 + 10);
-            
-            // شريط التقدم
-            const barX = x - 35;
-            const barY = y + 28;
-            const barW = 70;
-            ctx.strokeStyle = 'rgba(255,255,255,0.15)';
-            ctx.lineWidth = 3;
-            ctx.beginPath();
-            ctx.roundRect(barX, barY, barW, 4, 2);
-            ctx.stroke();
-            
-            ctx.strokeStyle = clip.color;
-            ctx.lineWidth = 3;
-            ctx.beginPath();
-            ctx.roundRect(barX, barY, Math.max(barW * progress, 2), 4, 2);
-            ctx.stroke();
+            // إطار المقطع مع معلومات
+            drawClipFrame(ctx, clip, x, y, index, activeClips.length);
         });
         
         // تحديث معلومات التشغيل
@@ -1292,31 +1247,32 @@ function renderPreview(time) {
         document.getElementById('playbackTime').textContent = formatTime(time);
         document.getElementById('statusCurrentClip').textContent = '▶️ ' + (mainClip.title || 'مقطع');
         
-        // مزامنة الصوت
         syncAudio(time);
         
     } else {
-        // لا توجد مقاطع نشطة
+        // لا توجد مقاطع
         ctx.fillStyle = 'rgba(255,255,255,0.05)';
-        ctx.font = '32px sans-serif';
+        ctx.font = '48px sans-serif';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText('🎬', w/2, h/2 - 20);
-        ctx.font = '14px sans-serif';
+        ctx.font = '16px sans-serif';
         ctx.fillStyle = 'rgba(255,255,255,0.2)';
-        ctx.fillText('لا يوجد محتوى في هذا الموضع', w/2, h/2 + 40);
+        ctx.fillText('اسحب ملفات إلى المعرض أو استوردها', w/2, h/2 + 50);
+        ctx.font = '12px sans-serif';
+        ctx.fillStyle = 'rgba(255,255,255,0.1)';
+        ctx.fillText('ثم أضفها إلى التايم لاين', w/2, h/2 + 78);
         
         document.getElementById('playbackInfo').style.display = 'none';
         document.getElementById('statusCurrentClip').textContent = isPlaying ? '⏸️ تشغيل' : '⏸️ متوقف';
         currentClipAtTime = null;
         
-        // إيقاف الصوت
         if (audioPlayer && !audioPlayer.paused) {
             audioPlayer.pause();
         }
     }
     
-    // معلومات الوقت على Canvas
+    // معلومات الوقت
     ctx.fillStyle = 'rgba(0,0,0,0.6)';
     ctx.fillRect(10, 10, 180, 26);
     ctx.fillStyle = 'rgba(255,255,255,0.7)';
@@ -1325,7 +1281,6 @@ function renderPreview(time) {
     ctx.textBaseline = 'middle';
     ctx.fillText(`⏱ ${formatTime(time)} / ${formatTime(projectData.totalDuration)}`, 16, 24);
     
-    // معلومات السرعة
     ctx.fillStyle = 'rgba(0,0,0,0.4)';
     ctx.fillRect(10, 40, 70, 20);
     ctx.fillStyle = 'rgba(255,255,255,0.4)';
@@ -1341,13 +1296,210 @@ function renderPreview(time) {
     }
 }
 
+// ====== دوال رسم المحتوى الفعلي ======
+
+function drawImageContent(ctx, src, x, y, maxW, maxH) {
+    // استخدام cache للصور
+    if (!imageCache[src]) {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.onload = function() {
+            imageCache[src] = img;
+            renderPreview(currentTime);
+        };
+        img.onerror = function() {
+            imageCache[src] = 'error';
+        };
+        img.src = src;
+        return;
+    }
+    
+    const img = imageCache[src];
+    if (img === 'error' || !img) {
+        ctx.fillStyle = 'rgba(255,255,255,0.1)';
+        ctx.font = '20px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('⚠️', x, y);
+        return;
+    }
+    
+    const ratio = Math.min(maxW / img.width, maxH / img.height);
+    const drawW = img.width * ratio;
+    const drawH = img.height * ratio;
+    
+    ctx.save();
+    ctx.shadowColor = 'rgba(0,0,0,0.5)';
+    ctx.shadowBlur = 20;
+    ctx.drawImage(img, x - drawW/2, y - drawH/2, drawW, drawH);
+    ctx.restore();
+}
+
+function drawVideoContent(ctx, clip, x, y, maxW, maxH, progress) {
+    // للفيديو نعرض إطار ثابت مع مؤشر تشغيل
+    ctx.save();
+    
+    // خلفية سوداء مع إطار
+    const w = Math.min(maxW, 300);
+    const h = Math.min(maxH, 180);
+    ctx.fillStyle = '#000';
+    ctx.shadowColor = 'rgba(0,0,0,0.5)';
+    ctx.shadowBlur = 20;
+    ctx.fillRect(x - w/2, y - h/2, w, h);
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x - w/2, y - h/2, w, h);
+    
+    // أيقونة فيديو
+    ctx.font = '40px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = 'rgba(255,255,255,0.3)';
+    ctx.fillText('🎬', x, y - 5);
+    
+    // شريط التقدم
+    const barW = w - 20;
+    const barH = 4;
+    const barX = x - barW/2;
+    const barY = y + h/2 - 12;
+    
+    ctx.fillStyle = 'rgba(255,255,255,0.1)';
+    ctx.fillRect(barX, barY, barW, barH);
+    ctx.fillStyle = '#2563eb';
+    ctx.fillRect(barX, barY, barW * progress, barH);
+    
+    ctx.restore();
+}
+
+function drawAudioVisualization(ctx, x, y, w, h, progress) {
+    ctx.save();
+    
+    // خلفية
+    ctx.fillStyle = 'rgba(5,150,105,0.1)';
+    ctx.strokeStyle = 'rgba(5,150,105,0.3)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.roundRect(x - w/2, y - h/2, w, h, 6);
+    ctx.fill();
+    ctx.stroke();
+    
+    // موجات صوتية
+    const bars = 20;
+    const barW = (w - 20) / bars;
+    const maxBarH = h - 16;
+    
+    for (let i = 0; i < bars; i++) {
+        const barProgress = (i / bars + progress) % 1;
+        const barH = Math.max(4, maxBarH * (0.2 + 0.8 * Math.sin(barProgress * Math.PI * 8) * Math.sin(barProgress * Math.PI * 2)));
+        const barX = x - w/2 + 10 + i * barW;
+        const barY = y + barH/2 - h/2 + 4;
+        
+        ctx.fillStyle = `rgba(5,150,105,${0.3 + 0.7 * (1 - Math.abs(barProgress - 0.5) * 2)})`;
+        ctx.fillRect(barX, y + h/2 - 4 - barH, barW - 1, barH);
+    }
+    
+    // أيقونة الصوت
+    ctx.font = '16px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = 'rgba(255,255,255,0.3)';
+    ctx.fillText('🎵', x, y);
+    
+    ctx.restore();
+}
+
+function drawTextContent(ctx, text, x, y, maxW) {
+    ctx.save();
+    
+    // خلفية شفافة
+    const fontSize = Math.min(28, maxW / 15);
+    ctx.font = `bold ${fontSize}px sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    
+    // ظل النص
+    ctx.shadowColor = 'rgba(0,0,0,0.8)';
+    ctx.shadowBlur = 15;
+    ctx.fillStyle = 'rgba(255,255,255,0.9)';
+    
+    // تقسيم النص إلى سطور
+    const words = text.split(' ');
+    let lines = [];
+    let currentLine = '';
+    
+    for (let word of words) {
+        const testLine = currentLine + (currentLine ? ' ' : '') + word;
+        const metrics = ctx.measureText(testLine);
+        if (metrics.width > maxW - 40 && currentLine) {
+            lines.push(currentLine);
+            currentLine = word;
+        } else {
+            currentLine = testLine;
+        }
+    }
+    if (currentLine) lines.push(currentLine);
+    
+    // رسم النص
+    const lineHeight = fontSize * 1.4;
+    const totalHeight = lines.length * lineHeight;
+    const startY = y - totalHeight / 2 + lineHeight / 2;
+    
+    lines.forEach((line, i) => {
+        ctx.fillText(line, x, startY + i * lineHeight);
+    });
+    
+    ctx.restore();
+}
+
+function drawGenericContent(ctx, clip, x, y) {
+    ctx.save();
+    
+    const size = 50;
+    ctx.fillStyle = clip.color + '20';
+    ctx.strokeStyle = clip.color + '40';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.roundRect(x - size/2, y - size/2, size, size, 8);
+    ctx.fill();
+    ctx.stroke();
+    
+    ctx.font = '24px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = 'rgba(255,255,255,0.5)';
+    ctx.fillText(clip.icon || '📄', x, y);
+    
+    ctx.restore();
+}
+
+function drawClipFrame(ctx, clip, x, y, index, total) {
+    ctx.save();
+    
+    const offsetY = (index - (total - 1) / 2) * 60;
+    const labelY = y + 65 + (index - (total - 1) / 2) * 2;
+    
+    // اسم المقطع في الأسفل
+    ctx.font = '10px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.fillStyle = 'rgba(255,255,255,0.4)';
+    ctx.fillText(clip.title || 'مقطع', x, labelY);
+    
+    // وقت المقطع
+    ctx.font = '9px monospace';
+    ctx.fillStyle = 'rgba(255,255,255,0.2)';
+    ctx.fillText(`${formatTime(clip.start)} → ${formatTime(clip.start + clip.duration)}`, x, labelY + 14);
+    
+    ctx.restore();
+}
+
 // ============================================================
-//  SYNC AUDIO - مزامنة الصوت
+//  SYNC AUDIO
 // ============================================================
 function syncAudio(time) {
     if (!audioPlayer) return;
     
-    // البحث عن مقاطع الصوت النشطة
     const activeAudio = projectData.clips.filter(c => {
         const layer = projectData.layers[c.layer];
         return layer && layer.visible && 
@@ -1360,9 +1512,7 @@ function syncAudio(time) {
         const audioClip = activeAudio[0];
         const audioSrc = audioClip.content;
         
-        // التحقق من صحة المصدر
         if (!audioSrc || audioSrc === 'blob') {
-            // محاولة استعادة المصدر من mediaFiles
             if (audioClip.metadata && audioClip.metadata.file) {
                 const mediaFile = projectData.mediaFiles.find(f => f.name === audioClip.metadata.file);
                 if (mediaFile && mediaFile.url) {
@@ -1372,31 +1522,26 @@ function syncAudio(time) {
             return;
         }
         
-        // إذا كان المصدر مختلفاً
         if (audioPlayer.src !== audioSrc) {
             audioPlayer.src = audioSrc;
             audioPlayer.load();
         }
         
-        // ضبط الوقت المحلي للمقطع الصوتي
         const localTime = Math.max(0, time - audioClip.start);
         if (audioPlayer.readyState >= 2 && Math.abs(audioPlayer.currentTime - localTime) > 0.15) {
             audioPlayer.currentTime = localTime;
         }
         
-        // تشغيل الصوت إذا كان التشغيل العام مفعلاً
         if (isPlaying && audioPlayer.paused) {
             audioPlayer.play().catch(() => {});
         } else if (!isPlaying && !audioPlayer.paused) {
             audioPlayer.pause();
         }
         
-        // تطبيق الكتم
         audioPlayer.muted = isMuted;
         audioPlayer.playbackRate = playbackSpeed;
         
     } else {
-        // إيقاف الصوت إذا لم يكن هناك مقاطع صوتية نشطة
         if (!audioPlayer.paused) {
             audioPlayer.pause();
         }
@@ -1404,11 +1549,10 @@ function syncAudio(time) {
 }
 
 // ============================================================
-//  MEDIA GALLERY - معرض الوسائط
+//  MEDIA GALLERY
 // ============================================================
 function renderMediaGallery() {
     const gallery = document.getElementById('mediaGallery');
-    const label = gallery.querySelector('.media-gallery-label');
     const empty = document.getElementById('mediaGalleryEmpty');
     
     const items = gallery.querySelectorAll('.media-item');
@@ -1472,13 +1616,10 @@ function addMediaToTimeline(index) {
     const file = projectData.mediaFiles[index];
     if (!file) return;
     
-    // حساب وقت البداية بناءً على الطبقة المحددة
     let startTime = getLayerEndTime(selectedLayerIndex);
-    
     const type = file.type.split('/')[0];
-    const duration = type === 'image' ? 3 : (type === 'video' ? 3 : 2);
+    const duration = type === 'image' ? 3 : (type === 'video' ? 4 : 2);
     
-    // تحقق من وجود الملف في mediaFiles
     const mediaFile = projectData.mediaFiles.find(f => f.name === file.name);
     const contentUrl = mediaFile ? mediaFile.url : null;
     
@@ -1501,7 +1642,7 @@ function addMediaToTimeline(index) {
     };
     
     projectData.clips.push(clip);
-    projectData.totalDuration = Math.max(projectData.totalDuration, clip.start + clip.duration + 1);
+    updateTotalDuration();
     renderTimeline();
     renderMediaGallery();
     updateStatus();
@@ -1516,6 +1657,17 @@ function getLayerEndTime(layerIndex) {
         c.start + c.duration > max.start + max.duration ? c : max
     );
     return lastClip.start + lastClip.duration;
+}
+
+function updateTotalDuration() {
+    if (projectData.clips.length === 0) {
+        projectData.totalDuration = 10;
+        return;
+    }
+    const maxEnd = projectData.clips.reduce((max, c) => 
+        Math.max(max, c.start + c.duration), 0
+    );
+    projectData.totalDuration = Math.max(maxEnd + 2, 10);
 }
 
 function removeMediaFile(index) {
@@ -1543,7 +1695,7 @@ function addMediaFile(file) {
 }
 
 // ============================================================
-//  LAYERS - إدارة الطبقات
+//  LAYERS
 // ============================================================
 function renderLayers() {
     const container = document.getElementById('layersList');
@@ -1615,6 +1767,7 @@ function deleteLayer(index) {
     projectData.layers.splice(index, 1);
     if (selectedLayerIndex >= projectData.layers.length) selectedLayerIndex = projectData.layers.length - 1;
     
+    updateTotalDuration();
     renderLayers();
     renderTimeline();
     updateStatus();
@@ -1685,7 +1838,328 @@ function mergeLayers() {
 }
 
 // ============================================================
-//  PLAYBACK CONTROLS - أدوات التشغيل
+//  TIMELINE - عرض اختصارات المقاطع
+// ============================================================
+function renderTimeline() {
+    const container = document.getElementById('tracksContainer');
+    const pxPerSec = projectData.cellWidth / 2;
+    const totalWidth = projectData.totalDuration * pxPerSec + 120;
+
+    // تحديث المسطرة
+    const rulerMarks = document.getElementById('rulerMarks');
+    rulerMarks.innerHTML = '';
+    const step = projectData.totalDuration > 60 ? 5 : 2;
+    for (let t = 0; t <= projectData.totalDuration; t += step) {
+        const mark = document.createElement('div');
+        mark.className = `ruler-mark${t % 10 === 0 ? ' major' : ''}`;
+        mark.style.width = (pxPerSec * step) + 'px';
+        const m = Math.floor(t/60), s = Math.floor(t%60);
+        mark.innerHTML = `<span class="label">${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}</span>`;
+        rulerMarks.appendChild(mark);
+    }
+
+    container.innerHTML = '';
+    projectData.layers.forEach((layer, layerIdx) => {
+        if (!layer.visible) return;
+        
+        const row = document.createElement('div');
+        row.className = 'track-row';
+        row.dataset.layer = layerIdx;
+        
+        const label = document.createElement('div');
+        label.className = 'track-label';
+        label.innerHTML = `
+            <span class="track-icon">📺</span>
+            <span>${layer.name}</span>
+        `;
+        row.appendChild(label);
+
+        const body = document.createElement('div');
+        body.className = 'track-body';
+        body.style.width = totalWidth + 'px';
+        body.style.setProperty('--cell-w', projectData.cellWidth + 'px');
+        body.dataset.layer = layerIdx;
+
+        const layerClips = projectData.clips.filter(c => c.layer === layerIdx);
+        layerClips.sort((a, b) => a.start - b.start);
+        
+        layerClips.forEach((clip) => {
+            const left = clip.start * pxPerSec;
+            const width = Math.max(clip.duration * pxPerSec - 2, 20);
+            
+            const block = document.createElement('div');
+            block.className = `clip-block clip-type-${clip.type}${selectedClipId === clip.id ? ' selected' : ''}`;
+            block.style.cssText = `left:${left}px;width:${width}px;`;
+            block.dataset.clipId = clip.id;
+            
+            const durationStr = formatTime(clip.duration);
+            
+            // محتوى الاختصار - صورة مصغرة أو أيقونة
+            let thumbContent = '';
+            if (clip.type === 'image' && clip.content) {
+                thumbContent = `<img src="${clip.content}" alt="${clip.title}" loading="lazy">`;
+            } else if (clip.type === 'video' && clip.content) {
+                thumbContent = `<video src="${clip.content}" muted preload="metadata"></video>`;
+            } else {
+                thumbContent = clip.icon || '📄';
+            }
+            
+            block.innerHTML = `
+                <div class="clip-thumb">${thumbContent}</div>
+                <span class="clip-label">${clip.title || 'مقطع'}</span>
+                <span class="clip-duration">${durationStr}</span>
+                <button class="clip-delete-btn" onclick="event.stopPropagation();deleteClip(${clip.id})" title="حذف المقطع">✕</button>
+            `;
+            
+            block.onclick = (e) => {
+                e.stopPropagation();
+                selectClip(clip.id);
+                seekTo(clip.start);
+            };
+            
+            block.ondblclick = () => {
+                editClipProperties(clip.id);
+            };
+            
+            block.draggable = true;
+            block.ondragstart = (e) => {
+                e.dataTransfer.setData('text/plain', JSON.stringify({
+                    type: 'clip',
+                    clipId: clip.id,
+                    layer: layerIdx,
+                    start: clip.start
+                }));
+                block.classList.add('dragging');
+                document.getElementById('trashZone').classList.add('active');
+            };
+            block.ondragend = () => {
+                block.classList.remove('dragging');
+                document.getElementById('trashZone').classList.remove('active');
+            };
+
+            body.appendChild(block);
+        });
+
+        body.ondragover = (e) => e.preventDefault();
+        body.ondrop = (e) => {
+            e.preventDefault();
+            const data = JSON.parse(e.dataTransfer.getData('text/plain'));
+            if (data.type === 'clip') {
+                const rect = body.getBoundingClientRect();
+                const x = e.clientX - rect.left + body.scrollLeft;
+                const newStart = x / pxPerSec;
+                moveClip(data.clipId, layerIdx, Math.max(0, newStart));
+            }
+        };
+
+        row.appendChild(body);
+        container.appendChild(row);
+    });
+
+    updatePlayhead();
+    updateStatus();
+}
+
+function updatePlayhead() {
+    const playhead = document.getElementById('playhead');
+    const pxPerSec = projectData.cellWidth / 2;
+    const pos = currentTime * pxPerSec + 60;
+    playhead.style.left = pos + 'px';
+}
+
+function updateStatus() {
+    document.getElementById('statusClips').textContent = `${projectData.clips.length} مقطع`;
+    document.getElementById('statusDuration').textContent = `المدة: ${formatTime(projectData.totalDuration)}`;
+    document.getElementById('statusLayers').textContent = `${projectData.layers.length} طبقة`;
+}
+
+// ============================================================
+//  CLIP OPERATIONS
+// ============================================================
+function deleteClip(id) {
+    if (!confirm('هل تريد حذف هذا المقطع؟')) return;
+    projectData.clips = projectData.clips.filter(c => c.id !== id);
+    if (selectedClipId === id) selectedClipId = null;
+    updateTotalDuration();
+    renderTimeline();
+    updateStatus();
+    saveProjectData();
+    showToast('🗑️ تم حذف المقطع', 'success');
+}
+
+function selectClip(id) {
+    selectedClipId = id;
+    renderTimeline();
+    const clip = projectData.clips.find(c => c.id === id);
+    if (clip) {
+        showToast(`📌 ${clip.title}`, 'info');
+    }
+}
+
+function addClip(type) {
+    if (type === 'video' || type === 'audio' || type === 'image' || type === 'music') {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = type === 'video' ? 'video/*' : 
+                       type === 'audio' || type === 'music' ? 'audio/*' : 
+                       'image/*';
+        input.multiple = true;
+        input.onchange = (e) => {
+            if (e.target.files.length > 0) {
+                handleFiles(e.target.files);
+            }
+        };
+        input.click();
+        return;
+    }
+    
+    if (type === 'text') {
+        const text = prompt('نص المقطع:');
+        if (!text) return;
+        let startTime = getLayerEndTime(selectedLayerIndex);
+        const clip = {
+            id: clipIdCounter++,
+            type: 'text',
+            layer: selectedLayerIndex,
+            start: startTime,
+            duration: 2,
+            title: text.slice(0, 20) + (text.length > 20 ? '...' : ''),
+            content: text,
+            color: COLORS.text,
+            icon: '📝',
+            metadata: {}
+        };
+        projectData.clips.push(clip);
+        updateTotalDuration();
+        renderTimeline();
+        updateStatus();
+        saveProjectData();
+        showToast('✅ تم إضافة النص', 'success');
+    }
+}
+
+function splitClip() {
+    if (selectedClipId === null) {
+        showToast('⚠️ اختر مقطعاً أولاً', 'warning');
+        return;
+    }
+    const clip = projectData.clips.find(c => c.id === selectedClipId);
+    if (!clip) return;
+    
+    const splitTime = currentTime - clip.start;
+    if (splitTime <= 0.1 || splitTime >= clip.duration - 0.1) {
+        showToast('⚠️ اختر نقطة داخل المقطع', 'warning');
+        return;
+    }
+    
+    const newClip = {
+        ...clip,
+        id: clipIdCounter++,
+        start: clip.start + splitTime,
+        duration: clip.duration - splitTime,
+        title: `${clip.title} (جزء 2)`
+    };
+    clip.duration = splitTime;
+    clip.title = `${clip.title} (جزء 1)`;
+    
+    projectData.clips.push(newClip);
+    updateTotalDuration();
+    renderTimeline();
+    saveProjectData();
+    showToast('✂️ تم تقسيم المقطع', 'success');
+}
+
+function duplicateClip() {
+    if (selectedClipId === null) {
+        showToast('⚠️ اختر مقطعاً أولاً', 'warning');
+        return;
+    }
+    const clip = projectData.clips.find(c => c.id === selectedClipId);
+    if (!clip) return;
+    
+    let startTime = clip.start + clip.duration + 0.5;
+    
+    const newClip = {
+        ...clip,
+        id: clipIdCounter++,
+        start: startTime,
+        title: `${clip.title} (نسخة)`
+    };
+    projectData.clips.push(newClip);
+    updateTotalDuration();
+    renderTimeline();
+    selectClip(newClip.id);
+    saveProjectData();
+    showToast('📋 تم نسخ المقطع', 'success');
+}
+
+function deleteSelected() {
+    if (selectedClipId === null) {
+        showToast('⚠️ اختر مقطعاً أولاً', 'warning');
+        return;
+    }
+    deleteClip(selectedClipId);
+}
+
+function moveClip(id, newLayer, newStart) {
+    const clip = projectData.clips.find(c => c.id === id);
+    if (!clip) return;
+    clip.layer = newLayer;
+    clip.start = Math.max(0, newStart);
+    updateTotalDuration();
+    renderTimeline();
+    saveProjectData();
+}
+
+function editClipProperties(id) {
+    const clip = projectData.clips.find(c => c.id === id);
+    if (!clip) return;
+    
+    document.getElementById('clipPropTitle').value = clip.title || '';
+    document.getElementById('clipPropStart').value = clip.start;
+    document.getElementById('clipPropDuration').value = clip.duration;
+    document.getElementById('clipPropType').value = clip.type;
+    
+    const layerSelect = document.getElementById('clipPropLayer');
+    layerSelect.innerHTML = '';
+    projectData.layers.forEach((layer, i) => {
+        const opt = document.createElement('option');
+        opt.value = i;
+        opt.textContent = layer.name;
+        if (i === clip.layer) opt.selected = true;
+        layerSelect.appendChild(opt);
+    });
+    
+    document.getElementById('clipPropertiesModal').classList.remove('hidden');
+    document.getElementById('clipPropertiesModal').dataset.clipId = id;
+}
+
+function closeClipProperties() {
+    document.getElementById('clipPropertiesModal').classList.add('hidden');
+}
+
+function saveClipProperties() {
+    const id = parseInt(document.getElementById('clipPropertiesModal').dataset.clipId);
+    const clip = projectData.clips.find(c => c.id === id);
+    if (!clip) return;
+    
+    clip.title = document.getElementById('clipPropTitle').value || 'مقطع';
+    clip.start = parseFloat(document.getElementById('clipPropStart').value) || 0;
+    clip.duration = Math.max(0.5, parseFloat(document.getElementById('clipPropDuration').value) || 1);
+    clip.layer = parseInt(document.getElementById('clipPropLayer').value);
+    clip.type = document.getElementById('clipPropType').value;
+    clip.icon = TYPE_ICONS[clip.type] || '📄';
+    clip.color = COLORS[clip.type] || '#666';
+    
+    updateTotalDuration();
+    closeClipProperties();
+    renderTimeline();
+    saveProjectData();
+    showToast('✅ تم تحديث الخصائص', 'success');
+}
+
+// ============================================================
+//  PLAYBACK CONTROLS
 // ============================================================
 function togglePlay() {
     if (isPlaying) {
@@ -1703,7 +2177,6 @@ function startPlay() {
     document.getElementById('playBtn').textContent = '⏸';
     document.getElementById('playhead').classList.add('active');
     
-    // تشغيل الصوت
     if (audioPlayer && audioPlayer.src) {
         audioPlayer.play().catch(() => {});
     }
@@ -1794,7 +2267,6 @@ function seekTo(time) {
     renderPreview(currentTime);
     updatePlaybackInfo();
     
-    // مزامنة الصوت
     if (audioPlayer && audioPlayer.src) {
         const activeAudio = projectData.clips.find(c => {
             const layer = projectData.layers[c.layer];
@@ -1815,7 +2287,7 @@ document.getElementById('seekSlider').addEventListener('input', function() {
 });
 
 // ============================================================
-//  RECORDING - تسجيل الصوت
+//  RECORDING
 // ============================================================
 async function toggleRecording() {
     const btn = document.getElementById('recordBtn');
@@ -1863,10 +2335,8 @@ async function toggleRecording() {
             const fileName = `تسجيل ${new Date().toLocaleTimeString()}.webm`;
             const fileObj = new File([blob], fileName, { type: 'audio/webm' });
             
-            // إضافة الملف إلى المعرض
             addMediaFile(fileObj);
             
-            // إضافة المقطع الصوتي إلى التايم لاين
             let startTime = getLayerEndTime(selectedLayerIndex);
             
             const clip = {
@@ -1889,7 +2359,7 @@ async function toggleRecording() {
             };
             
             projectData.clips.push(clip);
-            projectData.totalDuration = Math.max(projectData.totalDuration, clip.start + clip.duration + 1);
+            updateTotalDuration();
             renderTimeline();
             renderMediaGallery();
             updateStatus();
@@ -1918,314 +2388,7 @@ async function toggleRecording() {
 }
 
 // ============================================================
-//  TIMELINE - التايم لاين
-// ============================================================
-function renderTimeline() {
-    const container = document.getElementById('tracksContainer');
-    const pxPerSec = projectData.cellWidth / 2;
-    const totalWidth = projectData.totalDuration * pxPerSec + 120;
-
-    const rulerMarks = document.getElementById('rulerMarks');
-    rulerMarks.innerHTML = '';
-    const step = projectData.totalDuration > 60 ? 5 : 2;
-    for (let t = 0; t <= projectData.totalDuration; t += step) {
-        const mark = document.createElement('div');
-        mark.className = `ruler-mark${t % 10 === 0 ? ' major' : ''}`;
-        mark.style.width = (pxPerSec * step) + 'px';
-        const m = Math.floor(t/60), s = Math.floor(t%60);
-        mark.innerHTML = `<span class="label">${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}</span>`;
-        rulerMarks.appendChild(mark);
-    }
-
-    container.innerHTML = '';
-    projectData.layers.forEach((layer, layerIdx) => {
-        if (!layer.visible) return;
-        
-        const row = document.createElement('div');
-        row.className = 'track-row';
-        row.dataset.layer = layerIdx;
-        
-        const label = document.createElement('div');
-        label.className = 'track-label';
-        label.innerHTML = `
-            <span class="track-icon">📺</span>
-            <span>${layer.name}</span>
-        `;
-        row.appendChild(label);
-
-        const body = document.createElement('div');
-        body.className = 'track-body';
-        body.style.width = totalWidth + 'px';
-        body.style.setProperty('--cell-w', projectData.cellWidth + 'px');
-        body.dataset.layer = layerIdx;
-
-        const layerClips = projectData.clips.filter(c => c.layer === layerIdx);
-        layerClips.sort((a, b) => a.start - b.start);
-        
-        layerClips.forEach((clip) => {
-            const left = clip.start * pxPerSec;
-            const width = Math.max(clip.duration * pxPerSec - 2, 20);
-            
-            const block = document.createElement('div');
-            block.className = `clip-block clip-type-${clip.type}${selectedClipId === clip.id ? ' selected' : ''}`;
-            block.style.cssText = `left:${left}px;width:${width}px;`;
-            block.dataset.clipId = clip.id;
-            
-            const durationStr = formatTime(clip.duration);
-            block.innerHTML = `
-                <span class="clip-thumb">${clip.icon || '🎬'}</span>
-                <span class="clip-label">${clip.title || 'مقطع'}</span>
-                <span class="clip-duration">${durationStr}</span>
-                <button class="clip-delete-btn" onclick="event.stopPropagation();deleteClip(${clip.id})" title="حذف المقطع">✕</button>
-            `;
-            
-            block.onclick = (e) => {
-                e.stopPropagation();
-                selectClip(clip.id);
-                seekTo(clip.start);
-            };
-            
-            block.ondblclick = () => {
-                editClipProperties(clip.id);
-            };
-            
-            block.draggable = true;
-            block.ondragstart = (e) => {
-                e.dataTransfer.setData('text/plain', JSON.stringify({
-                    type: 'clip',
-                    clipId: clip.id,
-                    layer: layerIdx,
-                    start: clip.start
-                }));
-                block.classList.add('dragging');
-                document.getElementById('trashZone').classList.add('active');
-            };
-            block.ondragend = () => {
-                block.classList.remove('dragging');
-                document.getElementById('trashZone').classList.remove('active');
-            };
-
-            body.appendChild(block);
-        });
-
-        body.ondragover = (e) => e.preventDefault();
-        body.ondrop = (e) => {
-            e.preventDefault();
-            const data = JSON.parse(e.dataTransfer.getData('text/plain'));
-            if (data.type === 'clip') {
-                const rect = body.getBoundingClientRect();
-                const x = e.clientX - rect.left + body.scrollLeft;
-                const newStart = x / pxPerSec;
-                moveClip(data.clipId, layerIdx, Math.max(0, newStart));
-            }
-        };
-
-        row.appendChild(body);
-        container.appendChild(row);
-    });
-
-    updatePlayhead();
-    updateStatus();
-}
-
-function updatePlayhead() {
-    const playhead = document.getElementById('playhead');
-    const pxPerSec = projectData.cellWidth / 2;
-    const pos = currentTime * pxPerSec + 60;
-    playhead.style.left = pos + 'px';
-}
-
-function updateStatus() {
-    document.getElementById('statusClips').textContent = `${projectData.clips.length} مقطع`;
-    document.getElementById('statusDuration').textContent = `المدة: ${formatTime(projectData.totalDuration)}`;
-    document.getElementById('statusLayers').textContent = `${projectData.layers.length} طبقة`;
-}
-
-// ============================================================
-//  CLIP OPERATIONS - عمليات المقاطع
-// ============================================================
-function deleteClip(id) {
-    if (!confirm('هل تريد حذف هذا المقطع؟')) return;
-    projectData.clips = projectData.clips.filter(c => c.id !== id);
-    if (selectedClipId === id) selectedClipId = null;
-    renderTimeline();
-    updateStatus();
-    saveProjectData();
-    showToast('🗑️ تم حذف المقطع', 'success');
-}
-
-function selectClip(id) {
-    selectedClipId = id;
-    renderTimeline();
-    const clip = projectData.clips.find(c => c.id === id);
-    if (clip) {
-        showToast(`📌 ${clip.title}`, 'info');
-    }
-}
-
-function addClip(type) {
-    if (type === 'video' || type === 'audio' || type === 'image' || type === 'music') {
-        const input = document.createElement('input');
-        input.type = 'file';
-        input.accept = type === 'video' ? 'video/*' : 
-                       type === 'audio' || type === 'music' ? 'audio/*' : 
-                       'image/*';
-        input.multiple = true;
-        input.onchange = (e) => {
-            if (e.target.files.length > 0) {
-                handleFiles(e.target.files);
-            }
-        };
-        input.click();
-        return;
-    }
-    
-    if (type === 'text') {
-        const text = prompt('نص المقطع:');
-        if (!text) return;
-        let startTime = getLayerEndTime(selectedLayerIndex);
-        const clip = {
-            id: clipIdCounter++,
-            type: 'text',
-            layer: selectedLayerIndex,
-            start: startTime,
-            duration: 2,
-            title: text.slice(0, 20) + (text.length > 20 ? '...' : ''),
-            content: text,
-            color: COLORS.text,
-            icon: '📝',
-            metadata: {}
-        };
-        projectData.clips.push(clip);
-        projectData.totalDuration = Math.max(projectData.totalDuration, clip.start + clip.duration + 1);
-        renderTimeline();
-        updateStatus();
-        saveProjectData();
-        showToast('✅ تم إضافة النص', 'success');
-    }
-}
-
-function splitClip() {
-    if (selectedClipId === null) {
-        showToast('⚠️ اختر مقطعاً أولاً', 'warning');
-        return;
-    }
-    const clip = projectData.clips.find(c => c.id === selectedClipId);
-    if (!clip) return;
-    
-    const splitTime = currentTime - clip.start;
-    if (splitTime <= 0.1 || splitTime >= clip.duration - 0.1) {
-        showToast('⚠️ اختر نقطة داخل المقطع', 'warning');
-        return;
-    }
-    
-    const newClip = {
-        ...clip,
-        id: clipIdCounter++,
-        start: clip.start + splitTime,
-        duration: clip.duration - splitTime,
-        title: `${clip.title} (جزء 2)`
-    };
-    clip.duration = splitTime;
-    clip.title = `${clip.title} (جزء 1)`;
-    
-    projectData.clips.push(newClip);
-    renderTimeline();
-    saveProjectData();
-    showToast('✂️ تم تقسيم المقطع', 'success');
-}
-
-function duplicateClip() {
-    if (selectedClipId === null) {
-        showToast('⚠️ اختر مقطعاً أولاً', 'warning');
-        return;
-    }
-    const clip = projectData.clips.find(c => c.id === selectedClipId);
-    if (!clip) return;
-    
-    let startTime = clip.start + clip.duration + 0.5;
-    
-    const newClip = {
-        ...clip,
-        id: clipIdCounter++,
-        start: startTime,
-        title: `${clip.title} (نسخة)`
-    };
-    projectData.clips.push(newClip);
-    projectData.totalDuration = Math.max(projectData.totalDuration, newClip.start + newClip.duration + 1);
-    renderTimeline();
-    selectClip(newClip.id);
-    saveProjectData();
-    showToast('📋 تم نسخ المقطع', 'success');
-}
-
-function deleteSelected() {
-    if (selectedClipId === null) {
-        showToast('⚠️ اختر مقطعاً أولاً', 'warning');
-        return;
-    }
-    deleteClip(selectedClipId);
-}
-
-function moveClip(id, newLayer, newStart) {
-    const clip = projectData.clips.find(c => c.id === id);
-    if (!clip) return;
-    clip.layer = newLayer;
-    clip.start = Math.max(0, newStart);
-    projectData.totalDuration = Math.max(projectData.totalDuration, clip.start + clip.duration + 1);
-    renderTimeline();
-    saveProjectData();
-}
-
-function editClipProperties(id) {
-    const clip = projectData.clips.find(c => c.id === id);
-    if (!clip) return;
-    
-    document.getElementById('clipPropTitle').value = clip.title || '';
-    document.getElementById('clipPropStart').value = clip.start;
-    document.getElementById('clipPropDuration').value = clip.duration;
-    document.getElementById('clipPropType').value = clip.type;
-    
-    const layerSelect = document.getElementById('clipPropLayer');
-    layerSelect.innerHTML = '';
-    projectData.layers.forEach((layer, i) => {
-        const opt = document.createElement('option');
-        opt.value = i;
-        opt.textContent = layer.name;
-        if (i === clip.layer) opt.selected = true;
-        layerSelect.appendChild(opt);
-    });
-    
-    document.getElementById('clipPropertiesModal').classList.remove('hidden');
-    document.getElementById('clipPropertiesModal').dataset.clipId = id;
-}
-
-function closeClipProperties() {
-    document.getElementById('clipPropertiesModal').classList.add('hidden');
-}
-
-function saveClipProperties() {
-    const id = parseInt(document.getElementById('clipPropertiesModal').dataset.clipId);
-    const clip = projectData.clips.find(c => c.id === id);
-    if (!clip) return;
-    
-    clip.title = document.getElementById('clipPropTitle').value || 'مقطع';
-    clip.start = parseFloat(document.getElementById('clipPropStart').value) || 0;
-    clip.duration = Math.max(0.5, parseFloat(document.getElementById('clipPropDuration').value) || 1);
-    clip.layer = parseInt(document.getElementById('clipPropLayer').value);
-    clip.type = document.getElementById('clipPropType').value;
-    clip.icon = TYPE_ICONS[clip.type] || '📄';
-    clip.color = COLORS[clip.type] || '#666';
-    
-    projectData.totalDuration = Math.max(projectData.totalDuration, clip.start + clip.duration + 1);
-    closeClipProperties();
-    renderTimeline();
-    saveProjectData();
-    showToast('✅ تم تحديث الخصائص', 'success');
-}
-
-// ============================================================
-//  FILE HANDLING - معالجة الملفات
+//  FILE HANDLING
 // ============================================================
 function handleFiles(files) {
     Array.from(files).forEach(file => {
@@ -2295,7 +2458,7 @@ function setupDragDrop() {
 }
 
 // ============================================================
-//  TOOLS - الأدوات
+//  TOOLS
 // ============================================================
 function selectTool(tool) {
     document.querySelectorAll('.tool-btn').forEach(b => b.classList.remove('active'));
@@ -2312,7 +2475,7 @@ function toggleGrid() {
 }
 
 // ============================================================
-//  KEYBOARD SHORTCUTS - اختصارات لوحة المفاتيح
+//  KEYBOARD SHORTCUTS
 // ============================================================
 function setupKeyboardShortcuts() {
     document.addEventListener('keydown', (e) => {
@@ -2376,7 +2539,7 @@ function setupKeyboardShortcuts() {
 }
 
 // ============================================================
-//  ZOOM - التكبير
+//  ZOOM
 // ============================================================
 document.getElementById('zoom-slider').addEventListener('input', function() {
     projectData.cellWidth = parseInt(this.value);
@@ -2386,14 +2549,13 @@ document.getElementById('zoom-slider').addEventListener('input', function() {
 });
 
 // ============================================================
-//  EXPORT / SAVE - حفظ وتصدير المشروع
+//  EXPORT / SAVE
 // ============================================================
 function saveProjectData() {
     try {
         const data = {
             clips: projectData.clips.map(c => ({
                 ...c,
-                // لا نحتفظ بـ content المؤقت
                 content: c.content && c.content.startsWith('blob:') ? 'blob' : c.content
             })),
             layers: projectData.layers,
@@ -2417,10 +2579,8 @@ function loadProjectData() {
         if (saved) {
             const data = JSON.parse(saved);
             
-            // استعادة المقاطع
             if (data.clips) {
                 projectData.clips = data.clips.map(c => {
-                    // محاولة ربط المحتوى بالملف المناسب
                     if (c.metadata && c.metadata.file) {
                         const mediaFile = projectData.mediaFiles.find(f => f.name === c.metadata.file);
                         if (mediaFile && mediaFile.url) {
@@ -2509,7 +2669,7 @@ function startRender(projectId) {
 }
 
 // ============================================================
-//  UTILITY - دوال مساعدة
+//  UTILITY
 // ============================================================
 function formatTime(seconds) {
     if (!seconds || isNaN(seconds)) return '00:00:00';
@@ -2521,7 +2681,6 @@ function formatTime(seconds) {
 }
 
 function showToast(msg, type = 'info') {
-    // إزالة أي توست سابق
     const oldToast = document.querySelector('.toast-message');
     if (oldToast) oldToast.remove();
     
@@ -2562,7 +2721,7 @@ if (!CanvasRenderingContext2D.prototype.roundRect) {
 }
 
 // ============================================================
-//  CLEANUP - تنظيف عند الخروج
+//  CLEANUP
 // ============================================================
 window.addEventListener('beforeunload', function() {
     if (isRecording && mediaRecorder) {
@@ -2571,7 +2730,6 @@ window.addEventListener('beforeunload', function() {
     if (playInterval) {
         clearInterval(playInterval);
     }
-    // تنظيف الـ blob URLs
     projectData.mediaFiles.forEach(f => {
         if (f.url && f.url.startsWith('blob:')) {
             try { URL.revokeObjectURL(f.url); } catch(e) {}
@@ -2579,7 +2737,7 @@ window.addEventListener('beforeunload', function() {
     });
 });
 
-console.log('🎬 استوديو الإنتاج المتكامل V2 جاهز');
+console.log('🎬 استوديو الإنتاج المتكامل V3 جاهز');
 console.log(`📁 المشروع: ${projectId}`);
 console.log(`📊 المقاطع: ${projectData.clips.length}`);
 console.log(`🧩 الطبقات: ${projectData.layers.length}`);
