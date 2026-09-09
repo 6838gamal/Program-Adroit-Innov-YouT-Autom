@@ -118,16 +118,23 @@ class ProductionService:
             except Exception as e:
                 logger.warning(f"⚠️ Could not save project data: {str(e)}")
 
-        # Create render job
+        # ====== Create RenderJob correctly ======
+        # Get renderer from settings or use default
+        renderer = render_settings.get('renderer', 'ffmpeg') if render_settings else 'ffmpeg'
+        
+        # Create job with only the parameters that RenderJob.__init__ accepts
         job = RenderJob(
             project_id=project_id,
-            settings=render_settings or {},
-            status="pending",
-            progress=0,
-            created_at=datetime.utcnow()
+            renderer=renderer,
+            settings=render_settings or {}
         )
         
-        project.start_production()
+        # Note: status defaults to JobStatus.PENDING, progress defaults to 0.0
+        # created_at is set automatically by BaseEntity
+
+        # Update project status
+        if hasattr(project, 'start_production'):
+            project.start_production()
 
         # Save job and project
         await self._jobs.save(job)
@@ -184,10 +191,16 @@ class ProductionService:
             temp_dir = settings.TEMP_DIR / str(job_id)
             temp_dir.mkdir(parents=True, exist_ok=True)
 
+            # Get render settings from the job
+            job_settings = job.settings if hasattr(job, 'settings') else {}
+            fps = job_settings.get('fps', 30)
+            width = job_settings.get('width', 1920)
+            height = job_settings.get('height', 1080)
+            
             rs = RenderSettings(
-                fps=render_settings.get('fps', 30) if hasattr(self, 'render_settings') else 30,
-                resolution_width=render_settings.get('width', 1920) if hasattr(self, 'render_settings') else 1920,
-                resolution_height=render_settings.get('height', 1080) if hasattr(self, 'render_settings') else 1080
+                fps=fps,
+                resolution_width=width,
+                resolution_height=height
             )
 
             await save_progress(5.0, "تحليل النص وتقسيمه إلى مشاهد")
@@ -199,13 +212,17 @@ class ProductionService:
             brand_color = (brand_colors.get("primary") if brand_colors else None)
 
             # Check if we have clips from client (imported from timeline)
-            clips = project_data.get("data", {}).get("clips", [])
+            project_data_data = project_data.get("data", {})
+            clips = project_data_data.get("clips", [])
+            
             if clips:
                 # Use client-provided clips
                 raw_scenes = self._build_scenes_from_clips(clips)
+                logger.info(f"📽️ Using {len(raw_scenes)} scenes from client clips")
             else:
                 # Fallback: split script into scenes
                 raw_scenes = _split_script_to_scenes(script, title)
+                logger.info(f"📝 Using {len(raw_scenes)} scenes from script")
 
             await save_progress(10.0, f"توليد {len(raw_scenes)} مشهد")
 
@@ -335,18 +352,27 @@ class ProductionService:
         """Convert client clips to scene text list"""
         scenes = []
         for clip in clips:
-            if clip.get('type') == 'text':
-                scenes.append(clip.get('content', ''))
-            elif clip.get('type') == 'image':
-                scenes.append(f"[صورة] {clip.get('title', '')}")
-            elif clip.get('type') == 'video':
-                scenes.append(f"[فيديو] {clip.get('title', '')}")
-            elif clip.get('type') == 'audio':
-                scenes.append(f"[صوت] {clip.get('title', '')}")
+            clip_type = clip.get('type', '')
+            if clip_type == 'text':
+                content = clip.get('content', '')
+                if content:
+                    scenes.append(content)
+                else:
+                    scenes.append(clip.get('title', 'نص'))
+            elif clip_type == 'image':
+                scenes.append(f"[صورة] {clip.get('title', 'صورة')}")
+            elif clip_type == 'video':
+                scenes.append(f"[فيديو] {clip.get('title', 'فيديو')}")
+            elif clip_type == 'audio':
+                scenes.append(f"[صوت] {clip.get('title', 'صوت')}")
             else:
                 scenes.append(clip.get('title', 'مقطع'))
         
-        return scenes if scenes else ["مشهد بدون نص"]
+        # If no scenes were built, create a default one
+        if not scenes:
+            scenes = ["مشهد بدون نص"]
+        
+        return scenes
 
     async def get_job(self, job_id: uuid.UUID) -> RenderJob:
         """Get a render job by ID"""
@@ -367,8 +393,8 @@ class ProductionService:
             logger.info(f"🛑 Cancelled render job: {job_id}")
         
         job = await self._jobs.get(job_id)
-        if job and job.status in ["pending", "processing"]:
-            job.fail("Cancelled by user")
+        if job and hasattr(job, 'status') and job.status in ["pending", "processing"]:
+            job.cancel()
             await self._jobs.save(job)
 
 
@@ -481,21 +507,3 @@ class _HFImageAdapter:
                 text=text, output_path=output_path, scene_index=scene_index,
                 title=title, brand_color=brand_color,
             )
-
-
-# ── Render Settings Storage ──────────────────────────────────────────────────
-# Store render settings on the service instance for use in _run_render
-# This is a temporary solution - better to pass settings through the render job
-_render_settings_cache: Dict[str, Dict[str, Any]] = {}
-
-def store_render_settings(job_id: uuid.UUID, settings: Dict[str, Any]) -> None:
-    """Store render settings for a job"""
-    _render_settings_cache[str(job_id)] = settings
-
-def get_render_settings(job_id: uuid.UUID) -> Optional[Dict[str, Any]]:
-    """Get render settings for a job"""
-    return _render_settings_cache.get(str(job_id))
-
-def clear_render_settings(job_id: uuid.UUID) -> None:
-    """Clear render settings cache for a job"""
-    _render_settings_cache.pop(str(job_id), None)
