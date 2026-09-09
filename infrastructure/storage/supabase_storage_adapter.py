@@ -3,9 +3,11 @@ import uuid
 import tempfile
 import jwt
 import httpx
+import socket
+import time
 from pathlib import Path
 from datetime import datetime, timedelta
-from typing import Optional, Dict, Any, BinaryIO
+from typing import Optional, Dict, Any, BinaryIO, List
 from supabase import create_client, Client
 from shared.ports.storage_port import StoragePort
 from config.settings import settings
@@ -15,17 +17,17 @@ class SupabaseStorageAdapter(StoragePort):
     """
     Supabase Storage Adapter with Modern JWT Authentication.
     Uses PUBLIC_KEY for read operations and SECRET_KEY for write operations.
+    Includes retry logic, timeout, and DNS resolution checks.
     """
     
-    def __init__(self):
-        # ✅ استخراج القيم النصية من SecretStr
+    def __init__(self, max_retries: int = 3, timeout: int = 30):
+        # Load configuration from environment
         self.supabase_url = settings.SUPABASE_URL
-        
-        # ✅ تحويل SecretStr إلى str باستخدام get_secret_value()
-        self.public_key = settings.supabase_public_key_value  # الآن هي str
-        self.secret_key = settings.supabase_secret_key_value  # الآن هي str
-        
+        self.public_key = settings.supabase_public_key_value  # ✅ استخراج القيمة النصية
+        self.secret_key = settings.supabase_secret_key_value  # ✅ استخراج القيمة النصية
         self.bucket_name = settings.SUPABASE_BUCKET
+        self.max_retries = max_retries
+        self.timeout = timeout
         
         # Validate configuration
         if not self.supabase_url:
@@ -35,13 +37,76 @@ class SupabaseStorageAdapter(StoragePort):
         if not self.secret_key:
             raise ValueError("SUPABASE_SECRET_KEY environment variable is required")
         
-        # ✅ إنشاء العملاء باستخدام القيم النصية
-        self.public_client: Client = create_client(self.supabase_url, self.public_key)
-        self.secret_client: Client = create_client(self.supabase_url, self.secret_key)
+        # ✅ التحقق من صحة DNS
+        self._check_dns_resolution()
         
-        # Initialize storage
-        self._ensure_bucket_exists()
-        self._setup_bucket_policies()
+        # ✅ إنشاء العملاء مع إعادة المحاولة
+        self._init_clients_with_retry()
+    
+    def _check_dns_resolution(self) -> None:
+        """Check if the Supabase URL can be resolved."""
+        try:
+            host = self.supabase_url.replace("https://", "").replace("http://", "").split("/")[0]
+            socket.gethostbyname(host)
+            print(f"✅ DNS resolution successful for {host}")
+        except Exception as e:
+            print(f"⚠️ DNS resolution failed: {e}")
+            # محاولة استخدام IP بديل (في حالة DNS issues)
+            # يمكنك إضافة IP ثابت هنا إذا لزم الأمر
+            raise Exception(f"DNS resolution failed for {self.supabase_url}: {str(e)}")
+    
+    def _init_clients_with_retry(self):
+        """Initialize Supabase clients with retry logic."""
+        last_error = None
+        
+        for attempt in range(self.max_retries):
+            try:
+                # ✅ إنشاء العملاء مع مهلة
+                self.public_client: Client = create_client(
+                    self.supabase_url, 
+                    self.public_key,
+                    options={"timeout": self.timeout}
+                )
+                self.secret_client: Client = create_client(
+                    self.supabase_url, 
+                    self.secret_key,
+                    options={"timeout": self.timeout}
+                )
+                
+                # ✅ اختبار الاتصال
+                self._test_connection()
+                
+                # ✅ تهيئة التخزين
+                self._ensure_bucket_exists()
+                self._setup_bucket_policies()
+                return
+                
+            except Exception as e:
+                last_error = e
+                if attempt < self.max_retries - 1:
+                    wait_time = 2 ** attempt  # Exponential backoff
+                    print(f"⚠️ Retry {attempt + 1}/{self.max_retries} after {wait_time}s: {e}")
+                    time.sleep(wait_time)
+                else:
+                    raise Exception(f"Failed to connect to Supabase after {self.max_retries} attempts: {str(last_error)}")
+    
+    def _test_connection(self) -> None:
+        """Test the connection to Supabase."""
+        try:
+            # محاولة قائمة بسيطة لاختبار الاتصال
+            self.public_client.storage.from_(self.bucket_name).list(
+                path="",
+                options={"limit": 1}
+            )
+            print("✅ Supabase connection test successful")
+        except Exception as e:
+            # إذا فشل القائمة، جرب طريقة بديلة
+            try:
+                # محاولة الحصول على معلومات الـ Bucket
+                self.secret_client.storage.get_bucket(self.bucket_name)
+                print("✅ Supabase connection test successful (bucket check)")
+            except Exception as e2:
+                raise Exception(f"Connection test failed: {str(e2)}")
     
     def _ensure_bucket_exists(self) -> None:
         """Ensure the storage bucket exists using SECRET_KEY."""
@@ -49,7 +114,7 @@ class SupabaseStorageAdapter(StoragePort):
             # Try to get bucket info
             self.secret_client.storage.get_bucket(self.bucket_name)
             print(f"✅ Bucket '{self.bucket_name}' already exists")
-        except Exception as e:
+        except Exception:
             # Create bucket with SECRET_KEY
             try:
                 self.secret_client.storage.create_bucket(
@@ -73,7 +138,6 @@ class SupabaseStorageAdapter(StoragePort):
         """Set up RLS policies for the bucket using SECRET_KEY."""
         try:
             # Note: RLS policies need to be set via SQL in Supabase Dashboard
-            # This is just a placeholder for best practice documentation
             print("ℹ️ Bucket policies should be configured in Supabase Dashboard")
         except Exception as e:
             print(f"⚠️ Failed to setup policies: {str(e)}")
@@ -248,7 +312,7 @@ class SupabaseStorageAdapter(StoragePort):
         except Exception as e:
             raise Exception(f"Failed to generate signed URL: {str(e)}")
     
-    async def list_files(self, prefix: str = "", limit: int = 1000) -> list:
+    async def list_files(self, prefix: str = "", limit: int = 1000) -> List[Dict[str, Any]]:
         """
         List files using PUBLIC_KEY.
         """
@@ -337,3 +401,39 @@ class SupabaseStorageAdapter(StoragePort):
             '.zip': 'application/zip',
         }
         return content_types.get(ext, 'application/octet-stream')
+    
+    # ===== Helper Methods =====
+    
+    async def get_bucket_info(self) -> Dict[str, Any]:
+        """
+        Get information about the bucket using SECRET_KEY.
+        """
+        try:
+            bucket_info = self.secret_client.storage.get_bucket(self.bucket_name)
+            return {
+                "name": bucket_info.name,
+                "public": bucket_info.public,
+                "created_at": bucket_info.created_at,
+                "updated_at": bucket_info.updated_at,
+                "file_size_limit": getattr(bucket_info, "file_size_limit", None),
+                "allowed_mime_types": getattr(bucket_info, "allowed_mime_types", [])
+            }
+        except Exception as e:
+            raise Exception(f"Failed to get bucket info: {str(e)}")
+    
+    async def get_storage_usage(self) -> Dict[str, Any]:
+        """
+        Get storage usage information.
+        """
+        try:
+            files = await self.list_files(limit=10000)
+            total_size = sum(f.get("metadata", {}).get("size", 0) for f in files)
+            
+            return {
+                "total_files": len(files),
+                "total_size_bytes": total_size,
+                "total_size_mb": total_size / (1024 * 1024),
+                "total_size_gb": total_size / (1024 * 1024 * 1024)
+            }
+        except Exception as e:
+            raise Exception(f"Failed to get storage usage: {str(e)}")
