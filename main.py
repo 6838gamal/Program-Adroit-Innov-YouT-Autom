@@ -6,6 +6,7 @@ import os
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
+from datetime import datetime
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -28,9 +29,6 @@ from interfaces.web.routes import router as web_router
 from interfaces.websocket.render_ws import router as ws_router
 
 from interfaces.api.youtube_routes import router as youtube_router
-#from interfaces.api.video_routes import router as video_router
-
-# ✅ تم إزالة الأسطر الخاطئة من هنا
 
 # Configure logging
 logging.basicConfig(
@@ -41,14 +39,103 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+# ============================================================
+# SUPABASE STATUS HELPER
+# ============================================================
+
+async def get_supabase_status() -> dict:
+    """
+    Get detailed Supabase connection status.
+    Returns status information about Supabase configuration and connectivity.
+    """
+    status = {
+        "configured": False,
+        "url": None,
+        "public_key": None,
+        "secret_key": None,
+        "bucket": None,
+        "connection": {
+            "status": "unknown",
+            "message": "",
+            "error": None
+        },
+        "storage": {
+            "status": "unknown",
+            "message": "",
+            "error": None
+        },
+        "timestamp": datetime.utcnow().isoformat()
+    }
+    
+    # Check configuration
+    status["configured"] = settings.supabase_configured
+    status["url"] = settings.SUPABASE_URL
+    status["public_key"] = "✅ موجود" if settings.supabase_public_key_value else "❌ مفقود"
+    status["secret_key"] = "✅ موجود" if settings.supabase_secret_key_value else "❌ مفقود"
+    status["bucket"] = settings.SUPABASE_BUCKET
+    
+    if not status["configured"]:
+        status["connection"]["status"] = "not_configured"
+        status["connection"]["message"] = "Supabase is not configured. Please set SUPABASE_URL, SUPABASE_PUBLIC_KEY, and SUPABASE_SECRET_KEY"
+        return status
+    
+    # Test database connection
+    try:
+        db_status = get_db_status()
+        if db_status.get("available", False):
+            status["connection"]["status"] = "connected"
+            status["connection"]["message"] = "Database connection successful"
+        else:
+            status["connection"]["status"] = "error"
+            status["connection"]["message"] = "Database connection failed"
+            status["connection"]["error"] = get_db_error()
+    except Exception as e:
+        status["connection"]["status"] = "error"
+        status["connection"]["message"] = "Database connection error"
+        status["connection"]["error"] = str(e)
+    
+    # Test storage connection
+    try:
+        from infrastructure.storage.supabase_storage_adapter import SupabaseStorageAdapter
+        storage = SupabaseStorageAdapter()
+        
+        # Try to list files (with limit 1 to test connection)
+        try:
+            await storage.list_files(prefix="", limit=1)
+            status["storage"]["status"] = "connected"
+            status["storage"]["message"] = "Storage connection successful"
+        except Exception as e:
+            status["storage"]["status"] = "error"
+            status["storage"]["message"] = "Storage connection failed"
+            status["storage"]["error"] = str(e)
+            
+    except ImportError as e:
+        status["storage"]["status"] = "error"
+        status["storage"]["message"] = "Storage adapter not available"
+        status["storage"]["error"] = str(e)
+    except Exception as e:
+        status["storage"]["status"] = "error"
+        status["storage"]["message"] = "Storage connection error"
+        status["storage"]["error"] = str(e)
+    
+    return status
+
+
+# ============================================================
+# LIFESPAN
+# ============================================================
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # ── Startup ───────────────────────────────────────────────────────────────
-    logger.info("Starting %s v%s", settings.APP_NAME, settings.APP_VERSION)
-    logger.info("Environment: %s", settings.ENVIRONMENT)
-    logger.info("Database Type: Supabase")
-
-    # Validate configuration
+    logger.info("=" * 60)
+    logger.info("🚀 %s v%s", settings.APP_NAME, settings.APP_VERSION)
+    logger.info("=" * 60)
+    logger.info("🌍 Environment: %s", settings.ENVIRONMENT)
+    logger.info("📦 Database Type: Supabase (Modern)")
+    logger.info("🔧 Storage Type: %s", settings.STORAGE_TYPE)
+    
+    # ── Validate Configuration ──────────────────────────────────────────────
     try:
         validate_config()
         logger.info("✅ Configuration validated")
@@ -56,18 +143,56 @@ async def lifespan(app: FastAPI):
         logger.error(f"❌ Configuration validation failed: {e}")
         if settings.is_production:
             raise
-
-    # Ensure required directories exist
+    
+    # ── Supabase Status ──────────────────────────────────────────────────────
+    logger.info("-" * 60)
+    logger.info("🔐 SUPABASE STATUS")
+    logger.info("-" * 60)
+    
+    supabase_status = await get_supabase_status()
+    
+    if supabase_status["configured"]:
+        logger.info("✅ Supabase is configured")
+        logger.info("   📍 URL: %s", supabase_status["url"])
+        logger.info("   🔑 Public Key: %s", supabase_status["public_key"])
+        logger.info("   🔐 Secret Key: %s", supabase_status["secret_key"])
+        logger.info("   📦 Bucket: %s", supabase_status["bucket"])
+        
+        # Database status
+        db_status = supabase_status["connection"]
+        if db_status["status"] == "connected":
+            logger.info("   🗄️  Database: ✅ %s", db_status["message"])
+        else:
+            logger.warning("   🗄️  Database: ❌ %s", db_status["message"])
+            if db_status.get("error"):
+                logger.warning("      Error: %s", db_status["error"])
+        
+        # Storage status
+        storage_status = supabase_status["storage"]
+        if storage_status["status"] == "connected":
+            logger.info("   💾 Storage: ✅ %s", storage_status["message"])
+        else:
+            logger.warning("   💾 Storage: ❌ %s", storage_status["message"])
+            if storage_status.get("error"):
+                logger.warning("      Error: %s", storage_status["error"])
+    else:
+        logger.warning("❌ Supabase is NOT configured")
+        logger.warning("   Please set:")
+        logger.warning("   - SUPABASE_URL")
+        logger.warning("   - SUPABASE_PUBLIC_KEY")
+        logger.warning("   - SUPABASE_SECRET_KEY")
+    
+    logger.info("-" * 60)
+    
+    # ── Ensure Directories ──────────────────────────────────────────────────
     ensure_dirs()
-    logger.info("✅ Directories created")
-
+    logger.info("📁 Directories created")
+    
     # ── Database Setup ──────────────────────────────────────────────────────
     logger.info("Connecting to database...")
     try:
-        # إنشاء الجداول
         await create_all_tables()
         
-        # التحقق من الاتصال
         if await check_connection():
             logger.info("✅ Database connected successfully!")
         else:
@@ -78,10 +203,12 @@ async def lifespan(app: FastAPI):
         logger.warning(f"⚠️ Database setup warning: {e}")
         logger.warning("⚠️ Continuing without database - some features will be unavailable")
     
-    # عرض حالة قاعدة البيانات
+    # Display database status
     status = get_db_status()
-    logger.info(f"📊 Database status: Available={status['available']}, Engine Initialized={status['engine_initialized']}")
-
+    logger.info("📊 Database status: Available=%s, Engine Initialized=%s", 
+                status.get('available', False), 
+                status.get('engine_initialized', False))
+    
     # ── Load Plugins ────────────────────────────────────────────────────────
     try:
         registry = PluginRegistry()
@@ -91,7 +218,7 @@ async def lifespan(app: FastAPI):
         logger.info("✅ Plugins loaded: %s", registry.list_all())
     except Exception as e:
         logger.warning(f"⚠️ Failed to load plugins: {e}")
-
+    
     # ── Seed initial data ──────────────────────────────────────────────────
     if is_database_available():
         try:
@@ -100,18 +227,26 @@ async def lifespan(app: FastAPI):
             logger.warning(f"⚠️ Failed to seed initial data: {e}")
     else:
         logger.warning("⚠️ Skipping data seeding: Database not available")
-
+    
+    # ── Store Supabase Status in App State ──────────────────────────────────
+    app.state.supabase_status = supabase_status
+    app.state.startup_time = datetime.utcnow()
+    
     # ── Startup Complete ──────────────────────────────────────────────────
+    logger.info("=" * 60)
     logger.info("🚀 Platform ready at http://%s:%s", settings.HOST, settings.PORT)
     logger.info("📚 API Docs: http://%s:%s/docs", settings.HOST, settings.PORT)
+    logger.info("📊 Supabase Status: %s", "✅ Connected" if supabase_status["configured"] else "❌ Not Configured")
+    logger.info("=" * 60)
     
     if not is_database_available():
         logger.warning("⚠️ ════════════════════════════════════════════════════")
         logger.warning("⚠️  RUNNING IN LIMITED MODE - Database is not available")
         logger.warning("⚠️  Some features will not work properly")
         logger.warning("⚠️  Check your database configuration:")
-        logger.warning("⚠️    - DATABASE_URL or SUPABASE_URL: %s", "Set" if settings.SUPABASE_URL else "Missing")
-        logger.warning("⚠️    - POSTGRES_PASSWORD: %s", "Set" if os.getenv("POSTGRES_PASSWORD") else "Missing")
+        logger.warning("⚠️    - SUPABASE_URL: %s", "Set" if settings.SUPABASE_URL else "Missing")
+        logger.warning("⚠️    - SUPABASE_PUBLIC_KEY: %s", "Set" if settings.supabase_public_key_value else "Missing")
+        logger.warning("⚠️    - SUPABASE_SECRET_KEY: %s", "Set" if settings.supabase_secret_key_value else "Missing")
         logger.warning("⚠️  Error: %s", get_db_error())
         logger.warning("⚠️ ════════════════════════════════════════════════════")
 
@@ -121,11 +256,12 @@ async def lifespan(app: FastAPI):
     logger.info("🛑 Shutting down platform...")
 
 
+# ============================================================
+# SEED DATA
+# ============================================================
+
 async def _seed_initial_data() -> None:
-    """
-    Insert default platform records if not present.
-    Uses SQLAlchemy directly.
-    """
+    """Insert default platform records if not present."""
     if not is_database_available():
         logger.warning("⚠️ Skipping data seeding: Database not available")
         return
@@ -140,14 +276,12 @@ async def _seed_initial_data() -> None:
             return
             
         async with factory() as session:
-            # التحقق من وجود البيانات
             q = select(PublishingPlatformModel).where(PublishingPlatformModel.name == "youtube")
             result = await session.execute(q)
             if result.scalar_one_or_none():
                 logger.info("✅ Initial data already exists")
                 return
             
-            # إضافة البيانات الافتراضية
             default_platforms = [
                 {
                     "name": "youtube",
@@ -221,6 +355,10 @@ async def _seed_initial_data() -> None:
         raise
 
 
+# ============================================================
+# CREATE APP
+# ============================================================
+
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
     app = FastAPI(
@@ -256,33 +394,36 @@ def create_app() -> FastAPI:
     app.include_router(oauth_router)   # OAuth2:    /oauth/...
     app.include_router(api_router)     # REST API:  /api/v1/...
     app.include_router(web_router)     # Web UI:    /
-
-    # تسجيل الرواترز
     app.include_router(youtube_router, prefix="/api/v1")
-    #app.include_router(video_router, prefix="/api/v1")
 
     # ── Health Check ─────────────────────────────────────────────────────
     @app.get("/health")
     async def health_check():
-        """Health check endpoint."""
-        status = {
+        """Health check endpoint with Supabase status."""
+        supabase_status = await get_supabase_status()
+        
+        return {
             "status": "healthy",
             "app": settings.APP_NAME,
             "version": settings.APP_VERSION,
             "environment": settings.ENVIRONMENT,
-            "database": "supabase"
+            "database": "supabase",
+            "supabase": supabase_status,
+            "timestamp": datetime.utcnow().isoformat()
         }
-        
-        # إضافة حالة قاعدة البيانات
-        db_status = get_db_status()
-        status["database_status"] = db_status
-        
-        return status
+
+    # ── Supabase Status Endpoint ──────────────────────────────────────────
+    @app.get("/api/supabase/status")
+    async def supabase_status_endpoint():
+        """Detailed Supabase status endpoint."""
+        return await get_supabase_status()
 
     # ── Status Endpoint ──────────────────────────────────────────────────
     @app.get("/status")
     async def system_status():
         """System status endpoint with detailed database info."""
+        supabase_status = await get_supabase_status()
+        
         db_info = {
             "available": is_database_available(),
             "error": get_db_error(),
@@ -294,13 +435,19 @@ def create_app() -> FastAPI:
             "version": settings.APP_VERSION,
             "environment": settings.ENVIRONMENT,
             "database": db_info,
+            "supabase": supabase_status,
             "plugins_loaded": hasattr(app.state, 'plugin_registry'),
             "supabase_configured": settings.supabase_configured if hasattr(settings, 'supabase_configured') else False,
             "supabase_url": settings.SUPABASE_URL if hasattr(settings, 'SUPABASE_URL') else None,
+            "startup_time": getattr(app.state, 'startup_time', None),
         }
 
     return app
 
+
+# ============================================================
+# RUN APPLICATION
+# ============================================================
 
 # Create the application instance
 app = create_app()
@@ -309,7 +456,6 @@ app = create_app()
 if __name__ == "__main__":
     import uvicorn
     
-    # استخدام PORT من متغيرات البيئة أو الافتراضي 10000
     port = int(os.getenv("PORT", 10000))
     
     uvicorn.run(
