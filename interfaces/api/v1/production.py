@@ -105,7 +105,6 @@ async def start_render(
                 
             except Exception as e:
                 logger.warning(f"⚠️ فشل حفظ بيانات المشروع: {str(e)}")
-                # نستمر في الرندر حتى لو فشل الحفظ
         
         # ====== 3. تحويل data إلى dict للمشروع ======
         project_data = None
@@ -135,9 +134,9 @@ async def start_render(
         
         logger.info(f"✅ تم إنشاء مهمة الرندر: {job.id} للمشروع {body.project_id}")
         
-        # ====== 5. إرجاع النتيجة (باستخدام getattr للوصول الآمن) ======
+        # ====== 5. إرجاع النتيجة (متوافقة مع الواجهة الأمامية) ======
         return RenderJobResponse(
-            id=job.id,
+            job_id=job.id,  # ← استخدم job_id بدلاً من id
             project_id=job.project_id,
             renderer=getattr(job, 'renderer', 'default'),
             status=job.status.value if hasattr(job.status, 'value') else str(job.status),
@@ -177,7 +176,7 @@ async def list_render_jobs(
         
         return [
             RenderJobResponse(
-                id=job.id,
+                job_id=job.id,
                 project_id=job.project_id,
                 renderer=getattr(job, 'renderer', 'default'),
                 status=job.status.value if hasattr(job.status, 'value') else str(job.status),
@@ -210,7 +209,7 @@ async def get_render_job(
         logger.info(f"📄 تم جلب تفاصيل المهمة: {job_id}")
         
         return RenderJobResponse(
-            id=job.id,
+            job_id=job.id,
             project_id=job.project_id,
             renderer=getattr(job, 'renderer', 'default'),
             status=job.status.value if hasattr(job.status, 'value') else str(job.status),
