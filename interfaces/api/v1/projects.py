@@ -76,6 +76,20 @@ class YouTubeAuthRequest(BaseModel):
 
 
 # ============================================
+# نماذج حفظ المشروع في Supabase
+# ============================================
+
+class ProjectSaveRequest(BaseModel):
+    project_id: str
+    user_id: str
+    data: Dict[str, Any]
+
+
+class ProjectShareRequest(BaseModel):
+    email: str
+
+
+# ============================================
 # التحقق من وجود yt-dlp (كخيار احتياطي)
 # ============================================
 
@@ -173,7 +187,7 @@ async def extract_youtube_video_info(url: str, use_auth: bool = False) -> Dict[s
         
         # حساب حجم الملف التقريبي
         if result['duration']:
-            estimated_size_mb = max(result['duration'] * 2.5, 10)  # 2.5 MB per second minimum 10 MB
+            estimated_size_mb = max(result['duration'] * 2.5, 10)
             result['size_bytes'] = int(estimated_size_mb * 1024 * 1024)
             result['size'] = f"~{estimated_size_mb:.1f} MB"
         
@@ -376,7 +390,7 @@ def format_file_size(bytes_size: int) -> str:
 
 
 # ============================================
-# نقاط النهاية الأساسية
+# نقاط النهاية الأساسية للمشاريع
 # ============================================
 
 @router.get("", response_model=ProjectListResponse)
@@ -458,7 +472,401 @@ async def delete_project(
 
 
 # ============================================
-# نقاط النهاية لمعالجة الفيديو (محسّنة)
+# نقاط النهاية الإضافية للمشاريع
+# ============================================
+
+@router.post("/{project_id}/publish")
+async def publish_project(
+    project_id: UUID,
+    service: ProjectService = Depends(get_project_service),
+):
+    try:
+        project = await service.get(project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+        
+        updated_project = await service.update(
+            project_id=project_id,
+            status="published"
+        )
+        
+        return {
+            "message": "Project published successfully",
+            "project": ProjectResponse(**updated_project.to_dict())
+        }
+    except ProjectNotFoundError:
+        raise HTTPException(status_code=404, detail="Project not found")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{project_id}/export")
+async def export_project(
+    project_id: UUID,
+    service: ProjectService = Depends(get_project_service),
+):
+    try:
+        project = await service.get(project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+        
+        return {
+            "project": project.to_dict(),
+            "exported_at": datetime.now().isoformat()
+        }
+    except ProjectNotFoundError:
+        raise HTTPException(status_code=404, detail="Project not found")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/{project_id}/duplicate")
+async def duplicate_project(
+    project_id: UUID,
+    service: ProjectService = Depends(get_project_service),
+):
+    try:
+        original = await service.get(project_id)
+        if not original:
+            raise HTTPException(status_code=404, detail="Project not found")
+        
+        new_project = await service.create(
+            title=f"{original.title} (نسخة)",
+            description=original.description,
+            script=original.script,
+            tags=original.tags,
+            template_id=original.template_id,
+            brand_colors=original.brand_colors
+        )
+        
+        return ProjectResponse(**new_project.to_dict())
+    except ProjectNotFoundError:
+        raise HTTPException(status_code=404, detail="Project not found")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/{project_id}/render")
+async def render_project(
+    project_id: UUID,
+    service: ProjectService = Depends(get_project_service),
+):
+    try:
+        project = await service.get(project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+        
+        updated_project = await service.update(
+            project_id=project_id,
+            status="in_production"
+        )
+        
+        return {
+            "message": "Render started successfully",
+            "project": ProjectResponse(**updated_project.to_dict())
+        }
+    except ProjectNotFoundError:
+        raise HTTPException(status_code=404, detail="Project not found")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================
+# نقاط النهاية لحفظ واستعادة المشاريع (Supabase)
+# ============================================
+
+@router.post("/save")
+async def save_project_data(payload: ProjectSaveRequest):
+    """
+    حفظ بيانات المشروع في Supabase باستخدام Service Role Key
+    """
+    try:
+        from infrastructure.database.supabase_client import get_supabase_admin
+        
+        supabase = get_supabase_admin()
+        
+        # التحقق من وجود المشروع
+        existing = supabase.table('project_data') \
+            .select('project_id') \
+            .eq('project_id', payload.project_id) \
+            .execute()
+        
+        if existing.data:
+            # تحديث المشروع الموجود
+            result = supabase.table('project_data') \
+                .update({
+                    'data': payload.data,
+                    'updated_at': 'now()'
+                }) \
+                .eq('project_id', payload.project_id) \
+                .execute()
+            message = "Project updated successfully"
+        else:
+            # إنشاء مشروع جديد
+            result = supabase.table('project_data') \
+                .insert({
+                    'project_id': payload.project_id,
+                    'user_id': payload.user_id,
+                    'data': payload.data,
+                    'created_at': 'now()',
+                    'updated_at': 'now()',
+                    'shared_with': []
+                }) \
+                .execute()
+            message = "Project created successfully"
+        
+        return {
+            "status": "success",
+            "message": message,
+            "data": result.data[0] if result.data else None
+        }
+        
+    except Exception as e:
+        print(f"❌ Error saving project: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{project_id}/data")
+async def get_project_data(
+    project_id: str,
+    user_id: str = Query(None)
+):
+    """
+    جلب بيانات المشروع من Supabase
+    """
+    try:
+        from infrastructure.database.supabase_client import get_supabase_admin
+        
+        supabase = get_supabase_admin()
+        
+        query = supabase.table('project_data') \
+            .select('data, shared_with, user_id, created_at, updated_at') \
+            .eq('project_id', project_id)
+        
+        if user_id:
+            query = query.eq('user_id', user_id)
+        
+        result = query.maybe_single().execute()
+        
+        if not result.data:
+            raise HTTPException(status_code=404, detail="Project not found")
+        
+        return {
+            "status": "success",
+            "data": result.data
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Error loading project: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{project_id}/blob")
+async def get_project_blob(project_id: str):
+    """
+    جلب blob للمشروع
+    """
+    try:
+        from infrastructure.database.supabase_client import get_supabase_admin
+        
+        supabase = get_supabase_admin()
+        
+        result = supabase.table('project_data') \
+            .select('data') \
+            .eq('project_id', project_id) \
+            .maybe_single() \
+            .execute()
+        
+        if not result.data:
+            raise HTTPException(status_code=404, detail="Project not found")
+        
+        project_data = result.data.get('data', {})
+        blob_content = project_data.get('blob', {})
+        
+        return {
+            "status": "success",
+            "project_id": project_id,
+            "blob": blob_content,
+            "data": project_data
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Error getting blob: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/{project_id}/share")
+async def share_project(project_id: str, payload: ProjectShareRequest):
+    """
+    مشاركة المشروع مع مستخدم آخر
+    """
+    try:
+        from infrastructure.database.supabase_client import get_supabase_admin
+        
+        supabase = get_supabase_admin()
+        
+        # جلب المشروع
+        result = supabase.table('project_data') \
+            .select('shared_with') \
+            .eq('project_id', project_id) \
+            .maybe_single() \
+            .execute()
+        
+        if not result.data:
+            raise HTTPException(status_code=404, detail="Project not found")
+        
+        shared_with = result.data.get('shared_with', [])
+        if payload.email not in shared_with:
+            shared_with.append(payload.email)
+        
+        # تحديث المشروع
+        supabase.table('project_data') \
+            .update({'shared_with': shared_with}) \
+            .eq('project_id', project_id) \
+            .execute()
+        
+        return {
+            "status": "success",
+            "message": f"Project shared with {payload.email}",
+            "shared_with": shared_with
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Error sharing project: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{project_id}/shared")
+async def get_shared_project(
+    project_id: str, 
+    user_email: str = Query(..., description="البريد الإلكتروني للمستخدم")
+):
+    """
+    جلب مشروع مشترك
+    """
+    try:
+        from infrastructure.database.supabase_client import get_supabase_admin
+        
+        supabase = get_supabase_admin()
+        
+        result = supabase.table('project_data') \
+            .select('data, user_id, shared_with, created_at, updated_at') \
+            .eq('project_id', project_id) \
+            .contains('shared_with', [user_email]) \
+            .maybe_single() \
+            .execute()
+        
+        if not result.data:
+            raise HTTPException(status_code=404, detail="Project not shared with you")
+        
+        return {
+            "status": "success",
+            "data": result.data
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Error getting shared project: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/{project_id}/data")
+async def delete_project_data(
+    project_id: str, 
+    user_id: str = Query(..., description="معرف المستخدم")
+):
+    """
+    حذف بيانات المشروع من Supabase
+    """
+    try:
+        from infrastructure.database.supabase_client import get_supabase_admin
+        
+        supabase = get_supabase_admin()
+        
+        result = supabase.table('project_data') \
+            .delete() \
+            .eq('project_id', project_id) \
+            .eq('user_id', user_id) \
+            .execute()
+        
+        if not result.data:
+            raise HTTPException(status_code=404, detail="Project not found")
+        
+        return {
+            "status": "success",
+            "message": "Project deleted successfully"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Error deleting project: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{project_id}/check")
+async def check_project_exists(project_id: str):
+    """
+    التحقق من وجود مشروع في Supabase
+    """
+    try:
+        from infrastructure.database.supabase_client import get_supabase_admin
+        
+        supabase = get_supabase_admin()
+        
+        result = supabase.table('project_data') \
+            .select('project_id, user_id, shared_with') \
+            .eq('project_id', project_id) \
+            .maybe_single() \
+            .execute()
+        
+        return {
+            "status": "success",
+            "exists": bool(result.data),
+            "data": result.data
+        }
+        
+    except Exception as e:
+        print(f"❌ Error checking project: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/user/{user_id}/projects")
+async def get_user_projects(user_id: str):
+    """
+    جلب جميع مشاريع المستخدم
+    """
+    try:
+        from infrastructure.database.supabase_client import get_supabase_admin
+        
+        supabase = get_supabase_admin()
+        
+        result = supabase.table('project_data') \
+            .select('project_id, data, shared_with, created_at, updated_at') \
+            .eq('user_id', user_id) \
+            .order('updated_at', desc=True) \
+            .execute()
+        
+        return {
+            "status": "success",
+            "count": len(result.data),
+            "projects": result.data
+        }
+        
+    except Exception as e:
+        print(f"❌ Error getting user projects: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================
+# نقاط النهاية لمعالجة الفيديو
 # ============================================
 
 @router.post("/video/process")
@@ -471,10 +879,8 @@ async def process_video(
     """
     session_id = request.session_id or str(uuid.uuid4())
     
-    # التحقق من وجود yt-dlp كخيار احتياطي
     ytdlp_available = is_ytdlp_available()
     
-    # تهيئة حالة المعالجة
     processing_sessions[session_id] = {
         "session_id": session_id,
         "status": "initializing",
@@ -506,7 +912,6 @@ async def process_video(
         "video_id": None
     }
     
-    # بدء المعالجة في الخلفية
     background_tasks.add_task(process_video_background, session_id, request.url, request.use_auth)
     
     return {
@@ -639,7 +1044,6 @@ async def video_health_check():
     """
     التحقق من صحة خدمة الفيديو
     """
-    # التحقق من YouTube Service
     youtube_service = YouTubeService()
     is_youtube_auth = youtube_service.is_authenticated()
     
@@ -655,7 +1059,7 @@ async def video_health_check():
 
 
 # ============================================
-# وظائف الخلفية (محسّنة)
+# وظائف الخلفية
 # ============================================
 
 async def process_video_background(session_id: str, url: str, use_auth: bool = False):
@@ -680,10 +1084,8 @@ async def process_video_background(session_id: str, url: str, use_auth: bool = F
             "step": "استخراج المعلومات"
         })
         
-        # استخراج معلومات الفيديو باستخدام الطريقة المحسّنة
         video_info = await extract_youtube_video_info(url, use_auth)
         
-        # تحديث بمعلومات الفيديو المستخرجة
         processing_sessions[session_id].update({
             "title": video_info.get("title", "فيديو مستورد"),
             "duration": video_info.get("duration", 60),
@@ -742,19 +1144,16 @@ async def process_video_background(session_id: str, url: str, use_auth: bool = F
         })
         await asyncio.sleep(1)
         
-        # تحديد رابط الفيديو النهائي
         platform = video_info.get("platform", "generic")
         is_external = video_info.get("is_external", True)
         video_url = url
         
-        # إذا كان الفيديو من يوتيوب أو منصة خارجية، نستخدم فيديو تجريبي للعرض
         if is_external or platform in ["youtube", "tiktok", "facebook", "instagram"]:
             video_url = "https://sample-videos.com/video321/mp4/240/big_buck_bunny_240p_1mb.mp4"
             if not processing_sessions[session_id].get("warning"):
                 processing_sessions[session_id]["warning"] = f"تم استخدام فيديو تجريبي للعرض (بديل لـ {platform})"
             processing_sessions[session_id]["detail"] = f"✅ تم معالجة الفيديو من {platform} (فيديو تجريبي للعرض)"
             
-            # إذا كان يوتيوب، نحاول تحميل فيديو حقيقي
             if platform == "youtube" and video_info.get("video_id"):
                 try:
                     video_id = video_info["video_id"]
@@ -768,7 +1167,6 @@ async def process_video_background(session_id: str, url: str, use_auth: bool = F
         else:
             processing_sessions[session_id]["detail"] = "✅ تم معالجة الفيديو بنجاح!"
         
-        # اكتمال المعالجة
         processing_sessions[session_id].update({
             "status": "completed",
             "progress": 100,
@@ -872,103 +1270,3 @@ async def generate_video_background(session_id: str, prompt: str, links: List[st
                 "completed": True,
                 "error": str(e)
             })
-
-
-# ============================================
-# نقاط النهاية الإضافية للمشاريع
-# ============================================
-
-@router.post("/{project_id}/publish")
-async def publish_project(
-    project_id: UUID,
-    service: ProjectService = Depends(get_project_service),
-):
-    try:
-        project = await service.get(project_id)
-        if not project:
-            raise HTTPException(status_code=404, detail="Project not found")
-        
-        updated_project = await service.update(
-            project_id=project_id,
-            status="published"
-        )
-        
-        return {
-            "message": "Project published successfully",
-            "project": ProjectResponse(**updated_project.to_dict())
-        }
-    except ProjectNotFoundError:
-        raise HTTPException(status_code=404, detail="Project not found")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/{project_id}/export")
-async def export_project(
-    project_id: UUID,
-    service: ProjectService = Depends(get_project_service),
-):
-    try:
-        project = await service.get(project_id)
-        if not project:
-            raise HTTPException(status_code=404, detail="Project not found")
-        
-        return {
-            "project": project.to_dict(),
-            "exported_at": datetime.now().isoformat()
-        }
-    except ProjectNotFoundError:
-        raise HTTPException(status_code=404, detail="Project not found")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("/{project_id}/duplicate")
-async def duplicate_project(
-    project_id: UUID,
-    service: ProjectService = Depends(get_project_service),
-):
-    try:
-        original = await service.get(project_id)
-        if not original:
-            raise HTTPException(status_code=404, detail="Project not found")
-        
-        new_project = await service.create(
-            title=f"{original.title} (نسخة)",
-            description=original.description,
-            script=original.script,
-            tags=original.tags,
-            template_id=original.template_id,
-            brand_colors=original.brand_colors
-        )
-        
-        return ProjectResponse(**new_project.to_dict())
-    except ProjectNotFoundError:
-        raise HTTPException(status_code=404, detail="Project not found")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("/{project_id}/render")
-async def render_project(
-    project_id: UUID,
-    service: ProjectService = Depends(get_project_service),
-):
-    try:
-        project = await service.get(project_id)
-        if not project:
-            raise HTTPException(status_code=404, detail="Project not found")
-        
-        updated_project = await service.update(
-            project_id=project_id,
-            status="in_production"
-        )
-        
-        return {
-            "message": "Render started successfully",
-            "project": ProjectResponse(**updated_project.to_dict())
-        }
-    except ProjectNotFoundError:
-        raise HTTPException(status_code=404, detail="Project not found")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
