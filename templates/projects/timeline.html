@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}محرر الفيديو المتقدم — {{ project.title }}{% endblock %}
+{% block title %}استوديو الإنتاج المتكامل — {{ project.title }}{% endblock %}
 {% block page_title %}{{ project.title | truncate(30) }}{% endblock %}
 
 {% block head %}
@@ -44,50 +44,16 @@
         overflow: hidden;
     }
 
-    .preview-area video,
-    .preview-area canvas,
-    .preview-area img {
-        max-width: 100%;
-        max-height: 100%;
-        object-fit: contain;
-        background: #000;
+    .preview-area canvas {
+        width: 100%;
+        height: 100%;
         display: block;
+        background: #000;
+        object-fit: contain;
     }
 
     .preview-area video {
-        width: 100%;
-        height: 100%;
-        background: #000;
-    }
-
-    .preview-area img {
-        width: 100%;
-        height: 100%;
-        object-fit: contain;
-        background: #000;
-    }
-
-    .preview-content {
-        width: 100%;
-        height: 100%;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        position: relative;
-        background: #000;
-    }
-
-    .preview-placeholder {
-        color: rgba(255,255,255,0.1);
-        font-size: 48px;
-        text-align: center;
-    }
-
-    .preview-placeholder span {
-        display: block;
-        font-size: 14px;
-        color: rgba(255,255,255,0.2);
-        margin-top: 12px;
+        display: none;
     }
 
     /* ====== شريط أدوات المعاينة العلوي ====== */
@@ -426,27 +392,14 @@
         text-overflow: ellipsis;
     }
 
-    .layer-item .layer-label-input {
-        background: transparent;
-        border: 1px solid var(--border-color);
-        color: white;
-        font-size: 12px;
-        padding: 1px 6px;
-        border-radius: 4px;
-        outline: none;
-        width: 100px;
-    }
-
-    .layer-item .layer-label-input:focus {
-        border-color: var(--primary);
-    }
-
-    .layer-item .layer-type {
+    .layer-item .layer-count {
         font-size: 10px;
-        padding: 1px 8px;
-        border-radius: 10px;
-        background: rgba(255,255,255,0.08);
         color: var(--text-muted);
+        background: rgba(0,0,0,0.3);
+        padding: 0 6px;
+        border-radius: 8px;
+        min-width: 16px;
+        text-align: center;
     }
 
     .layer-item .layer-actions {
@@ -485,16 +438,6 @@
 
     .layer-item .layer-drag-handle:hover {
         opacity: 0.8;
-    }
-
-    .layer-item .layer-count {
-        font-size: 10px;
-        color: var(--text-muted);
-        background: rgba(0,0,0,0.3);
-        padding: 0 6px;
-        border-radius: 8px;
-        min-width: 16px;
-        text-align: center;
     }
 
     /* ====== التايم لاين ====== */
@@ -1004,6 +947,11 @@
         flex-shrink: 0;
     }
 
+    /* ====== Audio عنصر مخفي ====== */
+    #audioPlayer {
+        display: none;
+    }
+
     @media (max-width: 768px) {
         .editor-container { height: calc(100vh - 140px); }
         .preview-area { min-height: 180px; }
@@ -1067,14 +1015,11 @@
 <div class="editor-container">
     <!-- ====== منطقة المعاينة ====== -->
     <div class="preview-area" id="previewArea">
-        <div class="preview-content" id="previewContent">
-            <div class="preview-placeholder" id="previewPlaceholder">
-                🎬
-                <span>اسحب أو استورد وسائط للمعاينة</span>
-            </div>
-            <img id="previewImage" style="display:none;width:100%;height:100%;object-fit:contain;" alt="معاينة الصورة">
-            <video id="previewVideo" style="display:none;width:100%;height:100%;" controls></video>
-        </div>
+        <!-- Canvas للمعاينة -->
+        <canvas id="previewCanvas"></canvas>
+
+        <!-- عنصر الصوت المخفي -->
+        <audio id="audioPlayer"></audio>
 
         <div class="preview-toolbar">
             <button class="tool-btn" onclick="toggleSafeAreas()" title="مناطق الأمان">⭕</button>
@@ -1271,7 +1216,7 @@
 {% block scripts %}
 <script>
 // ============================================================
-//  DATA
+//  DATA - إصلاح مشكلة حفظ واستعادة الملفات
 // ============================================================
 const scenes = {{ scenes_json | safe }};
 const projectId = "{{ project.id }}";
@@ -1293,9 +1238,11 @@ let recordedChunks = [];
 let playbackSpeed = 1;
 let isMuted = false;
 let isLooping = false;
-let previewVideo = null;
-let previewImage = null;
 let currentClipAtTime = null;
+let canvas = null;
+let ctx = null;
+let audioPlayer = null;
+let isCanvasReady = false;
 
 const COLORS = {
     video: '#2563eb',
@@ -1321,8 +1268,14 @@ const TYPE_ICONS = {
 //  INITIALIZE
 // ============================================================
 document.addEventListener('DOMContentLoaded', function() {
-    previewVideo = document.getElementById('previewVideo');
-    previewImage = document.getElementById('previewImage');
+    // إعداد Canvas
+    canvas = document.getElementById('previewCanvas');
+    ctx = canvas.getContext('2d');
+    audioPlayer = document.getElementById('audioPlayer');
+    
+    // ضبط حجم Canvas
+    resizeCanvas();
+    window.addEventListener('resize', resizeCanvas);
     
     if (scenes && scenes.length > 0) {
         scenes.forEach((scene, i) => {
@@ -1354,86 +1307,201 @@ document.addEventListener('DOMContentLoaded', function() {
     setupDragDrop();
     setupKeyboardShortcuts();
     loadProjectData();
-    renderPreview();
-    updatePlaybackInfo();
+    renderPreview(0);
 });
 
+function resizeCanvas() {
+    const container = document.getElementById('previewArea');
+    if (!container || !canvas) return;
+    const rect = container.getBoundingClientRect();
+    // استخدام نسبة 16:9
+    const w = rect.width || 800;
+    const h = Math.min(rect.height || 400, w * 9 / 16);
+    canvas.width = w;
+    canvas.height = h;
+    canvas.style.width = w + 'px';
+    canvas.style.height = h + 'px';
+    isCanvasReady = true;
+    renderPreview(currentTime);
+}
+
 // ============================================================
-//  RENDER PREVIEW - عرض المعاينة بوضوح
+//  RENDER PREVIEW - باستخدام Canvas
 // ============================================================
-function renderPreview() {
-    const img = document.getElementById('previewImage');
-    const video = document.getElementById('previewVideo');
-    const placeholder = document.getElementById('previewPlaceholder');
+function renderPreview(time) {
+    if (!isCanvasReady || !ctx) return;
     
-    // البحث عن المقطع النشط في الوقت الحالي
-    const activeClip = clips.find(c => {
+    const w = canvas.width;
+    const h = canvas.height;
+    
+    // مسح الخلفية
+    ctx.fillStyle = '#0a0a15';
+    ctx.fillRect(0, 0, w, h);
+    
+    // الحصول على جميع المقاطع النشطة في هذا الوقت (طبقات متعددة)
+    const activeClips = clips.filter(c => {
         const layer = layers[c.layer];
         return layer && layer.visible && 
-               currentTime >= c.start && 
-               currentTime < c.start + c.duration;
+               time >= c.start && 
+               time < c.start + c.duration;
     });
     
-    if (activeClip) {
-        currentClipAtTime = activeClip;
-        const isImage = activeClip.type === 'image';
-        const isVideo = activeClip.type === 'video';
-        const isAudio = activeClip.type === 'audio';
+    // ترتيب حسب الطبقة (من الأسفل للأعلى)
+    activeClips.sort((a, b) => a.layer - b.layer);
+    
+    if (activeClips.length > 0) {
+        // رسم كل مقطع نشط على حدة
+        activeClips.forEach((clip, index) => {
+            const progress = (time - clip.start) / clip.duration;
+            const x = w * 0.5;
+            const y = h * 0.5 + (index - (activeClips.length - 1) / 2) * 60;
+            
+            // حجم المربع
+            const rectW = Math.min(120, w * 0.15);
+            const rectH = 60;
+            
+            // رسم خلفية المقطع
+            ctx.fillStyle = clip.color + '30';
+            ctx.strokeStyle = clip.color;
+            ctx.lineWidth = 2;
+            ctx.shadowColor = clip.color + '40';
+            ctx.shadowBlur = 20;
+            ctx.fillRect(x - rectW/2, y - rectH/2, rectW, rectH);
+            ctx.shadowBlur = 0;
+            ctx.strokeRect(x - rectW/2, y - rectH/2, rectW, rectH);
+            
+            // أيقونة
+            ctx.font = '28px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillStyle = 'white';
+            ctx.fillText(clip.icon || '📄', x, y - 10);
+            
+            // عنوان
+            ctx.font = '12px sans-serif';
+            ctx.fillStyle = '#f1f5f9';
+            ctx.fillText(clip.title || 'مقطع', x, y + 30);
+            
+            // نوع
+            ctx.font = '10px sans-serif';
+            ctx.fillStyle = '#94a3b8';
+            ctx.fillText(clip.type, x, y + 48);
+            
+            // شريط التقدم
+            ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+            ctx.lineWidth = 2;
+            const barX = x - 30;
+            const barY = y + 35;
+            const barW = 60;
+            ctx.beginPath();
+            ctx.roundRect(barX, barY, barW, 4, 2);
+            ctx.stroke();
+            
+            // التقدم الفعلي
+            ctx.strokeStyle = clip.color;
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.roundRect(barX, barY, barW * progress, 4, 2);
+            ctx.stroke();
+            
+            // وقت المقطع
+            ctx.font = '9px monospace';
+            ctx.fillStyle = '#64748b';
+            ctx.textAlign = 'center';
+            ctx.fillText(formatTime(clip.start) + ' → ' + formatTime(clip.start + clip.duration), x, y + 58);
+        });
         
-        if (isImage && activeClip.content) {
-            img.src = activeClip.content;
-            img.style.display = 'block';
-            video.style.display = 'none';
-            placeholder.style.display = 'none';
-            document.getElementById('currentClipName').textContent = activeClip.title || 'صورة';
-            document.getElementById('playbackInfo').style.display = 'block';
-        } else if (isVideo && activeClip.content) {
-            video.src = activeClip.content;
-            video.style.display = 'block';
-            img.style.display = 'none';
-            placeholder.style.display = 'none';
-            document.getElementById('currentClipName').textContent = activeClip.title || 'فيديو';
-            document.getElementById('playbackInfo').style.display = 'block';
-            if (isPlaying) {
-                video.play().catch(() => {});
-                // مزامنة الوقت مع الفيديو
-                const localTime = currentTime - activeClip.start;
-                if (Math.abs(video.currentTime - localTime) > 0.1) {
-                    video.currentTime = localTime;
-                }
-            }
-        } else if (isAudio) {
-            placeholder.style.display = 'flex';
-            img.style.display = 'none';
-            video.style.display = 'none';
-            document.getElementById('currentClipName').textContent = '🎵 ' + (activeClip.title || 'صوت');
-            document.getElementById('playbackInfo').style.display = 'block';
-        } else {
-            placeholder.style.display = 'flex';
-            img.style.display = 'none';
-            video.style.display = 'none';
-            document.getElementById('currentClipName').textContent = 'لا يوجد محتوى';
-            document.getElementById('playbackInfo').style.display = 'none';
-        }
+        // تحديث معلومات التشغيل
+        const mainClip = activeClips[0];
+        currentClipAtTime = mainClip;
+        document.getElementById('currentClipName').textContent = mainClip.title || 'مقطع';
+        document.getElementById('playbackInfo').style.display = 'block';
+        document.getElementById('playbackTime').textContent = formatTime(time);
+        document.getElementById('statusCurrentClip').textContent = `▶️ ${mainClip.title || 'مقطع'}`;
         
-        document.getElementById('playbackTime').textContent = formatTime(currentTime);
-        document.getElementById('statusCurrentClip').textContent = `▶️ ${activeClip.title || 'مقطع'}`;
+        // مزامنة الصوت مع الوقت
+        syncAudio(time);
+        
     } else {
-        placeholder.style.display = 'flex';
-        img.style.display = 'none';
-        video.style.display = 'none';
-        video.pause();
+        // لا توجد مقاطع نشطة
+        ctx.fillStyle = 'rgba(255,255,255,0.05)';
+        ctx.font = '32px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('🎬', w/2, h/2 - 20);
+        ctx.font = '14px sans-serif';
+        ctx.fillStyle = 'rgba(255,255,255,0.2)';
+        ctx.fillText('لا يوجد محتوى في هذا الموضع', w/2, h/2 + 40);
+        
         document.getElementById('playbackInfo').style.display = 'none';
         document.getElementById('statusCurrentClip').textContent = isPlaying ? '⏸️ تشغيل' : '⏸️ متوقف';
         currentClipAtTime = null;
     }
+    
+    // معلومات الوقت على Canvas
+    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+    ctx.fillRect(10, 10, 150, 24);
+    ctx.fillStyle = 'rgba(255,255,255,0.6)';
+    ctx.font = '12px monospace';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(`⏱ ${formatTime(time)} / ${formatTime(totalDuration)}`, 16, 23);
+    
+    // تحديث شريط التقدم
+    document.getElementById('currentTimeDisplay').textContent = formatTime(time);
+    document.getElementById('totalTimeDisplay').textContent = formatTime(totalDuration);
+    const slider = document.getElementById('seekSlider');
+    if (totalDuration > 0) {
+        slider.value = (time / totalDuration) * 100;
+    }
 }
 
-function updatePlaybackInfo() {
-    document.getElementById('playbackTime').textContent = formatTime(currentTime);
-    if (currentClipAtTime) {
-        document.getElementById('currentClipName').textContent = currentClipAtTime.title || 'مقطع';
-        document.getElementById('playbackInfo').style.display = 'block';
+// ============================================================
+//  SYNC AUDIO - مزامنة الصوت
+// ============================================================
+function syncAudio(time) {
+    if (!audioPlayer) return;
+    
+    // البحث عن مقاطع الصوت النشطة
+    const activeAudio = clips.filter(c => {
+        const layer = layers[c.layer];
+        return layer && layer.visible && 
+               c.type === 'audio' &&
+               time >= c.start && 
+               time < c.start + c.duration;
+    });
+    
+    if (activeAudio.length > 0) {
+        const audioClip = activeAudio[0];
+        const audioSrc = audioClip.content;
+        
+        // إذا كان المصدر مختلفاً أو الصوت متوقفاً
+        if (audioPlayer.src !== audioSrc) {
+            audioPlayer.src = audioSrc;
+            audioPlayer.load();
+        }
+        
+        // ضبط الوقت المحلي للمقطع الصوتي
+        const localTime = time - audioClip.start;
+        if (Math.abs(audioPlayer.currentTime - localTime) > 0.1) {
+            audioPlayer.currentTime = localTime;
+        }
+        
+        // تشغيل الصوت إذا كان التشغيل العام مفعلاً
+        if (isPlaying && !audioPlayer.paused === false) {
+            audioPlayer.play().catch(() => {});
+        }
+        
+        if (isMuted) {
+            audioPlayer.muted = true;
+        } else {
+            audioPlayer.muted = false;
+        }
+    } else {
+        // إيقاف الصوت إذا لم يكن هناك مقاطع صوتية نشطة
+        if (!audioPlayer.paused) {
+            audioPlayer.pause();
+        }
     }
 }
 
@@ -1504,11 +1572,8 @@ function addMediaToTimeline(index) {
     const file = mediaFiles[index];
     if (!file) return;
     
-    let startTime = 0;
-    if (clips.length > 0) {
-        const lastClip = clips[clips.length - 1];
-        startTime = lastClip.start + lastClip.duration;
-    }
+    // حساب وقت البداية بناءً على الطبقة المحددة
+    let startTime = getLayerEndTime(selectedLayerIndex);
     
     const type = file.type.split('/')[0];
     const duration = type === 'image' ? 3 : (type === 'video' ? 3 : 2);
@@ -1535,6 +1600,13 @@ function addMediaToTimeline(index) {
     showToast(`✅ تم إضافة ${file.name}`, 'success');
 }
 
+function getLayerEndTime(layerIndex) {
+    const layerClips = clips.filter(c => c.layer === layerIndex);
+    if (layerClips.length === 0) return 0;
+    const lastClip = layerClips.reduce((max, c) => c.start + c.duration > max.start + max.duration ? c : max);
+    return lastClip.start + lastClip.duration;
+}
+
 function removeMediaFile(index) {
     const file = mediaFiles[index];
     if (file.url && file.url.startsWith('blob:')) {
@@ -1543,7 +1615,7 @@ function removeMediaFile(index) {
     mediaFiles.splice(index, 1);
     renderMediaGallery();
     updateStatus();
-    showToast('تم حذف الملف', 'success');
+    showToast('🗑️ تم حذف الملف', 'success');
 }
 
 function addMediaFile(file) {
@@ -1560,7 +1632,7 @@ function addMediaFile(file) {
 }
 
 // ============================================================
-//  LAYERS - محسّن مع حذف سهل
+//  LAYERS - محسّن
 // ============================================================
 function renderLayers() {
     const container = document.getElementById('layersList');
@@ -1624,9 +1696,7 @@ function deleteLayer(index) {
     
     if (!confirm(confirmMsg)) return;
     
-    // حذف المقاطع في هذه الطبقة
     clips = clips.filter(c => c.layer !== index);
-    // إعادة ترقيم الطبقات للمقاطع المتبقية
     clips.forEach(c => {
         if (c.layer > index) c.layer--;
     });
@@ -1720,10 +1790,9 @@ function startPlay() {
     document.getElementById('playBtn').textContent = '⏸';
     document.getElementById('playhead').classList.add('active');
     
-    const video = document.getElementById('previewVideo');
-    if (video && video.src && video.style.display !== 'none') {
-        video.playbackRate = playbackSpeed;
-        video.play().catch(() => {});
+    // تشغيل الصوت
+    if (audioPlayer && audioPlayer.src) {
+        audioPlayer.play().catch(() => {});
     }
     
     document.getElementById('playbackInfo').style.display = 'block';
@@ -1733,10 +1802,9 @@ function startPlay() {
         if (currentTime >= totalDuration) {
             if (isLooping) {
                 currentTime = 0;
-                const video = document.getElementById('previewVideo');
-                if (video && video.src) {
-                    video.currentTime = 0;
-                    video.play().catch(() => {});
+                if (audioPlayer && audioPlayer.src) {
+                    audioPlayer.currentTime = 0;
+                    audioPlayer.play().catch(() => {});
                 }
             } else {
                 pausePlay();
@@ -1744,7 +1812,7 @@ function startPlay() {
             }
         }
         updatePlayhead();
-        renderPreview();
+        renderPreview(currentTime);
         updatePlaybackInfo();
     }, 40);
 }
@@ -1753,14 +1821,18 @@ function pausePlay() {
     isPlaying = false;
     document.getElementById('playBtn').textContent = '▶';
     document.getElementById('playhead').classList.remove('active');
-    const video = document.getElementById('previewVideo');
-    if (video && video.src) {
-        video.pause();
+    if (audioPlayer) {
+        audioPlayer.pause();
     }
     if (playInterval) {
         clearInterval(playInterval);
         playInterval = null;
     }
+}
+
+function updatePlaybackInfo() {
+    document.getElementById('playbackTime').textContent = formatTime(currentTime);
+    document.getElementById('playbackInfo').style.display = 'block';
 }
 
 function stepForward() {
@@ -1773,9 +1845,8 @@ function stepBackward() {
 
 function changeSpeed() {
     playbackSpeed = parseFloat(document.getElementById('speedSelect').value);
-    const video = document.getElementById('previewVideo');
-    if (video && video.src) {
-        video.playbackRate = playbackSpeed;
+    if (audioPlayer) {
+        audioPlayer.playbackRate = playbackSpeed;
     }
     showToast(`سرعة: ${playbackSpeed}x`, 'info');
 }
@@ -1789,9 +1860,8 @@ function toggleLoop() {
 function toggleMute() {
     isMuted = !isMuted;
     document.getElementById('muteBtn').textContent = isMuted ? '🔇' : '🔊';
-    const video = document.getElementById('previewVideo');
-    if (video) {
-        video.muted = isMuted;
+    if (audioPlayer) {
+        audioPlayer.muted = isMuted;
     }
 }
 
@@ -1808,11 +1878,20 @@ function seekTo(time) {
     currentTime = Math.max(0, Math.min(time, totalDuration));
     pausePlay();
     updatePlayhead();
-    renderPreview();
+    renderPreview(currentTime);
     updatePlaybackInfo();
-    const video = document.getElementById('previewVideo');
-    if (video && video.src && currentClipAtTime) {
-        video.currentTime = currentTime - currentClipAtTime.start;
+    if (audioPlayer && audioPlayer.src) {
+        // البحث عن مقطع الصوت النشط
+        const activeAudio = clips.find(c => {
+            const layer = layers[c.layer];
+            return layer && layer.visible && 
+                   c.type === 'audio' &&
+                   currentTime >= c.start && 
+                   currentTime < c.start + c.duration;
+        });
+        if (activeAudio) {
+            audioPlayer.currentTime = currentTime - activeAudio.start;
+        }
     }
 }
 
@@ -1822,7 +1901,7 @@ document.getElementById('seekSlider').addEventListener('input', function() {
 });
 
 // ============================================================
-//  RECORDING
+//  RECORDING - تسجيل الصوت
 // ============================================================
 async function toggleRecording() {
     const btn = document.getElementById('recordBtn');
@@ -1872,11 +1951,7 @@ async function toggleRecording() {
             
             addMediaFile(fileObj);
             
-            let startTime = 0;
-            if (clips.length > 0) {
-                const lastClip = clips[clips.length - 1];
-                startTime = lastClip.start + lastClip.duration;
-            }
+            let startTime = getLayerEndTime(selectedLayerIndex);
             
             const clip = {
                 id: clipIdCounter++,
@@ -1985,7 +2060,6 @@ function renderTimeline() {
             block.onclick = (e) => {
                 e.stopPropagation();
                 selectClip(clip.id);
-                // التمرير إلى المقطع في المعاينة
                 seekTo(clip.start);
             };
             
@@ -2037,14 +2111,6 @@ function updatePlayhead() {
     const pxPerSec = cellWidth / 2;
     const pos = currentTime * pxPerSec + 60;
     playhead.style.left = pos + 'px';
-    
-    document.getElementById('currentTimeDisplay').textContent = formatTime(currentTime);
-    document.getElementById('totalTimeDisplay').textContent = formatTime(totalDuration);
-    
-    const slider = document.getElementById('seekSlider');
-    if (totalDuration > 0) {
-        slider.value = (currentTime / totalDuration) * 100;
-    }
 }
 
 function updateStatus() {
@@ -2094,11 +2160,7 @@ function addClip(type) {
     if (type === 'text') {
         const text = prompt('نص المقطع:');
         if (!text) return;
-        let startTime = 0;
-        if (clips.length > 0) {
-            const lastClip = clips[clips.length - 1];
-            startTime = lastClip.start + lastClip.duration;
-        }
+        let startTime = getLayerEndTime(selectedLayerIndex);
         const clip = {
             id: clipIdCounter++,
             type: 'text',
@@ -2159,11 +2221,6 @@ function duplicateClip() {
     if (!clip) return;
     
     let startTime = clip.start + clip.duration + 0.5;
-    clips.forEach(c => {
-        if (c.start > clip.start) {
-            c.start += clip.duration + 0.5;
-        }
-    });
     
     const newClip = {
         ...clip,
@@ -2407,19 +2464,30 @@ document.getElementById('zoom-slider').addEventListener('input', function() {
 });
 
 // ============================================================
-//  EXPORT / SAVE
+//  EXPORT / SAVE - إصلاح حفظ واستعادة الملفات
 // ============================================================
 function saveProjectData() {
     try {
+        // حفظ البيانات الأساسية
         const data = {
-            clips: clips,
+            clips: clips.map(c => ({
+                ...c,
+                // لا نحفظ content لأنها blob URL
+                content: c.content ? 'blob' : null
+            })),
             layers: layers,
             totalDuration: totalDuration,
             cellWidth: cellWidth,
-            mediaFiles: mediaFiles.map(f => ({ name: f.name, size: f.size, type: f.type }))
+            mediaFiles: mediaFiles.map(f => ({ 
+                name: f.name, 
+                size: f.size, 
+                type: f.type 
+            }))
         };
         localStorage.setItem(`project_${projectId}`, JSON.stringify(data));
-    } catch(e) {}
+    } catch(e) {
+        console.warn('Save error:', e);
+    }
 }
 
 function loadProjectData() {
@@ -2427,7 +2495,19 @@ function loadProjectData() {
         const saved = localStorage.getItem(`project_${projectId}`);
         if (saved) {
             const data = JSON.parse(saved);
-            if (data.clips) clips = data.clips;
+            if (data.clips) {
+                // استعادة المقاطع مع الاحتفاظ بمرجع الملفات
+                clips = data.clips.map(c => {
+                    // محاولة العثور على الملف في mediaFiles
+                    if (c.metadata && c.metadata.file) {
+                        const mediaFile = mediaFiles.find(f => f.name === c.metadata.file);
+                        if (mediaFile) {
+                            c.content = mediaFile.url;
+                        }
+                    }
+                    return c;
+                });
+            }
             if (data.layers) layers = data.layers;
             if (data.totalDuration) totalDuration = data.totalDuration;
             if (data.cellWidth) {
@@ -2438,14 +2518,20 @@ function loadProjectData() {
             renderLayers();
             renderTimeline();
             updateStatus();
+            renderPreview(currentTime);
         }
-    } catch(e) {}
+    } catch(e) {
+        console.warn('Load error:', e);
+    }
 }
 
 function exportProject() {
     const data = {
         project: projectId,
-        clips: clips,
+        clips: clips.map(c => ({
+            ...c,
+            content: c.content ? 'blob' : null
+        })),
         layers: layers,
         totalDuration: totalDuration,
         exportedAt: new Date().toISOString()
@@ -2521,6 +2607,24 @@ function showToast(msg, type = 'info') {
     }, 3000);
 }
 
+// Polyfill for roundRect
+if (!CanvasRenderingContext2D.prototype.roundRect) {
+    CanvasRenderingContext2D.prototype.roundRect = function(x, y, w, h, r) {
+        if (r > w/2) r = w/2;
+        if (r > h/2) r = h/2;
+        this.moveTo(x + r, y);
+        this.lineTo(x + w - r, y);
+        this.quadraticCurveTo(x + w, y, x + w, y + r);
+        this.lineTo(x + w, y + h - r);
+        this.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+        this.lineTo(x + r, y + h);
+        this.quadraticCurveTo(x, y + h, x, y + h - r);
+        this.lineTo(x, y + r);
+        this.quadraticCurveTo(x, y, x + r, y);
+        return this;
+    };
+}
+
 // ============================================================
 //  CLEANUP
 // ============================================================
@@ -2533,7 +2637,7 @@ window.addEventListener('beforeunload', function() {
     }
 });
 
-console.log('🎬 محرر الفيديو الاحترافي جاهز');
+console.log('🎬 استوديو الإنتاج المتكامل جاهز');
 console.log(`📁 المشروع: ${projectId}`);
 console.log(`📊 المقاطع: ${clips.length}`);
 console.log(`🧩 الطبقات: ${layers.length}`);
