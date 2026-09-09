@@ -81,7 +81,7 @@ class YouTubeAuthRequest(BaseModel):
 
 class ProjectSaveRequest(BaseModel):
     project_id: str
-    user_id: str
+    user_id: Optional[str] = None  # ✅ السماح بـ null
     data: Dict[str, Any]
 
 
@@ -585,6 +585,9 @@ async def save_project_data(payload: ProjectSaveRequest):
         
         supabase = get_supabase_admin()
         
+        # ✅ التأكد من أن user_id ليس فارغاً
+        user_id = payload.user_id if payload.user_id else None
+        
         # التحقق من وجود المشروع
         existing = supabase.table('project_data') \
             .select('project_id') \
@@ -606,7 +609,7 @@ async def save_project_data(payload: ProjectSaveRequest):
             result = supabase.table('project_data') \
                 .insert({
                     'project_id': payload.project_id,
-                    'user_id': payload.user_id,
+                    'user_id': user_id,
                     'data': payload.data,
                     'created_at': 'now()',
                     'updated_at': 'now()',
