@@ -8,7 +8,7 @@
     :root {
         --track-height: 52px;
         --ruler-height: 32px;
-        --layer-height: 32px;
+        --layer-height: 36px;
         --cell-base: 80px;
         --primary: #2563eb;
         --primary-dark: #1d4ed8;
@@ -38,7 +38,7 @@
         display: flex;
         align-items: center;
         justify-content: center;
-        min-height: 300px;
+        min-height: 320px;
         background: radial-gradient(ellipse at center, #1a1a2e 0%, #0a0a15 100%);
         border-bottom: 2px solid var(--border-color);
         overflow: hidden;
@@ -51,17 +51,43 @@
         max-height: 100%;
         object-fit: contain;
         background: #000;
+        display: block;
+    }
+
+    .preview-area video {
+        width: 100%;
+        height: 100%;
+        background: #000;
     }
 
     .preview-area img {
         width: 100%;
         height: 100%;
         object-fit: contain;
+        background: #000;
     }
 
-    .preview-area video {
+    .preview-content {
         width: 100%;
         height: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        position: relative;
+        background: #000;
+    }
+
+    .preview-placeholder {
+        color: rgba(255,255,255,0.1);
+        font-size: 48px;
+        text-align: center;
+    }
+
+    .preview-placeholder span {
+        display: block;
+        font-size: 14px;
+        color: rgba(255,255,255,0.2);
+        margin-top: 12px;
     }
 
     /* ====== شريط أدوات المعاينة العلوي ====== */
@@ -76,7 +102,7 @@
     }
 
     .preview-toolbar .tool-btn {
-        background: rgba(0,0,0,0.6);
+        background: rgba(0,0,0,0.7);
         backdrop-filter: blur(8px);
         border: 1px solid rgba(255,255,255,0.1);
         color: var(--text-muted);
@@ -91,8 +117,38 @@
     }
 
     .preview-toolbar .tool-btn:hover {
-        background: rgba(255,255,255,0.1);
+        background: rgba(255,255,255,0.15);
         color: white;
+    }
+
+    /* ====== معلومات التشغيل ====== */
+    .playback-info {
+        position: absolute;
+        bottom: 70px;
+        right: 16px;
+        color: rgba(255,255,255,0.8);
+        font-size: 13px;
+        font-family: monospace;
+        z-index: 5;
+        background: rgba(0,0,0,0.7);
+        backdrop-filter: blur(8px);
+        padding: 6px 14px;
+        border-radius: 6px;
+        border: 1px solid rgba(255,255,255,0.05);
+        display: none;
+        min-width: 180px;
+        text-align: right;
+    }
+
+    .playback-info .current-clip {
+        color: #fbbf24;
+        font-weight: bold;
+        font-size: 14px;
+    }
+
+    .playback-info .time {
+        color: #94a3b8;
+        font-size: 12px;
     }
 
     /* ====== شريط التحكم السفلي ====== */
@@ -248,45 +304,91 @@
         border-color: var(--primary);
     }
 
-    .tool-btn svg {
-        width: 16px;
-        height: 16px;
+    .tool-btn.danger:hover {
+        background: rgba(239,68,68,0.2);
+        border-color: #ef4444;
+        color: #ef4444;
     }
 
-    /* ====== الطبقات ====== */
+    /* ====== الطبقات - محسّن ====== */
     .layers-panel {
         display: flex;
         flex-direction: column;
         background: var(--bg-panel);
         border-bottom: 1px solid var(--border-color);
         flex-shrink: 0;
-        max-height: 140px;
+        max-height: 180px;
         overflow-y: auto;
+    }
+
+    .layers-panel::-webkit-scrollbar {
+        width: 4px;
+    }
+
+    .layers-panel::-webkit-scrollbar-track {
+        background: var(--bg-dark);
+    }
+
+    .layers-panel::-webkit-scrollbar-thumb {
+        background: var(--border-color);
+        border-radius: 4px;
     }
 
     .layers-header {
         display: flex;
         justify-content: space-between;
         align-items: center;
-        padding: 4px 12px;
+        padding: 6px 12px;
         font-size: 11px;
         color: var(--text-muted);
         border-bottom: 1px solid var(--border-color);
-        background: rgba(0,0,0,0.2);
+        background: rgba(0,0,0,0.3);
         flex-shrink: 0;
+        position: sticky;
+        top: 0;
+        z-index: 5;
+    }
+
+    .layers-header .header-actions {
+        display: flex;
+        gap: 4px;
+        align-items: center;
+    }
+
+    .layers-header .header-actions button {
+        background: rgba(255,255,255,0.05);
+        border: 1px solid transparent;
+        color: var(--text-muted);
+        padding: 2px 8px;
+        border-radius: 4px;
+        font-size: 11px;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+
+    .layers-header .header-actions button:hover {
+        background: rgba(255,255,255,0.1);
+        border-color: var(--border-color);
+        color: white;
+    }
+
+    .layers-header .header-actions button.danger:hover {
+        background: rgba(239,68,68,0.2);
+        border-color: #ef4444;
+        color: #ef4444;
     }
 
     .layer-item {
         display: flex;
         align-items: center;
-        gap: 10px;
-        padding: 3px 12px;
+        gap: 8px;
+        padding: 4px 12px;
         font-size: 12px;
         color: var(--text-light);
         cursor: pointer;
         border-bottom: 1px solid rgba(255,255,255,0.03);
         transition: all 0.15s;
-        min-height: 32px;
+        min-height: var(--layer-height);
     }
 
     .layer-item:hover {
@@ -303,10 +405,18 @@
         opacity: 0.6;
         transition: opacity 0.2s;
         font-size: 14px;
+        padding: 2px 4px;
+        border-radius: 4px;
     }
 
-    .layer-item .layer-vis:hover { opacity: 1; }
-    .layer-item .layer-vis.hidden { opacity: 0.2; }
+    .layer-item .layer-vis:hover {
+        opacity: 1;
+        background: rgba(255,255,255,0.05);
+    }
+
+    .layer-item .layer-vis.hidden {
+        opacity: 0.2;
+    }
 
     .layer-item .layer-label {
         flex: 1;
@@ -314,6 +424,21 @@
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
+    }
+
+    .layer-item .layer-label-input {
+        background: transparent;
+        border: 1px solid var(--border-color);
+        color: white;
+        font-size: 12px;
+        padding: 1px 6px;
+        border-radius: 4px;
+        outline: none;
+        width: 100px;
+    }
+
+    .layer-item .layer-label-input:focus {
+        border-color: var(--primary);
     }
 
     .layer-item .layer-type {
@@ -326,7 +451,7 @@
 
     .layer-item .layer-actions {
         display: flex;
-        gap: 4px;
+        gap: 2px;
     }
 
     .layer-item .layer-actions button {
@@ -334,13 +459,43 @@
         border: none;
         color: var(--text-muted);
         cursor: pointer;
-        padding: 2px 4px;
-        border-radius: 3px;
+        padding: 2px 6px;
+        border-radius: 4px;
         font-size: 12px;
-        transition: color 0.2s;
+        transition: all 0.2s;
     }
 
-    .layer-item .layer-actions button:hover { color: #ef4444; }
+    .layer-item .layer-actions button:hover {
+        background: rgba(255,255,255,0.05);
+        color: white;
+    }
+
+    .layer-item .layer-actions button.danger:hover {
+        background: rgba(239,68,68,0.2);
+        color: #ef4444;
+    }
+
+    .layer-item .layer-drag-handle {
+        cursor: grab;
+        color: var(--text-muted);
+        opacity: 0.3;
+        padding: 0 4px;
+        font-size: 14px;
+    }
+
+    .layer-item .layer-drag-handle:hover {
+        opacity: 0.8;
+    }
+
+    .layer-item .layer-count {
+        font-size: 10px;
+        color: var(--text-muted);
+        background: rgba(0,0,0,0.3);
+        padding: 0 6px;
+        border-radius: 8px;
+        min-width: 16px;
+        text-align: center;
+    }
 
     /* ====== التايم لاين ====== */
     .timeline-area {
@@ -537,39 +692,59 @@
         flex-shrink: 0;
     }
 
+    .clip-block .clip-delete-btn {
+        background: rgba(239,68,68,0.3);
+        border: none;
+        color: white;
+        border-radius: 3px;
+        padding: 0 4px;
+        font-size: 10px;
+        cursor: pointer;
+        opacity: 0;
+        transition: opacity 0.2s;
+    }
+
+    .clip-block:hover .clip-delete-btn {
+        opacity: 1;
+    }
+
+    .clip-block .clip-delete-btn:hover {
+        background: #ef4444;
+    }
+
     /* ====== ألوان أنواع الكليبات ====== */
     .clip-type-video {
-        background: rgba(37,99,235,0.3);
+        background: rgba(37,99,235,0.35);
         border-color: rgba(37,99,235,0.6);
         color: #60a5fa;
     }
     .clip-type-audio {
-        background: rgba(5,150,105,0.3);
+        background: rgba(5,150,105,0.35);
         border-color: rgba(5,150,105,0.6);
         color: #34d399;
     }
     .clip-type-image {
-        background: rgba(245,158,11,0.3);
+        background: rgba(245,158,11,0.35);
         border-color: rgba(245,158,11,0.6);
         color: #fbbf24;
     }
     .clip-type-text {
-        background: rgba(217,119,6,0.3);
+        background: rgba(217,119,6,0.35);
         border-color: rgba(217,119,6,0.6);
         color: #f59e0b;
     }
     .clip-type-music {
-        background: rgba(124,58,237,0.3);
+        background: rgba(124,58,237,0.35);
         border-color: rgba(124,58,237,0.6);
         color: #a78bfa;
     }
     .clip-type-subtitle {
-        background: rgba(71,85,105,0.3);
+        background: rgba(71,85,105,0.35);
         border-color: rgba(71,85,105,0.6);
         color: #94a3b8;
     }
     .clip-type-effect {
-        background: rgba(236,72,153,0.3);
+        background: rgba(236,72,153,0.35);
         border-color: rgba(236,72,153,0.6);
         color: #f472b6;
     }
@@ -640,10 +815,19 @@
         display: flex;
         gap: 16px;
         align-items: center;
+        flex-wrap: wrap;
     }
 
     .status-bar .status-info .highlight {
         color: #fbbf24;
+    }
+
+    .status-bar .status-info .clip-indicator {
+        background: rgba(37,99,235,0.2);
+        padding: 1px 10px;
+        border-radius: 12px;
+        border: 1px solid rgba(37,99,235,0.3);
+        font-size: 11px;
     }
 
     .trash-zone {
@@ -715,6 +899,16 @@
         align-items: center;
     }
 
+    .media-gallery::-webkit-scrollbar {
+        width: 3px;
+        height: 3px;
+    }
+
+    .media-gallery::-webkit-scrollbar-thumb {
+        background: var(--border-color);
+        border-radius: 4px;
+    }
+
     .media-item {
         display: flex;
         align-items: center;
@@ -730,6 +924,7 @@
         max-width: 180px;
         height: 32px;
         position: relative;
+        flex-shrink: 0;
     }
 
     .media-item:hover {
@@ -806,28 +1001,7 @@
         font-size: 10px;
         padding: 0 4px;
         opacity: 0.6;
-    }
-
-    /* ====== معلومات التشغيل ====== */
-    .playback-info {
-        position: absolute;
-        bottom: 70px;
-        right: 16px;
-        color: rgba(255,255,255,0.7);
-        font-size: 12px;
-        font-family: monospace;
-        z-index: 5;
-        background: rgba(0,0,0,0.6);
-        padding: 4px 10px;
-        border-radius: 4px;
-        display: none;
-        backdrop-filter: blur(4px);
-        border: 1px solid rgba(255,255,255,0.05);
-    }
-
-    .playback-info .current-clip {
-        color: #fbbf24;
-        font-weight: bold;
+        flex-shrink: 0;
     }
 
     @media (max-width: 768px) {
@@ -839,11 +1013,13 @@
         .controls-bar { padding: 4px 8px; gap: 6px; }
         .controls-bar input[type="range"] { width: 60px; }
         .controls-bar .time-display { min-width: 50px; font-size: 11px; }
-        .layers-panel { max-height: 80px; }
+        .layers-panel { max-height: 120px; }
         .track-label { width: 40px; font-size: 8px; }
         .clip-block { font-size: 9px; padding: 0 4px; }
         .media-gallery { max-height: 60px; padding: 4px 8px; }
         .media-item { max-width: 120px; height: 28px; font-size: 9px; }
+        .playback-info { font-size: 11px; min-width: 120px; bottom: 60px; }
+        .layer-item { padding: 2px 8px; min-height: 30px; font-size: 11px; }
     }
 </style>
 {% endblock %}
@@ -891,40 +1067,29 @@
 <div class="editor-container">
     <!-- ====== منطقة المعاينة ====== -->
     <div class="preview-area" id="previewArea">
-        <!-- محتوى المعاينة -->
         <div class="preview-content" id="previewContent">
-            <div class="preview-placeholder" id="previewPlaceholder" style="color:rgba(255,255,255,0.1);font-size:48px;text-align:center;">
+            <div class="preview-placeholder" id="previewPlaceholder">
                 🎬
-                <span style="display:block;font-size:14px;color:rgba(255,255,255,0.2);margin-top:12px;">اسحب أو استورد وسائط للمعاينة</span>
+                <span>اسحب أو استورد وسائط للمعاينة</span>
             </div>
             <img id="previewImage" style="display:none;width:100%;height:100%;object-fit:contain;" alt="معاينة الصورة">
             <video id="previewVideo" style="display:none;width:100%;height:100%;" controls></video>
         </div>
 
-        <!-- شريط أدوات المعاينة العلوي -->
         <div class="preview-toolbar">
-            <button class="tool-btn" onclick="toggleSafeAreas()" title="مناطق الأمان">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="14" height="14"><rect x="3" y="3" width="18" height="18" rx="2" stroke-width="2"/><rect x="6" y="6" width="12" height="12" rx="1" stroke-width="1.5" stroke-dasharray="4 4"/></svg>
-            </button>
-            <button class="tool-btn" onclick="toggleGrid()" title="شبكة">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="14" height="14"><path d="M3 3h18v18H3z" stroke-width="2"/><path d="M3 9h18M3 15h18M9 3v18M15 3v18" stroke-width="1.5"/></svg>
-            </button>
-            <button class="record-btn" id="recordBtn" onclick="toggleRecording()" title="تسجيل الصوت">
-                🎙️ تسجيل
-            </button>
-            <button class="tool-btn" onclick="toggleFullscreen()" title="شاشة كاملة">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="14" height="14"><path d="M8 3H5a2 2 0 00-2 2v3m18 0V5a2 2 0 00-2-2h-3m0 18h3a2 2 0 002-2v-3M3 16v3a2 2 0 002 2h3" stroke-width="2"/></svg>
-            </button>
+            <button class="tool-btn" onclick="toggleSafeAreas()" title="مناطق الأمان">⭕</button>
+            <button class="tool-btn" onclick="toggleGrid()" title="شبكة">▦</button>
+            <button class="record-btn" id="recordBtn" onclick="toggleRecording()" title="تسجيل الصوت">🎙️ تسجيل</button>
+            <button class="tool-btn" onclick="toggleFullscreen()" title="شاشة كاملة">⛶</button>
         </div>
 
-        <!-- معلومات التشغيل -->
         <div class="playback-info" id="playbackInfo">
-            <span id="playbackTime">00:00:00</span> | 
-            <span class="current-clip" id="currentClipName">-</span>
+            <div class="time" id="playbackTime">00:00:00</div>
+            <div class="current-clip" id="currentClipName">-</div>
         </div>
     </div>
 
-    <!-- ====== معرض الوسائط المستوردة ====== -->
+    <!-- ====== معرض الوسائط ====== -->
     <div class="media-gallery" id="mediaGallery">
         <span class="media-gallery-label">📁 الوسائط:</span>
         <span style="color:var(--text-muted);font-size:10px;opacity:0.5;" id="mediaGalleryEmpty">اسحب أو استورد ملفات</span>
@@ -933,11 +1098,11 @@
     <!-- ====== شريط التحكم السفلي ====== -->
     <div class="controls-bar" id="controlsBar">
         <div class="control-group">
-            <button onclick="seekTo(0)" title="البداية (Home)">⏮</button>
-            <button onclick="stepBackward()" title="رجوع خطوة (←)">⏪</button>
+            <button onclick="seekTo(0)" title="البداية">⏮</button>
+            <button onclick="stepBackward()" title="رجوع خطوة">⏪</button>
             <button onclick="togglePlay()" id="playBtn" style="font-size:20px;">▶</button>
-            <button onclick="stepForward()" title="تقديم خطوة (→)">⏩</button>
-            <button onclick="seekTo(totalDuration)" title="النهاية (End)">⏭</button>
+            <button onclick="stepForward()" title="تقديم خطوة">⏩</button>
+            <button onclick="seekTo(totalDuration)" title="النهاية">⏭</button>
         </div>
 
         <div class="control-group">
@@ -973,15 +1138,9 @@
     <!-- ====== شريط الأدوات ====== -->
     <div class="toolbar">
         <div class="toolbar-group">
-            <button class="tool-btn active" onclick="selectTool('select')" id="toolSelect" title="تحديد (V)">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 3l7.07 16.97 2.51-7.39 7.39-2.51L3 3z" stroke-width="2"/><path d="M13 13l6 6" stroke-width="2"/></svg>
-            </button>
-            <button class="tool-btn" onclick="selectTool('cut')" id="toolCut" title="قص (C)">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M7 6a1 1 0 100-2 1 1 0 000 2zM7 20a1 1 0 100-2 1 1 0 000 2zM17 6a1 1 0 100-2 1 1 0 000 2z" stroke-width="2"/><path d="M7 6l10 14M17 6L7 20" stroke-width="2"/></svg>
-            </button>
-            <button class="tool-btn" onclick="selectTool('trim')" id="toolTrim" title="قص الأطراف (T)">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 4l6 6M20 20l-6-6M4 20l6-6M20 4l-6 6" stroke-width="2"/><rect x="8" y="8" width="8" height="8" stroke-width="2"/></svg>
-            </button>
+            <button class="tool-btn active" onclick="selectTool('select')" id="toolSelect" title="تحديد (V)">⬡</button>
+            <button class="tool-btn" onclick="selectTool('cut')" id="toolCut" title="قص (C)">✂️</button>
+            <button class="tool-btn" onclick="selectTool('trim')" id="toolTrim" title="قص الأطراف (T)">✄</button>
         </div>
 
         <div class="toolbar-group">
@@ -993,9 +1152,9 @@
         </div>
 
         <div class="toolbar-group">
-            <button class="tool-btn" onclick="splitClip()" title="تقسيم (S)">✂️</button>
+            <button class="tool-btn" onclick="splitClip()" title="تقسيم (S)">🔪</button>
             <button class="tool-btn" onclick="duplicateClip()" title="نسخ (D)">📋</button>
-            <button class="tool-btn" onclick="deleteSelected()" title="حذف (Delete)">🗑️</button>
+            <button class="tool-btn danger" onclick="deleteSelected()" title="حذف (Delete)">🗑️</button>
         </div>
 
         <div class="toolbar-group">
@@ -1008,12 +1167,13 @@
     <!-- ====== لوحة الطبقات ====== -->
     <div class="layers-panel" id="layersPanel">
         <div class="layers-header">
-            <span>🧩 الطبقات</span>
-            <div class="flex items-center gap-2">
-                <button class="tool-btn" onclick="addLayer()" style="font-size:12px;padding:2px 8px;">+ إضافة طبقة</button>
-                <button class="tool-btn" onclick="moveLayer('up')" style="font-size:12px;padding:2px 8px;">↑</button>
-                <button class="tool-btn" onclick="moveLayer('down')" style="font-size:12px;padding:2px 8px;">↓</button>
-                <button class="tool-btn" onclick="mergeLayers()" style="font-size:12px;padding:2px 8px;">🔀 دمج</button>
+            <span>🧩 الطبقات <span id="layerCount" class="layer-count" style="font-size:10px;color:var(--text-muted);background:rgba(0,0,0,0.3);padding:0 6px;border-radius:8px;margin-left:4px;">0</span></span>
+            <div class="header-actions">
+                <button onclick="addLayer()" title="إضافة طبقة">+ إضافة</button>
+                <button onclick="moveLayer('up')" title="رفع الطبقة">↑</button>
+                <button onclick="moveLayer('down')" title="خفض الطبقة">↓</button>
+                <button class="danger" onclick="deleteSelectedLayer()" title="حذف الطبقة المحددة">✕</button>
+                <button onclick="mergeLayers()" title="دمج جميع الطبقات">🔀</button>
             </div>
         </div>
         <div id="layersList"></div>
@@ -1039,7 +1199,7 @@
                 <span id="statusFps">25 إطار/ث</span>
                 <span id="statusLayers">0 طبقة</span>
                 <span id="statusMedia">0 ملف</span>
-                <span id="statusCurrentClip" class="highlight">⏸️ متوقف</span>
+                <span id="statusCurrentClip" class="clip-indicator">⏸️ متوقف</span>
             </div>
             <div>
                 <span id="statusZoom">تكبير: 80%</span>
@@ -1071,34 +1231,32 @@
 <div id="clipPropertiesModal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
     <div class="bg-slate-800 rounded-xl p-6 max-w-md w-full border border-slate-700">
         <h3 class="text-white text-lg font-semibold mb-4">⚙️ خصائص المقطع</h3>
-        <div id="clipPropertiesContent">
-            <div class="space-y-3">
-                <div>
-                    <label class="text-slate-400 text-sm">العنوان</label>
-                    <input type="text" id="clipPropTitle" class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-white text-sm">
-                </div>
-                <div>
-                    <label class="text-slate-400 text-sm">البداية (ثانية)</label>
-                    <input type="number" id="clipPropStart" step="0.1" class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-white text-sm">
-                </div>
-                <div>
-                    <label class="text-slate-400 text-sm">المدة (ثانية)</label>
-                    <input type="number" id="clipPropDuration" step="0.1" class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-white text-sm">
-                </div>
-                <div>
-                    <label class="text-slate-400 text-sm">الطبقة</label>
-                    <select id="clipPropLayer" class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-white text-sm"></select>
-                </div>
-                <div>
-                    <label class="text-slate-400 text-sm">النوع</label>
-                    <select id="clipPropType" class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-white text-sm">
-                        <option value="video">🎬 فيديو</option>
-                        <option value="audio">🎤 صوت</option>
-                        <option value="image">🖼️ صورة</option>
-                        <option value="text">📝 نص</option>
-                        <option value="music">🎵 موسيقى</option>
-                    </select>
-                </div>
+        <div class="space-y-3">
+            <div>
+                <label class="text-slate-400 text-sm">العنوان</label>
+                <input type="text" id="clipPropTitle" class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-white text-sm">
+            </div>
+            <div>
+                <label class="text-slate-400 text-sm">البداية (ثانية)</label>
+                <input type="number" id="clipPropStart" step="0.1" class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-white text-sm">
+            </div>
+            <div>
+                <label class="text-slate-400 text-sm">المدة (ثانية)</label>
+                <input type="number" id="clipPropDuration" step="0.1" class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-white text-sm">
+            </div>
+            <div>
+                <label class="text-slate-400 text-sm">الطبقة</label>
+                <select id="clipPropLayer" class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-white text-sm"></select>
+            </div>
+            <div>
+                <label class="text-slate-400 text-sm">النوع</label>
+                <select id="clipPropType" class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-white text-sm">
+                    <option value="video">🎬 فيديو</option>
+                    <option value="audio">🎤 صوت</option>
+                    <option value="image">🖼️ صورة</option>
+                    <option value="text">📝 نص</option>
+                    <option value="music">🎵 موسيقى</option>
+                </select>
             </div>
         </div>
         <div class="flex justify-end mt-4 gap-2">
@@ -1197,20 +1355,13 @@ document.addEventListener('DOMContentLoaded', function() {
     setupKeyboardShortcuts();
     loadProjectData();
     renderPreview();
+    updatePlaybackInfo();
 });
 
 // ============================================================
-//  RENDER PREVIEW - عرض المحتوى حسب موقع المؤشر
+//  RENDER PREVIEW - عرض المعاينة بوضوح
 // ============================================================
 function renderPreview() {
-    const canvas = document.getElementById('previewCanvas');
-    if (canvas) {
-        // إذا كان هناك كانفاس قديم نستخدمه
-        renderPreviewOnCanvas();
-        return;
-    }
-    
-    // عرض الصورة أو الفيديو مباشرة
     const img = document.getElementById('previewImage');
     const video = document.getElementById('previewVideo');
     const placeholder = document.getElementById('previewPlaceholder');
@@ -1227,6 +1378,7 @@ function renderPreview() {
         currentClipAtTime = activeClip;
         const isImage = activeClip.type === 'image';
         const isVideo = activeClip.type === 'video';
+        const isAudio = activeClip.type === 'audio';
         
         if (isImage && activeClip.content) {
             img.src = activeClip.content;
@@ -1234,23 +1386,36 @@ function renderPreview() {
             video.style.display = 'none';
             placeholder.style.display = 'none';
             document.getElementById('currentClipName').textContent = activeClip.title || 'صورة';
+            document.getElementById('playbackInfo').style.display = 'block';
         } else if (isVideo && activeClip.content) {
             video.src = activeClip.content;
             video.style.display = 'block';
             img.style.display = 'none';
             placeholder.style.display = 'none';
             document.getElementById('currentClipName').textContent = activeClip.title || 'فيديو';
+            document.getElementById('playbackInfo').style.display = 'block';
             if (isPlaying) {
                 video.play().catch(() => {});
+                // مزامنة الوقت مع الفيديو
+                const localTime = currentTime - activeClip.start;
+                if (Math.abs(video.currentTime - localTime) > 0.1) {
+                    video.currentTime = localTime;
+                }
             }
+        } else if (isAudio) {
+            placeholder.style.display = 'flex';
+            img.style.display = 'none';
+            video.style.display = 'none';
+            document.getElementById('currentClipName').textContent = '🎵 ' + (activeClip.title || 'صوت');
+            document.getElementById('playbackInfo').style.display = 'block';
         } else {
             placeholder.style.display = 'flex';
             img.style.display = 'none';
             video.style.display = 'none';
             document.getElementById('currentClipName').textContent = 'لا يوجد محتوى';
+            document.getElementById('playbackInfo').style.display = 'none';
         }
         
-        document.getElementById('playbackInfo').style.display = 'block';
         document.getElementById('playbackTime').textContent = formatTime(currentTime);
         document.getElementById('statusCurrentClip').textContent = `▶️ ${activeClip.title || 'مقطع'}`;
     } else {
@@ -1264,81 +1429,16 @@ function renderPreview() {
     }
 }
 
-function renderPreviewOnCanvas() {
-    const canvas = document.getElementById('previewCanvas');
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    const w = canvas.width, h = canvas.height;
-    
-    ctx.fillStyle = '#0a0a15';
-    ctx.fillRect(0, 0, w, h);
-    
-    const visibleClips = clips.filter(c => {
-        const layer = layers[c.layer];
-        return layer && layer.visible && 
-               currentTime >= c.start && 
-               currentTime < c.start + c.duration;
-    });
-    
-    const sortedClips = [...visibleClips].sort((a, b) => a.layer - b.layer);
-    
-    if (sortedClips.length > 0) {
-        const clip = sortedClips[0];
-        currentClipAtTime = clip;
-        const progress = (currentTime - clip.start) / clip.duration;
-        const x = (progress * w * 0.7) + w * 0.15;
-        const y = h * 0.3 + (clip.layer * 30);
-        
-        ctx.fillStyle = clip.color + '40';
-        ctx.strokeStyle = clip.color;
-        ctx.lineWidth = 2;
-        const rectW = 80, rectH = 50;
-        ctx.fillRect(x - rectW/2, y - rectH/2, rectW, rectH);
-        ctx.strokeRect(x - rectW/2, y - rectH/2, rectW, rectH);
-        
-        ctx.font = '24px sans-serif';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillStyle = 'white';
-        ctx.fillText(clip.icon || '📄', x, y - 5);
-        
-        ctx.font = '11px sans-serif';
-        ctx.fillStyle = '#f1f5f9';
-        ctx.fillText(clip.title || 'مقطع', x, y + 25);
-        
-        ctx.font = '9px sans-serif';
-        ctx.fillStyle = '#94a3b8';
-        ctx.fillText(clip.type, x, y + 40);
-        
-        ctx.strokeStyle = 'rgba(255,255,255,0.2)';
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.arc(x + 35, y - 15, 8, 0, Math.PI * 2);
-        ctx.stroke();
-        ctx.beginPath();
-        ctx.arc(x + 35, y - 15, 8, -Math.PI/2, -Math.PI/2 + Math.PI * 2 * progress);
-        ctx.strokeStyle = clip.color;
-        ctx.lineWidth = 2;
-        ctx.stroke();
-        
-        document.getElementById('currentClipName').textContent = clip.title || 'مقطع';
-        document.getElementById('statusCurrentClip').textContent = `▶️ ${clip.title || 'مقطع'}`;
-    } else {
-        document.getElementById('statusCurrentClip').textContent = isPlaying ? '⏸️ تشغيل' : '⏸️ متوقف';
-        currentClipAtTime = null;
+function updatePlaybackInfo() {
+    document.getElementById('playbackTime').textContent = formatTime(currentTime);
+    if (currentClipAtTime) {
+        document.getElementById('currentClipName').textContent = currentClipAtTime.title || 'مقطع';
+        document.getElementById('playbackInfo').style.display = 'block';
     }
-    
-    ctx.fillStyle = 'rgba(0,0,0,0.5)';
-    ctx.fillRect(10, 10, 160, 22);
-    ctx.fillStyle = 'rgba(255,255,255,0.6)';
-    ctx.font = '11px monospace';
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(`⏱ ${formatTime(currentTime)} / ${formatTime(totalDuration)}`, 16, 22);
 }
 
 // ============================================================
-//  MEDIA GALLERY - معرض الوسائط
+//  MEDIA GALLERY
 // ============================================================
 function renderMediaGallery() {
     const gallery = document.getElementById('mediaGallery');
@@ -1370,7 +1470,6 @@ function renderMediaGallery() {
         
         const isVideo = file.type && file.type.startsWith('video/');
         const isImage = file.type && file.type.startsWith('image/');
-        const isAudio = file.type && file.type.startsWith('audio/');
         
         let thumbContent = '';
         if (isImage && file.url) {
@@ -1378,10 +1477,9 @@ function renderMediaGallery() {
         } else if (isVideo && file.url) {
             thumbContent = `<video src="${file.url}" muted preload="metadata"></video>`;
         } else {
-            thumbContent = isAudio ? '🎵' : '📄';
+            thumbContent = '📄';
         }
         
-        // معرفة إذا كان هذا الملف موجوداً في التايم لاين
         const clipExists = clips.some(c => c.metadata && c.metadata.file === file.name);
         
         item.innerHTML = `
@@ -1406,7 +1504,6 @@ function addMediaToTimeline(index) {
     const file = mediaFiles[index];
     if (!file) return;
     
-    // حساب وقت البداية
     let startTime = 0;
     if (clips.length > 0) {
         const lastClip = clips[clips.length - 1];
@@ -1435,7 +1532,7 @@ function addMediaToTimeline(index) {
     renderMediaGallery();
     updateStatus();
     saveProjectData();
-    showToast(`✅ تم إضافة ${file.name} إلى التايم لاين`, 'success');
+    showToast(`✅ تم إضافة ${file.name}`, 'success');
 }
 
 function removeMediaFile(index) {
@@ -1446,7 +1543,7 @@ function removeMediaFile(index) {
     mediaFiles.splice(index, 1);
     renderMediaGallery();
     updateStatus();
-    showToast('تم حذف الملف من المعرض', 'success');
+    showToast('تم حذف الملف', 'success');
 }
 
 function addMediaFile(file) {
@@ -1463,18 +1560,145 @@ function addMediaFile(file) {
 }
 
 // ============================================================
-//  FILE HANDLING
+//  LAYERS - محسّن مع حذف سهل
 // ============================================================
-function handleFiles(files) {
-    Array.from(files).forEach(file => {
-        const type = file.type.split('/')[0];
-        if (['video', 'audio', 'image'].includes(type)) {
-            addMediaFile(file);
-        }
+function renderLayers() {
+    const container = document.getElementById('layersList');
+    container.innerHTML = '';
+    
+    layers.forEach((layer, index) => {
+        const div = document.createElement('div');
+        div.className = `layer-item${index === selectedLayerIndex ? ' active' : ''}`;
+        div.dataset.index = index;
+        
+        const clipCount = clips.filter(c => c.layer === index).length;
+        
+        div.innerHTML = `
+            <span class="layer-drag-handle" title="سحب لإعادة الترتيب">⠿</span>
+            <span class="layer-vis ${layer.visible ? '' : 'hidden'}" onclick="event.stopPropagation();toggleLayerVisibility(${index})" title="${layer.visible ? 'إخفاء' : 'إظهار'}">
+                ${layer.visible ? '👁️' : '🚫'}
+            </span>
+            <span class="layer-label">${layer.name}</span>
+            <span class="layer-count">${clipCount}</span>
+            <div class="layer-actions">
+                <button onclick="event.stopPropagation();renameLayer(${index})" title="تعديل الاسم">✏️</button>
+                <button class="danger" onclick="event.stopPropagation();deleteLayer(${index})" title="حذف الطبقة">🗑️</button>
+            </div>
+        `;
+        
+        div.onclick = () => {
+            selectLayer(index);
+        };
+        
+        container.appendChild(div);
     });
-    renderMediaGallery();
+    
+    document.getElementById('layerCount').textContent = layers.length;
+    document.getElementById('statusLayers').textContent = `${layers.length} طبقة`;
+}
+
+function addLayer() {
+    const name = prompt('اسم الطبقة الجديدة:', `طبقة ${layers.length + 1}`);
+    if (name && name.trim()) {
+        layers.push({ name: name.trim(), visible: true, locked: false });
+        renderLayers();
+        selectLayer(layers.length - 1);
+        saveProjectData();
+        showToast(`✅ تم إضافة الطبقة "${name.trim()}"`, 'success');
+    }
+}
+
+function deleteLayer(index) {
+    if (layers.length <= 1) {
+        showToast('⚠️ لا يمكن حذف الطبقة الأخيرة', 'warning');
+        return;
+    }
+    
+    const layerName = layers[index].name;
+    const clipCount = clips.filter(c => c.layer === index).length;
+    
+    let confirmMsg = `هل تريد حذف الطبقة "${layerName}"؟`;
+    if (clipCount > 0) {
+        confirmMsg += `\n⚠️ تحتوي على ${clipCount} مقطع/مقاطع سيتم حذفها أيضاً.`;
+    }
+    
+    if (!confirm(confirmMsg)) return;
+    
+    // حذف المقاطع في هذه الطبقة
+    clips = clips.filter(c => c.layer !== index);
+    // إعادة ترقيم الطبقات للمقاطع المتبقية
+    clips.forEach(c => {
+        if (c.layer > index) c.layer--;
+    });
+    
+    layers.splice(index, 1);
+    if (selectedLayerIndex >= layers.length) selectedLayerIndex = layers.length - 1;
+    
+    renderLayers();
+    renderTimeline();
     updateStatus();
-    closeImportModal();
+    saveProjectData();
+    showToast(`🗑️ تم حذف الطبقة "${layerName}"`, 'success');
+}
+
+function deleteSelectedLayer() {
+    if (selectedLayerIndex !== null) {
+        deleteLayer(selectedLayerIndex);
+    }
+}
+
+function selectLayer(index) {
+    selectedLayerIndex = index;
+    renderLayers();
+}
+
+function toggleLayerVisibility(index) {
+    layers[index].visible = !layers[index].visible;
+    renderLayers();
+    renderTimeline();
+}
+
+function renameLayer(index) {
+    const currentName = layers[index].name;
+    const newName = prompt('اسم الطبقة:', currentName);
+    if (newName && newName.trim() && newName.trim() !== currentName) {
+        layers[index].name = newName.trim();
+        renderLayers();
+        saveProjectData();
+    }
+}
+
+function moveLayer(direction) {
+    const index = selectedLayerIndex;
+    const newIndex = direction === 'up' ? index - 1 : index + 1;
+    if (newIndex < 0 || newIndex >= layers.length) return;
+    
+    [layers[index], layers[newIndex]] = [layers[newIndex], layers[index]];
+    clips.forEach(c => {
+        if (c.layer === index) c.layer = newIndex;
+        else if (c.layer === newIndex) c.layer = index;
+    });
+    
+    selectedLayerIndex = newIndex;
+    renderLayers();
+    renderTimeline();
+    saveProjectData();
+}
+
+function mergeLayers() {
+    if (layers.length <= 1) {
+        showToast('يوجد طبقة واحدة فقط', 'warning');
+        return;
+    }
+    if (confirm('دمج جميع الطبقات في طبقة واحدة؟')) {
+        clips.forEach(c => c.layer = 0);
+        layers = [{ name: 'طبقة مدمجة', visible: true, locked: false }];
+        selectedLayerIndex = 0;
+        renderLayers();
+        renderTimeline();
+        saveProjectData();
+        showToast('✅ تم دمج الطبقات', 'success');
+    }
 }
 
 // ============================================================
@@ -1539,11 +1763,6 @@ function pausePlay() {
     }
 }
 
-function updatePlaybackInfo() {
-    document.getElementById('playbackTime').textContent = formatTime(currentTime);
-    document.getElementById('playbackInfo').style.display = 'block';
-}
-
 function stepForward() {
     seekTo(Math.min(currentTime + 0.5, totalDuration));
 }
@@ -1592,8 +1811,8 @@ function seekTo(time) {
     renderPreview();
     updatePlaybackInfo();
     const video = document.getElementById('previewVideo');
-    if (video && video.src) {
-        video.currentTime = currentTime - (currentClipAtTime ? currentClipAtTime.start : 0);
+    if (video && video.src && currentClipAtTime) {
+        video.currentTime = currentTime - currentClipAtTime.start;
     }
 }
 
@@ -1653,7 +1872,6 @@ async function toggleRecording() {
             
             addMediaFile(fileObj);
             
-            // حساب وقت البداية
             let startTime = 0;
             if (clips.length > 0) {
                 const lastClip = clips[clips.length - 1];
@@ -1688,127 +1906,17 @@ async function toggleRecording() {
         isRecording = true;
         btn.textContent = '⏹️ إيقاف';
         btn.classList.add('recording');
-        showToast('🔴 جاري التسجيل... اضغط "إيقاف" عند الانتهاء', 'info');
+        showToast('🔴 جاري التسجيل...', 'info');
         
     } catch (err) {
         console.error('Error accessing microphone:', err);
         let message = 'تعذر الوصول إلى الميكروفون';
         if (err.name === 'NotAllowedError') {
-            message = '⚠️ تم رفض إذن الميكروفون. يرجى السماح بالوصول في إعدادات المتصفح';
+            message = '⚠️ تم رفض إذن الميكروفون';
         } else if (err.name === 'NotFoundError') {
-            message = '⚠️ لا يوجد ميكروفون متصل بالجهاز';
+            message = '⚠️ لا يوجد ميكروفون متصل';
         }
         showToast(message, 'error');
-    }
-}
-
-// ============================================================
-//  LAYERS
-// ============================================================
-function renderLayers() {
-    const container = document.getElementById('layersList');
-    container.innerHTML = '';
-    layers.forEach((layer, index) => {
-        const div = document.createElement('div');
-        div.className = `layer-item${index === selectedLayerIndex ? ' active' : ''}`;
-        div.innerHTML = `
-            <span class="layer-vis ${layer.visible ? '' : 'hidden'}" onclick="toggleLayerVisibility(${index})">
-                ${layer.visible ? '👁️' : '🚫'}
-            </span>
-            <span class="layer-label">${layer.name}</span>
-            <span class="layer-type">${clips.filter(c => c.layer === index).length} مقطع</span>
-            <div class="layer-actions">
-                <button onclick="renameLayer(${index})" title="تعديل الاسم">✏️</button>
-                <button onclick="deleteLayer(${index})" title="حذف الطبقة">🗑️</button>
-            </div>
-        `;
-        div.onclick = (e) => {
-            if (!e.target.closest('.layer-actions') && !e.target.closest('.layer-vis')) {
-                selectLayer(index);
-            }
-        };
-        container.appendChild(div);
-    });
-    document.getElementById('statusLayers').textContent = `${layers.length} طبقة`;
-}
-
-function addLayer() {
-    const name = prompt('اسم الطبقة الجديدة:', `طبقة ${layers.length + 1}`);
-    if (name) {
-        layers.push({ name, visible: true, locked: false });
-        renderLayers();
-        selectLayer(layers.length - 1);
-        saveProjectData();
-    }
-}
-
-function deleteLayer(index) {
-    if (layers.length <= 1) {
-        showToast('لا يمكن حذف الطبقة الأخيرة', 'error');
-        return;
-    }
-    if (confirm(`هل تريد حذف الطبقة "${layers[index].name}" وجميع مقاطعها؟`)) {
-        clips = clips.filter(c => c.layer !== index);
-        clips.forEach(c => {
-            if (c.layer > index) c.layer--;
-        });
-        layers.splice(index, 1);
-        if (selectedLayerIndex >= layers.length) selectedLayerIndex = layers.length - 1;
-        renderLayers();
-        renderTimeline();
-        updateStatus();
-        saveProjectData();
-    }
-}
-
-function selectLayer(index) {
-    selectedLayerIndex = index;
-    renderLayers();
-}
-
-function toggleLayerVisibility(index) {
-    layers[index].visible = !layers[index].visible;
-    renderLayers();
-    renderTimeline();
-}
-
-function renameLayer(index) {
-    const name = prompt('اسم الطبقة:', layers[index].name);
-    if (name) {
-        layers[index].name = name;
-        renderLayers();
-        saveProjectData();
-    }
-}
-
-function moveLayer(direction) {
-    const index = selectedLayerIndex;
-    const newIndex = direction === 'up' ? index - 1 : index + 1;
-    if (newIndex < 0 || newIndex >= layers.length) return;
-    [layers[index], layers[newIndex]] = [layers[newIndex], layers[index]];
-    clips.forEach(c => {
-        if (c.layer === index) c.layer = newIndex;
-        else if (c.layer === newIndex) c.layer = index;
-    });
-    selectedLayerIndex = newIndex;
-    renderLayers();
-    renderTimeline();
-    saveProjectData();
-}
-
-function mergeLayers() {
-    if (layers.length <= 1) {
-        showToast('يوجد طبقة واحدة فقط', 'warning');
-        return;
-    }
-    if (confirm('دمج جميع الطبقات في طبقة واحدة؟')) {
-        clips.forEach(c => c.layer = 0);
-        layers = [{ name: 'طبقة مدمجة', visible: true, locked: false }];
-        selectedLayerIndex = 0;
-        renderLayers();
-        renderTimeline();
-        saveProjectData();
-        showToast('تم دمج الطبقات', 'success');
     }
 }
 
@@ -1855,10 +1963,9 @@ function renderTimeline() {
         body.dataset.layer = layerIdx;
 
         const layerClips = clips.filter(c => c.layer === layerIdx);
-        // ترتيب حسب وقت البداية
         layerClips.sort((a, b) => a.start - b.start);
         
-        layerClips.forEach((clip, index) => {
+        layerClips.forEach((clip) => {
             const left = clip.start * pxPerSec;
             const width = Math.max(clip.duration * pxPerSec - 2, 20);
             
@@ -1868,20 +1975,18 @@ function renderTimeline() {
             block.dataset.clipId = clip.id;
             
             const durationStr = formatTime(clip.duration);
-            const clipNumber = index + 1;
             block.innerHTML = `
                 <span class="clip-thumb">${clip.icon || '🎬'}</span>
-                <span class="clip-label">#${clipNumber} ${clip.title || 'مقطع'}</span>
+                <span class="clip-label">${clip.title || 'مقطع'}</span>
                 <span class="clip-duration">${durationStr}</span>
-                <span class="clip-options" style="display:none;">
-                    <button onclick="editClipProperties(${clip.id})" title="خصائص">⚙️</button>
-                    <button onclick="deleteClip(${clip.id})" title="حذف">🗑️</button>
-                </span>
+                <button class="clip-delete-btn" onclick="event.stopPropagation();deleteClip(${clip.id})" title="حذف المقطع">✕</button>
             `;
             
             block.onclick = (e) => {
                 e.stopPropagation();
                 selectClip(clip.id);
+                // التمرير إلى المقطع في المعاينة
+                seekTo(clip.start);
             };
             
             block.ondblclick = () => {
@@ -1952,12 +2057,13 @@ function updateStatus() {
 //  CLIP OPERATIONS
 // ============================================================
 function deleteClip(id) {
+    if (!confirm('هل تريد حذف هذا المقطع؟')) return;
     clips = clips.filter(c => c.id !== id);
     if (selectedClipId === id) selectedClipId = null;
     renderTimeline();
     updateStatus();
     saveProjectData();
-    showToast('تم حذف المقطع', 'success');
+    showToast('🗑️ تم حذف المقطع', 'success');
 }
 
 function selectClip(id) {
@@ -1965,7 +2071,6 @@ function selectClip(id) {
     renderTimeline();
     const clip = clips.find(c => c.id === id);
     if (clip) {
-        seekTo(clip.start);
         showToast(`📌 ${clip.title}`, 'info');
     }
 }
@@ -2017,7 +2122,7 @@ function addClip(type) {
 
 function splitClip() {
     if (selectedClipId === null) {
-        showToast('اختر مقطعاً أولاً', 'warning');
+        showToast('⚠️ اختر مقطعاً أولاً', 'warning');
         return;
     }
     const clip = clips.find(c => c.id === selectedClipId);
@@ -2025,7 +2130,7 @@ function splitClip() {
     
     const splitTime = currentTime - clip.start;
     if (splitTime <= 0.1 || splitTime >= clip.duration - 0.1) {
-        showToast('اختر نقطة داخل المقطع', 'warning');
+        showToast('⚠️ اختر نقطة داخل المقطع', 'warning');
         return;
     }
     
@@ -2042,19 +2147,18 @@ function splitClip() {
     clips.push(newClip);
     renderTimeline();
     saveProjectData();
-    showToast('تم تقسيم المقطع', 'success');
+    showToast('✂️ تم تقسيم المقطع', 'success');
 }
 
 function duplicateClip() {
     if (selectedClipId === null) {
-        showToast('اختر مقطعاً أولاً', 'warning');
+        showToast('⚠️ اختر مقطعاً أولاً', 'warning');
         return;
     }
     const clip = clips.find(c => c.id === selectedClipId);
     if (!clip) return;
     
     let startTime = clip.start + clip.duration + 0.5;
-    // إعادة ترتيب المقاطع التي تبدأ بعد المقطع المنسوخ
     clips.forEach(c => {
         if (c.start > clip.start) {
             c.start += clip.duration + 0.5;
@@ -2072,17 +2176,15 @@ function duplicateClip() {
     renderTimeline();
     selectClip(newClip.id);
     saveProjectData();
-    showToast('تم نسخ المقطع', 'success');
+    showToast('📋 تم نسخ المقطع', 'success');
 }
 
 function deleteSelected() {
     if (selectedClipId === null) {
-        showToast('اختر مقطعاً أولاً', 'warning');
+        showToast('⚠️ اختر مقطعاً أولاً', 'warning');
         return;
     }
-    if (confirm('هل تريد حذف المقطع المختار؟')) {
-        deleteClip(selectedClipId);
-    }
+    deleteClip(selectedClipId);
 }
 
 function moveClip(id, newLayer, newStart) {
@@ -2139,30 +2241,36 @@ function saveClipProperties() {
     closeClipProperties();
     renderTimeline();
     saveProjectData();
-    showToast('تم تحديث خصائص المقطع', 'success');
+    showToast('✅ تم تحديث الخصائص', 'success');
 }
 
 // ============================================================
-//  TOOLS
+//  FILE HANDLING
 // ============================================================
-function selectTool(tool) {
-    selectedTool = tool;
-    document.querySelectorAll('.tool-btn').forEach(b => b.classList.remove('active'));
-    const btn = document.getElementById('tool' + tool.charAt(0).toUpperCase() + tool.slice(1));
-    if (btn) btn.classList.add('active');
+function handleFiles(files) {
+    Array.from(files).forEach(file => {
+        const type = file.type.split('/')[0];
+        if (['video', 'audio', 'image'].includes(type)) {
+            addMediaFile(file);
+        }
+    });
+    renderMediaGallery();
+    updateStatus();
+    closeImportModal();
 }
 
-function toggleSafeAreas() {
-    showToast('تم تفعيل مناطق الأمان', 'info');
+function openImportModal() {
+    document.getElementById('importModal').classList.remove('hidden');
 }
 
-function toggleGrid() {
-    showToast('تم تفعيل الشبكة', 'info');
+function importFiles() {
+    document.getElementById('fileInput').click();
 }
 
-// ============================================================
-//  DRAG & DROP
-// ============================================================
+function closeImportModal() {
+    document.getElementById('importModal').classList.add('hidden');
+}
+
 function setupDragDrop() {
     const dropZone = document.getElementById('dropZone');
     const fileInput = document.getElementById('fileInput');
@@ -2201,21 +2309,27 @@ function setupDragDrop() {
         if (data.type === 'clip') {
             deleteClip(data.clipId);
             document.getElementById('trashZone').classList.remove('active');
-            showToast('تم حذف المقطع', 'success');
+            showToast('🗑️ تم حذف المقطع', 'success');
         }
     });
 }
 
-function openImportModal() {
-    document.getElementById('importModal').classList.remove('hidden');
+// ============================================================
+//  TOOLS
+// ============================================================
+function selectTool(tool) {
+    selectedTool = tool;
+    document.querySelectorAll('.tool-btn').forEach(b => b.classList.remove('active'));
+    const btn = document.getElementById('tool' + tool.charAt(0).toUpperCase() + tool.slice(1));
+    if (btn) btn.classList.add('active');
 }
 
-function importFiles() {
-    document.getElementById('fileInput').click();
+function toggleSafeAreas() {
+    showToast('⭕ تم تفعيل مناطق الأمان', 'info');
 }
 
-function closeImportModal() {
-    document.getElementById('importModal').classList.add('hidden');
+function toggleGrid() {
+    showToast('▦ تم تفعيل الشبكة', 'info');
 }
 
 // ============================================================
@@ -2246,23 +2360,9 @@ function setupKeyboardShortcuts() {
                 e.preventDefault();
                 seekTo(totalDuration);
                 break;
-            case 'ArrowUp':
-                e.preventDefault();
-                if (selectedClipId !== null) {
-                    const clip = clips.find(c => c.id === selectedClipId);
-                    if (clip && clip.layer < layers.length - 1) {
-                        moveClip(clip.id, clip.layer + 1, clip.start);
-                    }
-                }
-                break;
-            case 'ArrowDown':
-                e.preventDefault();
-                if (selectedClipId !== null) {
-                    const clip = clips.find(c => c.id === selectedClipId);
-                    if (clip && clip.layer > 0) {
-                        moveClip(clip.id, clip.layer - 1, clip.start);
-                    }
-                }
+            case 'Delete':
+            case 'Backspace':
+                deleteSelected();
                 break;
             case 'v':
             case 'V':
@@ -2279,10 +2379,6 @@ function setupKeyboardShortcuts() {
             case 'd':
             case 'D':
                 duplicateClip();
-                break;
-            case 'Delete':
-            case 'Backspace':
-                deleteSelected();
                 break;
             case 'r':
             case 'R':
@@ -2361,7 +2457,7 @@ function exportProject() {
     a.download = `project_${projectId}_export.json`;
     a.click();
     URL.revokeObjectURL(url);
-    showToast('تم تصدير المشروع', 'success');
+    showToast('✅ تم تصدير المشروع', 'success');
 }
 
 function startRender(projectId) {
@@ -2386,13 +2482,13 @@ function startRender(projectId) {
     })
     .then(resp => {
         if (resp.ok) {
-            showToast('بدأت عملية الرندر', 'success');
+            showToast('✅ بدأت عملية الرندر', 'success');
             setTimeout(() => window.location.href = '/render-queue', 1000);
         } else {
-            resp.json().then(err => showToast(err.detail || 'فشل الرندر', 'error'));
+            resp.json().then(err => showToast(err.detail || '❌ فشل الرندر', 'error'));
         }
     })
-    .catch(() => showToast('خطأ في الاتصال', 'error'));
+    .catch(() => showToast('❌ خطأ في الاتصال', 'error'));
 }
 
 // ============================================================
@@ -2422,7 +2518,7 @@ function showToast(msg, type = 'info') {
     setTimeout(() => {
         toast.style.opacity = '0';
         setTimeout(() => toast.remove(), 300);
-    }, 4000);
+    }, 3000);
 }
 
 // ============================================================
