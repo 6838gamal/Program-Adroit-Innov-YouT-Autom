@@ -4,6 +4,8 @@ from supabase import create_client, Client
 from typing import Optional, Dict, Any, List
 import logging
 
+from config.settings import settings  # ✅ استخدم settings بدلاً من os.getenv
+
 logger = logging.getLogger(__name__)
 
 class SupabaseClient:
@@ -19,8 +21,11 @@ class SupabaseClient:
     
     def __init__(self):
         if self._client is None:
-            supabase_url = os.getenv("SUPABASE_URL")
-            supabase_key = os.getenv("SUPABASE_SECRET_KEY") or os.getenv("SUPABASE_PUBLIC_KEY")
+            # ✅ استخدام settings بدلاً من os.getenv
+            supabase_url = settings.SUPABASE_URL
+            
+            # ✅ استخراج القيمة النصية من SecretStr
+            supabase_key = settings.supabase_secret_key_value or settings.supabase_public_key_value
             
             if not supabase_url or not supabase_key:
                 logger.warning("⚠️ Supabase credentials not configured!")
