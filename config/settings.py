@@ -35,7 +35,7 @@ class Settings(BaseSettings):
     )
 
     # ============================================
-    # SUPABASE - المفاتيح الجديدة (Current)
+    # SUPABASE - MODERN CONFIGURATION (ONLY)
     # ============================================
     
     # 1. SUPABASE_URL: رابط مشروع Supabase
@@ -44,34 +44,24 @@ class Settings(BaseSettings):
         description="Supabase project URL (e.g., https://project.supabase.co)"
     )
     
-    # 2. SUPABASE_DIRECT_URL: رابط مباشر لقاعدة البيانات (مفضل)
+    # 2. SUPABASE_DIRECT_URL: رابط مباشر لقاعدة البيانات
     SUPABASE_DIRECT_URL: Optional[str] = Field(
         default=None,
         description="Direct PostgreSQL connection URL for Supabase"
     )
     
-    # 3. SUPABASE_PUBLIC_KEY: المفتاح العام الجديد
+    # 3. SUPABASE_PUBLIC_KEY: المفتاح العام (Anon/Public Key)
+    # يبدأ بـ sb_publishable_ أو eyJh
     SUPABASE_PUBLIC_KEY: Optional[SecretStr] = Field(
         default=None,
-        description="Supabase publishable key (starts with sb_publishable_)"
+        description="Supabase public key (starts with sb_publishable_ or eyJh)"
     )
     
-    # 4. SUPABASE_SECRET_KEY: المفتاح السري الجديد
+    # 4. SUPABASE_SECRET_KEY: المفتاح السري (Service Role/Secret Key)
+    # يبدأ بـ sb_secret_ أو eyJh
     SUPABASE_SECRET_KEY: Optional[SecretStr] = Field(
         default=None,
-        description="Supabase secret key for server-side (starts with sb_secret_)"
-    )
-    
-    # ============================================
-    # SUPABASE - المفاتيح القديمة (Legacy) للتوافق
-    # ============================================
-    SUPABASE_LEGACY_PUBLIC_KEY: Optional[SecretStr] = Field(
-        default=None,
-        description="[Legacy] Supabase anon key (deprecated, use SUPABASE_PUBLIC_KEY)"
-    )
-    SUPABASE_LEGACY_SECRET_KEY: Optional[SecretStr] = Field(
-        default=None,
-        description="[Legacy] Supabase service_role key (deprecated, use SUPABASE_SECRET_KEY)"
+        description="Supabase secret key for server-side (starts with sb_secret_ or eyJh)"
     )
     
     # 5. SUPABASE_DB_SCHEMA: مخطط قاعدة البيانات
@@ -119,27 +109,7 @@ class Settings(BaseSettings):
     
     @property
     def supabase_configured(self) -> bool:
-        """Check if Supabase is properly configured with new keys"""
-        # التحقق من المفاتيح الجديدة
-        has_public_key = bool(
-            self.SUPABASE_PUBLIC_KEY and 
-            self.SUPABASE_PUBLIC_KEY.get_secret_value() not in [None, "", "your-supabase-public-key"]
-        )
-        has_secret_key = bool(
-            self.SUPABASE_SECRET_KEY and 
-            self.SUPABASE_SECRET_KEY.get_secret_value() not in [None, "", "your-supabase-secret-key"]
-        )
-        
-        # التحقق من المفاتيح القديمة كاحتياطي
-        has_legacy_public = bool(
-            self.SUPABASE_LEGACY_PUBLIC_KEY and 
-            self.SUPABASE_LEGACY_PUBLIC_KEY.get_secret_value() not in [None, "", "your-supabase-legacy-public-key"]
-        )
-        has_legacy_secret = bool(
-            self.SUPABASE_LEGACY_SECRET_KEY and 
-            self.SUPABASE_LEGACY_SECRET_KEY.get_secret_value() not in [None, "", "your-supabase-legacy-secret-key"]
-        )
-        
+        """Check if Supabase is properly configured with modern keys ONLY"""
         has_url = bool(
             self.SUPABASE_URL and 
             self.SUPABASE_URL not in [None, "", "https://your-project.supabase.co"]
@@ -150,50 +120,52 @@ class Settings(BaseSettings):
             self.SUPABASE_DIRECT_URL not in [None, "", "postgresql://postgres:password@db.project.supabase.co:5432/postgres"]
         )
         
-        return (has_url or has_direct_url) and (has_public_key or has_secret_key or has_legacy_public or has_legacy_secret)
+        # التحقق من المفتاح العام
+        public_key_value = self.SUPABASE_PUBLIC_KEY.get_secret_value() if self.SUPABASE_PUBLIC_KEY else None
+        has_public_key = bool(
+            public_key_value and 
+            public_key_value not in [None, "", "your-supabase-public-key", "your-supabase-anon-key"]
+        )
+        
+        # التحقق من المفتاح السري
+        secret_key_value = self.SUPABASE_SECRET_KEY.get_secret_value() if self.SUPABASE_SECRET_KEY else None
+        has_secret_key = bool(
+            secret_key_value and 
+            secret_key_value not in [None, "", "your-supabase-secret-key", "your-supabase-service-role-key"]
+        )
+        
+        return (has_url or has_direct_url) and (has_public_key or has_secret_key)
     
     @property
     def supabase_public_key_value(self) -> Optional[str]:
-        """Get the public key value (prefer new, fallback to legacy)"""
+        """Get the public key value"""
         if self.SUPABASE_PUBLIC_KEY:
             return self.SUPABASE_PUBLIC_KEY.get_secret_value()
-        elif self.SUPABASE_LEGACY_PUBLIC_KEY:
-            warnings.warn(
-                "Using legacy public key. Please migrate to SUPABASE_PUBLIC_KEY.",
-                DeprecationWarning
-            )
-            return self.SUPABASE_LEGACY_PUBLIC_KEY.get_secret_value()
         return None
     
     @property
     def supabase_secret_key_value(self) -> Optional[str]:
-        """Get the secret key value (prefer new, fallback to legacy)"""
+        """Get the secret key value"""
         if self.SUPABASE_SECRET_KEY:
             return self.SUPABASE_SECRET_KEY.get_secret_value()
-        elif self.SUPABASE_LEGACY_SECRET_KEY:
-            warnings.warn(
-                "Using legacy secret key. Please migrate to SUPABASE_SECRET_KEY.",
-                DeprecationWarning
-            )
-            return self.SUPABASE_LEGACY_SECRET_KEY.get_secret_value()
         return None
 
     # ============================================
-    # POSTGRESQL DATABASE (كلمة مرور قاعدة البيانات)
+    # POSTGRESQL DATABASE
     # ============================================
     POSTGRES_HOST: str = "localhost"
     POSTGRES_PORT: int = 5432
     POSTGRES_USER: str = "postgres"
     POSTGRES_PASSWORD: str = Field(
         default="postgres",
-        description="PostgreSQL database password (for Supabase connection)"
+        description="PostgreSQL database password"
     )
     POSTGRES_DB: str = "postgres"
     POSTGRES_SSL_MODE: str = "prefer"
     
     @property
     def POSTGRES_URL(self) -> str:
-        """Construct PostgreSQL connection URL (for local development)"""
+        """Construct PostgreSQL connection URL"""
         ssl_param = f"?sslmode={self.POSTGRES_SSL_MODE}" if self.POSTGRES_SSL_MODE else ""
         return f"postgresql+asyncpg://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}{ssl_param}"
     
@@ -342,20 +314,24 @@ class Settings(BaseSettings):
 
     @field_validator("SUPABASE_PUBLIC_KEY")
     def validate_supabase_public_key(cls, v: Optional[SecretStr]) -> Optional[SecretStr]:
-        if v and v.get_secret_value() == "your-supabase-public-key":
-            warnings.warn(
-                "SUPABASE_PUBLIC_KEY is set to default value! Please update it.",
-                UserWarning
-            )
+        if v:
+            value = v.get_secret_value()
+            if value in ["your-supabase-public-key", "your-supabase-anon-key"]:
+                warnings.warn(
+                    "SUPABASE_PUBLIC_KEY is set to default value! Please update it.",
+                    UserWarning
+                )
         return v
 
     @field_validator("SUPABASE_SECRET_KEY")
     def validate_supabase_secret_key(cls, v: Optional[SecretStr]) -> Optional[SecretStr]:
-        if v and v.get_secret_value() == "your-supabase-secret-key":
-            warnings.warn(
-                "SUPABASE_SECRET_KEY is set to default value! Please update it.",
-                UserWarning
-            )
+        if v:
+            value = v.get_secret_value()
+            if value in ["your-supabase-secret-key", "your-supabase-service-role-key"]:
+                warnings.warn(
+                    "SUPABASE_SECRET_KEY is set to default value! Please update it.",
+                    UserWarning
+                )
         return v
 
     @field_validator("POSTGRES_PASSWORD")
@@ -434,7 +410,7 @@ def validate_config() -> bool:
             if not settings.supabase_configured:
                 raise ValueError(
                     "Supabase must be configured for production! "
-                    "Set SUPABASE_URL or SUPABASE_DIRECT_URL and at least one key."
+                    "Set SUPABASE_URL or SUPABASE_DIRECT_URL and both PUBLIC and SECRET keys."
                 )
         
         # Validate based on database type
