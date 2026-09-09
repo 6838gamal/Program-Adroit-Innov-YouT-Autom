@@ -22,7 +22,7 @@ class SupabaseStorageAdapter(StoragePort):
         self.supabase_url = settings.SUPABASE_URL
         self.public_key = settings.SUPABASE_PUBLIC_KEY      # For read operations
         self.secret_key = settings.SUPABASE_SECRET_KEY      # For write/admin operations
-        self.bucket_name = settings.SUPABASE_BUCKET_NAME
+        self.bucket_name = settings.SUPABASE_BUCKET
         
         # Validate configuration
         if not self.supabase_url:
