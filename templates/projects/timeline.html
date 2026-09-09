@@ -19,6 +19,8 @@
         --text-light: #f1f5f9;
     }
 
+    * { box-sizing: border-box; }
+
     .editor-container {
         display: flex;
         flex-direction: column;
@@ -50,10 +52,6 @@
         display: block;
         background: #000;
         object-fit: contain;
-    }
-
-    .preview-area video {
-        display: none;
     }
 
     /* ====== شريط أدوات المعاينة العلوي ====== */
@@ -111,11 +109,8 @@
         font-weight: bold;
         font-size: 14px;
     }
-
-    .playback-info .time {
-        color: #94a3b8;
-        font-size: 12px;
-    }
+    .playback-info .time { color: #94a3b8; font-size: 12px; }
+    .playback-info .layer-info { color: #64748b; font-size: 10px; }
 
     /* ====== شريط التحكم السفلي ====== */
     .controls-bar {
@@ -137,10 +132,7 @@
         padding: 0 8px;
         border-right: 1px solid var(--border-color);
     }
-
-    .controls-bar .control-group:last-child {
-        border-right: none;
-    }
+    .controls-bar .control-group:last-child { border-right: none; }
 
     .controls-bar button {
         background: none;
@@ -158,14 +150,8 @@
         height: 32px;
     }
 
-    .controls-bar button:hover {
-        background: rgba(255,255,255,0.1);
-    }
-
-    .controls-bar button.active {
-        background: var(--primary);
-        color: white;
-    }
+    .controls-bar button:hover { background: rgba(255,255,255,0.1); }
+    .controls-bar button.active { background: var(--primary); color: white; }
 
     .controls-bar .time-display {
         color: var(--text-muted);
@@ -214,10 +200,7 @@
         outline: none;
         padding: 2px 4px;
     }
-
-    .controls-bar .speed-control select option {
-        background: var(--bg-dark);
-    }
+    .controls-bar .speed-control select option { background: var(--bg-dark); }
 
     /* ====== شريط الأدوات ====== */
     .toolbar {
@@ -238,10 +221,7 @@
         padding: 0 8px;
         border-right: 1px solid var(--border-color);
     }
-
-    .toolbar-group:last-child {
-        border-right: none;
-    }
+    .toolbar-group:last-child { border-right: none; }
 
     .tool-btn {
         background: transparent;
@@ -263,20 +243,10 @@
         border-color: var(--border-color);
         color: white;
     }
+    .tool-btn.active { background: var(--primary); color: white; border-color: var(--primary); }
+    .tool-btn.danger:hover { background: rgba(239,68,68,0.2); border-color: #ef4444; color: #ef4444; }
 
-    .tool-btn.active {
-        background: var(--primary);
-        color: white;
-        border-color: var(--primary);
-    }
-
-    .tool-btn.danger:hover {
-        background: rgba(239,68,68,0.2);
-        border-color: #ef4444;
-        color: #ef4444;
-    }
-
-    /* ====== الطبقات - محسّن ====== */
+    /* ====== الطبقات ====== */
     .layers-panel {
         display: flex;
         flex-direction: column;
@@ -286,19 +256,9 @@
         max-height: 180px;
         overflow-y: auto;
     }
-
-    .layers-panel::-webkit-scrollbar {
-        width: 4px;
-    }
-
-    .layers-panel::-webkit-scrollbar-track {
-        background: var(--bg-dark);
-    }
-
-    .layers-panel::-webkit-scrollbar-thumb {
-        background: var(--border-color);
-        border-radius: 4px;
-    }
+    .layers-panel::-webkit-scrollbar { width: 4px; }
+    .layers-panel::-webkit-scrollbar-track { background: var(--bg-dark); }
+    .layers-panel::-webkit-scrollbar-thumb { background: var(--border-color); border-radius: 4px; }
 
     .layers-header {
         display: flex;
@@ -357,14 +317,8 @@
         min-height: var(--layer-height);
     }
 
-    .layer-item:hover {
-        background: rgba(255,255,255,0.05);
-    }
-
-    .layer-item.active {
-        background: rgba(37,99,235,0.15);
-        border-left: 3px solid var(--primary);
-    }
+    .layer-item:hover { background: rgba(255,255,255,0.05); }
+    .layer-item.active { background: rgba(37,99,235,0.15); border-left: 3px solid var(--primary); }
 
     .layer-item .layer-vis {
         cursor: pointer;
@@ -374,15 +328,8 @@
         padding: 2px 4px;
         border-radius: 4px;
     }
-
-    .layer-item .layer-vis:hover {
-        opacity: 1;
-        background: rgba(255,255,255,0.05);
-    }
-
-    .layer-item .layer-vis.hidden {
-        opacity: 0.2;
-    }
+    .layer-item .layer-vis:hover { opacity: 1; background: rgba(255,255,255,0.05); }
+    .layer-item .layer-vis.hidden { opacity: 0.2; }
 
     .layer-item .layer-label {
         flex: 1;
@@ -417,16 +364,8 @@
         font-size: 12px;
         transition: all 0.2s;
     }
-
-    .layer-item .layer-actions button:hover {
-        background: rgba(255,255,255,0.05);
-        color: white;
-    }
-
-    .layer-item .layer-actions button.danger:hover {
-        background: rgba(239,68,68,0.2);
-        color: #ef4444;
-    }
+    .layer-item .layer-actions button:hover { background: rgba(255,255,255,0.05); color: white; }
+    .layer-item .layer-actions button.danger:hover { background: rgba(239,68,68,0.2); color: #ef4444; }
 
     .layer-item .layer-drag-handle {
         cursor: grab;
@@ -435,10 +374,7 @@
         padding: 0 4px;
         font-size: 14px;
     }
-
-    .layer-item .layer-drag-handle:hover {
-        opacity: 0.8;
-    }
+    .layer-item .layer-drag-handle:hover { opacity: 0.8; }
 
     /* ====== التايم لاين ====== */
     .timeline-area {
@@ -508,11 +444,7 @@
         font-family: monospace;
         position: relative;
     }
-
-    .ruler-mark.major {
-        border-left-color: #64748b;
-    }
-
+    .ruler-mark.major { border-left-color: #64748b; }
     .ruler-mark .label {
         position: absolute;
         top: 2px;
@@ -527,10 +459,7 @@
         border-bottom: 1px solid var(--border-color);
         position: relative;
     }
-
-    .track-row:last-child {
-        border-bottom: none;
-    }
+    .track-row:last-child { border-bottom: none; }
 
     .track-label {
         width: 60px;
@@ -548,10 +477,7 @@
         line-height: 1.2;
         text-align: center;
     }
-
-    .track-label .track-icon {
-        font-size: 14px;
-    }
+    .track-label .track-icon { font-size: 14px; }
 
     .track-body {
         flex: 1;
@@ -646,51 +572,17 @@
         opacity: 0;
         transition: opacity 0.2s;
     }
-
-    .clip-block:hover .clip-delete-btn {
-        opacity: 1;
-    }
-
-    .clip-block .clip-delete-btn:hover {
-        background: #ef4444;
-    }
+    .clip-block:hover .clip-delete-btn { opacity: 1; }
+    .clip-block .clip-delete-btn:hover { background: #ef4444; }
 
     /* ====== ألوان أنواع الكليبات ====== */
-    .clip-type-video {
-        background: rgba(37,99,235,0.35);
-        border-color: rgba(37,99,235,0.6);
-        color: #60a5fa;
-    }
-    .clip-type-audio {
-        background: rgba(5,150,105,0.35);
-        border-color: rgba(5,150,105,0.6);
-        color: #34d399;
-    }
-    .clip-type-image {
-        background: rgba(245,158,11,0.35);
-        border-color: rgba(245,158,11,0.6);
-        color: #fbbf24;
-    }
-    .clip-type-text {
-        background: rgba(217,119,6,0.35);
-        border-color: rgba(217,119,6,0.6);
-        color: #f59e0b;
-    }
-    .clip-type-music {
-        background: rgba(124,58,237,0.35);
-        border-color: rgba(124,58,237,0.6);
-        color: #a78bfa;
-    }
-    .clip-type-subtitle {
-        background: rgba(71,85,105,0.35);
-        border-color: rgba(71,85,105,0.6);
-        color: #94a3b8;
-    }
-    .clip-type-effect {
-        background: rgba(236,72,153,0.35);
-        border-color: rgba(236,72,153,0.6);
-        color: #f472b6;
-    }
+    .clip-type-video { background: rgba(37,99,235,0.35); border-color: rgba(37,99,235,0.6); color: #60a5fa; }
+    .clip-type-audio { background: rgba(5,150,105,0.35); border-color: rgba(5,150,105,0.6); color: #34d399; }
+    .clip-type-image { background: rgba(245,158,11,0.35); border-color: rgba(245,158,11,0.6); color: #fbbf24; }
+    .clip-type-text { background: rgba(217,119,6,0.35); border-color: rgba(217,119,6,0.6); color: #f59e0b; }
+    .clip-type-music { background: rgba(124,58,237,0.35); border-color: rgba(124,58,237,0.6); color: #a78bfa; }
+    .clip-type-subtitle { background: rgba(71,85,105,0.35); border-color: rgba(71,85,105,0.6); color: #94a3b8; }
+    .clip-type-effect { background: rgba(236,72,153,0.35); border-color: rgba(236,72,153,0.6); color: #f472b6; }
 
     .playhead {
         position: absolute;
@@ -702,7 +594,6 @@
         pointer-events: none;
         transition: left 0.05s linear;
     }
-
     .playhead::before {
         content: '';
         position: absolute;
@@ -712,14 +603,8 @@
         border-right: 6px solid transparent;
         border-top: 8px solid #ef4444;
     }
-
-    .playhead.active {
-        background: #22c55e;
-    }
-
-    .playhead.active::before {
-        border-top-color: #22c55e;
-    }
+    .playhead.active { background: #22c55e; }
+    .playhead.active::before { border-top-color: #22c55e; }
 
     .drop-zone {
         border: 2px dashed var(--border-color);
@@ -731,15 +616,8 @@
         margin: 8px;
         cursor: pointer;
     }
-
-    .drop-zone.dragover {
-        border-color: var(--primary);
-        background: rgba(37,99,235,0.05);
-    }
-
-    .drop-zone input[type="file"] {
-        display: none;
-    }
+    .drop-zone.dragover { border-color: var(--primary); background: rgba(37,99,235,0.05); }
+    .drop-zone input[type="file"] { display: none; }
 
     .status-bar {
         display: flex;
@@ -761,10 +639,7 @@
         flex-wrap: wrap;
     }
 
-    .status-bar .status-info .highlight {
-        color: #fbbf24;
-    }
-
+    .status-bar .status-info .highlight { color: #fbbf24; }
     .status-bar .status-info .clip-indicator {
         background: rgba(37,99,235,0.2);
         padding: 1px 10px;
@@ -789,7 +664,6 @@
         z-index: 100;
         transition: all 0.3s;
     }
-
     .trash-zone.active {
         display: block;
         animation: pulse-trash 1s infinite;
@@ -813,15 +687,8 @@
         align-items: center;
         gap: 6px;
     }
-
-    .record-btn:hover {
-        background: #dc2626;
-        transform: scale(1.02);
-    }
-
-    .record-btn.recording {
-        animation: pulse-record 1s infinite;
-    }
+    .record-btn:hover { background: #dc2626; transform: scale(1.02); }
+    .record-btn.recording { animation: pulse-record 1s infinite; }
 
     @keyframes pulse-record {
         0%, 100% { opacity: 1; }
@@ -841,16 +708,8 @@
         flex-shrink: 0;
         align-items: center;
     }
-
-    .media-gallery::-webkit-scrollbar {
-        width: 3px;
-        height: 3px;
-    }
-
-    .media-gallery::-webkit-scrollbar-thumb {
-        background: var(--border-color);
-        border-radius: 4px;
-    }
+    .media-gallery::-webkit-scrollbar { width: 3px; height: 3px; }
+    .media-gallery::-webkit-scrollbar-thumb { background: var(--border-color); border-radius: 4px; }
 
     .media-item {
         display: flex;
@@ -914,10 +773,7 @@
         transition: color 0.2s;
         z-index: 2;
     }
-
-    .media-item .media-remove:hover {
-        color: #ef4444;
-    }
+    .media-item .media-remove:hover { color: #ef4444; }
 
     .media-item .media-badge {
         position: absolute;
@@ -947,10 +803,7 @@
         flex-shrink: 0;
     }
 
-    /* ====== Audio عنصر مخفي ====== */
-    #audioPlayer {
-        display: none;
-    }
+    #audioPlayer { display: none; }
 
     @media (max-width: 768px) {
         .editor-container { height: calc(100vh - 140px); }
@@ -1015,10 +868,7 @@
 <div class="editor-container">
     <!-- ====== منطقة المعاينة ====== -->
     <div class="preview-area" id="previewArea">
-        <!-- Canvas للمعاينة -->
         <canvas id="previewCanvas"></canvas>
-
-        <!-- عنصر الصوت المخفي -->
         <audio id="audioPlayer"></audio>
 
         <div class="preview-toolbar">
@@ -1031,6 +881,7 @@
         <div class="playback-info" id="playbackInfo">
             <div class="time" id="playbackTime">00:00:00</div>
             <div class="current-clip" id="currentClipName">-</div>
+            <div class="layer-info" id="playbackLayer">الطبقة: -</div>
         </div>
     </div>
 
@@ -1216,34 +1067,44 @@
 {% block scripts %}
 <script>
 // ============================================================
-//  DATA - إصلاح مشكلة حفظ واستعادة الملفات
+//  DATA - هيكل البيانات المحسن
 // ============================================================
 const scenes = {{ scenes_json | safe }};
 const projectId = "{{ project.id }}";
-let clips = [];
-let layers = [];
-let mediaFiles = [];
+
+// هيكل البيانات الرئيسي
+let projectData = {
+    clips: [],          // جميع المقاطع
+    layers: [],         // الطبقات
+    mediaFiles: [],     // الملفات المستوردة
+    totalDuration: 30,
+    cellWidth: 80
+};
+
+// متغيرات التشغيل
 let selectedClipId = null;
 let selectedLayerIndex = 0;
-let cellWidth = 80;
-let totalDuration = 30;
 let currentTime = 0;
 let isPlaying = false;
 let playInterval = null;
-let selectedTool = 'select';
-let clipIdCounter = 0;
-let isRecording = false;
-let mediaRecorder = null;
-let recordedChunks = [];
 let playbackSpeed = 1;
 let isMuted = false;
 let isLooping = false;
+let isRecording = false;
+let mediaRecorder = null;
+let recordedChunks = [];
+let clipIdCounter = 0;
 let currentClipAtTime = null;
+
+// عناصر DOM
 let canvas = null;
 let ctx = null;
 let audioPlayer = null;
 let isCanvasReady = false;
 
+// ============================================================
+//  CONSTANTS
+// ============================================================
 const COLORS = {
     video: '#2563eb',
     audio: '#059669',
@@ -1265,18 +1126,22 @@ const TYPE_ICONS = {
 };
 
 // ============================================================
-//  INITIALIZE
+//  INITIALIZE - تهيئة المحرر
 // ============================================================
 document.addEventListener('DOMContentLoaded', function() {
-    // إعداد Canvas
     canvas = document.getElementById('previewCanvas');
     ctx = canvas.getContext('2d');
     audioPlayer = document.getElementById('audioPlayer');
     
-    // ضبط حجم Canvas
     resizeCanvas();
     window.addEventListener('resize', resizeCanvas);
     
+    // تهيئة الطبقات
+    if (projectData.layers.length === 0) {
+        projectData.layers.push({ name: 'طبقة 1', visible: true, locked: false });
+    }
+    
+    // تهيئة المقاطع من المشاهد إذا وجدت
     if (scenes && scenes.length > 0) {
         scenes.forEach((scene, i) => {
             const clip = {
@@ -1291,15 +1156,11 @@ document.addEventListener('DOMContentLoaded', function() {
                 icon: '🎬',
                 metadata: { scene_id: scene.id }
             };
-            clips.push(clip);
+            projectData.clips.push(clip);
         });
-        totalDuration = Math.max(...clips.map(c => c.start + c.duration), 10);
+        projectData.totalDuration = Math.max(...projectData.clips.map(c => c.start + c.duration), 10);
     }
-
-    if (layers.length === 0) {
-        layers.push({ name: 'طبقة 1', visible: true, locked: false });
-    }
-
+    
     renderLayers();
     renderTimeline();
     updateStatus();
@@ -1307,14 +1168,13 @@ document.addEventListener('DOMContentLoaded', function() {
     setupDragDrop();
     setupKeyboardShortcuts();
     loadProjectData();
-    renderPreview(0);
+    renderPreview(currentTime);
 });
 
 function resizeCanvas() {
     const container = document.getElementById('previewArea');
     if (!container || !canvas) return;
     const rect = container.getBoundingClientRect();
-    // استخدام نسبة 16:9
     const w = rect.width || 800;
     const h = Math.min(rect.height || 400, w * 9 / 16);
     canvas.width = w;
@@ -1326,7 +1186,7 @@ function resizeCanvas() {
 }
 
 // ============================================================
-//  RENDER PREVIEW - باستخدام Canvas
+//  RENDER PREVIEW - عرض المعاينة على Canvas
 // ============================================================
 function renderPreview(time) {
     if (!isCanvasReady || !ctx) return;
@@ -1338,9 +1198,9 @@ function renderPreview(time) {
     ctx.fillStyle = '#0a0a15';
     ctx.fillRect(0, 0, w, h);
     
-    // الحصول على جميع المقاطع النشطة في هذا الوقت (طبقات متعددة)
-    const activeClips = clips.filter(c => {
-        const layer = layers[c.layer];
+    // الحصول على جميع المقاطع النشطة في هذا الوقت
+    const activeClips = projectData.clips.filter(c => {
+        const layer = projectData.layers[c.layer];
         return layer && layer.visible && 
                time >= c.start && 
                time < c.start + c.duration;
@@ -1350,76 +1210,89 @@ function renderPreview(time) {
     activeClips.sort((a, b) => a.layer - b.layer);
     
     if (activeClips.length > 0) {
-        // رسم كل مقطع نشط على حدة
+        // رسم كل مقطع نشط
+        const count = activeClips.length;
         activeClips.forEach((clip, index) => {
             const progress = (time - clip.start) / clip.duration;
             const x = w * 0.5;
-            const y = h * 0.5 + (index - (activeClips.length - 1) / 2) * 60;
+            const y = h * 0.5 + (index - (count - 1) / 2) * 55;
             
-            // حجم المربع
-            const rectW = Math.min(120, w * 0.15);
-            const rectH = 60;
+            const rectW = Math.min(140, w * 0.18);
+            const rectH = 50;
             
-            // رسم خلفية المقطع
-            ctx.fillStyle = clip.color + '30';
+            // خلفية المقطع مع ظل
+            ctx.shadowColor = clip.color + '40';
+            ctx.shadowBlur = 25;
+            ctx.fillStyle = clip.color + '25';
             ctx.strokeStyle = clip.color;
             ctx.lineWidth = 2;
-            ctx.shadowColor = clip.color + '40';
-            ctx.shadowBlur = 20;
-            ctx.fillRect(x - rectW/2, y - rectH/2, rectW, rectH);
+            
+            // مستطيل دائري الزوايا
+            const r = 8;
+            ctx.beginPath();
+            ctx.moveTo(x - rectW/2 + r, y - rectH/2);
+            ctx.lineTo(x + rectW/2 - r, y - rectH/2);
+            ctx.quadraticCurveTo(x + rectW/2, y - rectH/2, x + rectW/2, y - rectH/2 + r);
+            ctx.lineTo(x + rectW/2, y + rectH/2 - r);
+            ctx.quadraticCurveTo(x + rectW/2, y + rectH/2, x + rectW/2 - r, y + rectH/2);
+            ctx.lineTo(x - rectW/2 + r, y + rectH/2);
+            ctx.quadraticCurveTo(x - rectW/2, y + rectH/2, x - rectW/2, y + rectH/2 - r);
+            ctx.lineTo(x - rectW/2, y - rectH/2 + r);
+            ctx.quadraticCurveTo(x - rectW/2, y - rectH/2, x - rectW/2 + r, y - rectH/2);
+            ctx.closePath();
+            ctx.fill();
             ctx.shadowBlur = 0;
-            ctx.strokeRect(x - rectW/2, y - rectH/2, rectW, rectH);
+            ctx.stroke();
             
             // أيقونة
-            ctx.font = '28px sans-serif';
+            ctx.font = '26px sans-serif';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
             ctx.fillStyle = 'white';
-            ctx.fillText(clip.icon || '📄', x, y - 10);
+            ctx.fillText(clip.icon || '📄', x, y - 8);
             
-            // عنوان
-            ctx.font = '12px sans-serif';
+            // العنوان
+            ctx.font = '11px sans-serif';
             ctx.fillStyle = '#f1f5f9';
-            ctx.fillText(clip.title || 'مقطع', x, y + 30);
+            ctx.fillText(clip.title || 'مقطع', x, y + 22);
             
-            // نوع
-            ctx.font = '10px sans-serif';
+            // نوع المقطع
+            ctx.font = '9px sans-serif';
             ctx.fillStyle = '#94a3b8';
-            ctx.fillText(clip.type, x, y + 48);
+            ctx.fillText(clip.type + ' | ' + formatTime(clip.duration), x, y + 38);
+            
+            // رقم الطبقة
+            ctx.font = '8px sans-serif';
+            ctx.fillStyle = '#64748b';
+            ctx.fillText('طبقة ' + (clip.layer + 1), x - rectW/2 + 4, y - rectH/2 + 10);
             
             // شريط التقدم
-            ctx.strokeStyle = 'rgba(255,255,255,0.2)';
-            ctx.lineWidth = 2;
-            const barX = x - 30;
-            const barY = y + 35;
-            const barW = 60;
+            const barX = x - 35;
+            const barY = y + 28;
+            const barW = 70;
+            ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+            ctx.lineWidth = 3;
             ctx.beginPath();
             ctx.roundRect(barX, barY, barW, 4, 2);
             ctx.stroke();
             
-            // التقدم الفعلي
             ctx.strokeStyle = clip.color;
-            ctx.lineWidth = 2;
+            ctx.lineWidth = 3;
             ctx.beginPath();
-            ctx.roundRect(barX, barY, barW * progress, 4, 2);
+            ctx.roundRect(barX, barY, Math.max(barW * progress, 2), 4, 2);
             ctx.stroke();
-            
-            // وقت المقطع
-            ctx.font = '9px monospace';
-            ctx.fillStyle = '#64748b';
-            ctx.textAlign = 'center';
-            ctx.fillText(formatTime(clip.start) + ' → ' + formatTime(clip.start + clip.duration), x, y + 58);
         });
         
         // تحديث معلومات التشغيل
         const mainClip = activeClips[0];
         currentClipAtTime = mainClip;
         document.getElementById('currentClipName').textContent = mainClip.title || 'مقطع';
+        document.getElementById('playbackLayer').textContent = 'الطبقة: ' + (mainClip.layer + 1);
         document.getElementById('playbackInfo').style.display = 'block';
         document.getElementById('playbackTime').textContent = formatTime(time);
-        document.getElementById('statusCurrentClip').textContent = `▶️ ${mainClip.title || 'مقطع'}`;
+        document.getElementById('statusCurrentClip').textContent = '▶️ ' + (mainClip.title || 'مقطع');
         
-        // مزامنة الصوت مع الوقت
+        // مزامنة الصوت
         syncAudio(time);
         
     } else {
@@ -1436,23 +1309,35 @@ function renderPreview(time) {
         document.getElementById('playbackInfo').style.display = 'none';
         document.getElementById('statusCurrentClip').textContent = isPlaying ? '⏸️ تشغيل' : '⏸️ متوقف';
         currentClipAtTime = null;
+        
+        // إيقاف الصوت
+        if (audioPlayer && !audioPlayer.paused) {
+            audioPlayer.pause();
+        }
     }
     
     // معلومات الوقت على Canvas
     ctx.fillStyle = 'rgba(0,0,0,0.6)';
-    ctx.fillRect(10, 10, 150, 24);
-    ctx.fillStyle = 'rgba(255,255,255,0.6)';
+    ctx.fillRect(10, 10, 180, 26);
+    ctx.fillStyle = 'rgba(255,255,255,0.7)';
     ctx.font = '12px monospace';
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
-    ctx.fillText(`⏱ ${formatTime(time)} / ${formatTime(totalDuration)}`, 16, 23);
+    ctx.fillText(`⏱ ${formatTime(time)} / ${formatTime(projectData.totalDuration)}`, 16, 24);
+    
+    // معلومات السرعة
+    ctx.fillStyle = 'rgba(0,0,0,0.4)';
+    ctx.fillRect(10, 40, 70, 20);
+    ctx.fillStyle = 'rgba(255,255,255,0.4)';
+    ctx.font = '10px monospace';
+    ctx.fillText(`⚡ ${playbackSpeed}x`, 16, 51);
     
     // تحديث شريط التقدم
     document.getElementById('currentTimeDisplay').textContent = formatTime(time);
-    document.getElementById('totalTimeDisplay').textContent = formatTime(totalDuration);
+    document.getElementById('totalTimeDisplay').textContent = formatTime(projectData.totalDuration);
     const slider = document.getElementById('seekSlider');
-    if (totalDuration > 0) {
-        slider.value = (time / totalDuration) * 100;
+    if (projectData.totalDuration > 0) {
+        slider.value = (time / projectData.totalDuration) * 100;
     }
 }
 
@@ -1463,8 +1348,8 @@ function syncAudio(time) {
     if (!audioPlayer) return;
     
     // البحث عن مقاطع الصوت النشطة
-    const activeAudio = clips.filter(c => {
-        const layer = layers[c.layer];
+    const activeAudio = projectData.clips.filter(c => {
+        const layer = projectData.layers[c.layer];
         return layer && layer.visible && 
                c.type === 'audio' &&
                time >= c.start && 
@@ -1475,28 +1360,41 @@ function syncAudio(time) {
         const audioClip = activeAudio[0];
         const audioSrc = audioClip.content;
         
-        // إذا كان المصدر مختلفاً أو الصوت متوقفاً
+        // التحقق من صحة المصدر
+        if (!audioSrc || audioSrc === 'blob') {
+            // محاولة استعادة المصدر من mediaFiles
+            if (audioClip.metadata && audioClip.metadata.file) {
+                const mediaFile = projectData.mediaFiles.find(f => f.name === audioClip.metadata.file);
+                if (mediaFile && mediaFile.url) {
+                    audioClip.content = mediaFile.url;
+                }
+            }
+            return;
+        }
+        
+        // إذا كان المصدر مختلفاً
         if (audioPlayer.src !== audioSrc) {
             audioPlayer.src = audioSrc;
             audioPlayer.load();
         }
         
         // ضبط الوقت المحلي للمقطع الصوتي
-        const localTime = time - audioClip.start;
-        if (Math.abs(audioPlayer.currentTime - localTime) > 0.1) {
+        const localTime = Math.max(0, time - audioClip.start);
+        if (audioPlayer.readyState >= 2 && Math.abs(audioPlayer.currentTime - localTime) > 0.15) {
             audioPlayer.currentTime = localTime;
         }
         
         // تشغيل الصوت إذا كان التشغيل العام مفعلاً
-        if (isPlaying && !audioPlayer.paused === false) {
+        if (isPlaying && audioPlayer.paused) {
             audioPlayer.play().catch(() => {});
+        } else if (!isPlaying && !audioPlayer.paused) {
+            audioPlayer.pause();
         }
         
-        if (isMuted) {
-            audioPlayer.muted = true;
-        } else {
-            audioPlayer.muted = false;
-        }
+        // تطبيق الكتم
+        audioPlayer.muted = isMuted;
+        audioPlayer.playbackRate = playbackSpeed;
+        
     } else {
         // إيقاف الصوت إذا لم يكن هناك مقاطع صوتية نشطة
         if (!audioPlayer.paused) {
@@ -1506,7 +1404,7 @@ function syncAudio(time) {
 }
 
 // ============================================================
-//  MEDIA GALLERY
+//  MEDIA GALLERY - معرض الوسائط
 // ============================================================
 function renderMediaGallery() {
     const gallery = document.getElementById('mediaGallery');
@@ -1516,7 +1414,7 @@ function renderMediaGallery() {
     const items = gallery.querySelectorAll('.media-item');
     items.forEach(item => item.remove());
     
-    if (mediaFiles.length === 0) {
+    if (projectData.mediaFiles.length === 0) {
         if (!empty) {
             const newEmpty = document.createElement('span');
             newEmpty.id = 'mediaGalleryEmpty';
@@ -1531,7 +1429,7 @@ function renderMediaGallery() {
     
     if (empty) empty.style.display = 'none';
     
-    mediaFiles.forEach((file, index) => {
+    projectData.mediaFiles.forEach((file, index) => {
         const item = document.createElement('div');
         item.className = 'media-item';
         item.dataset.index = index;
@@ -1548,7 +1446,9 @@ function renderMediaGallery() {
             thumbContent = '📄';
         }
         
-        const clipExists = clips.some(c => c.metadata && c.metadata.file === file.name);
+        const clipExists = projectData.clips.some(c => 
+            c.metadata && c.metadata.file === file.name
+        );
         
         item.innerHTML = `
             <div class="media-thumb">${thumbContent}</div>
@@ -1565,11 +1465,11 @@ function renderMediaGallery() {
         gallery.appendChild(item);
     });
     
-    document.getElementById('statusMedia').textContent = `${mediaFiles.length} ملف`;
+    document.getElementById('statusMedia').textContent = `${projectData.mediaFiles.length} ملف`;
 }
 
 function addMediaToTimeline(index) {
-    const file = mediaFiles[index];
+    const file = projectData.mediaFiles[index];
     if (!file) return;
     
     // حساب وقت البداية بناءً على الطبقة المحددة
@@ -1578,6 +1478,10 @@ function addMediaToTimeline(index) {
     const type = file.type.split('/')[0];
     const duration = type === 'image' ? 3 : (type === 'video' ? 3 : 2);
     
+    // تحقق من وجود الملف في mediaFiles
+    const mediaFile = projectData.mediaFiles.find(f => f.name === file.name);
+    const contentUrl = mediaFile ? mediaFile.url : null;
+    
     const clip = {
         id: clipIdCounter++,
         type: type === 'video' ? 'video' : (type === 'audio' ? 'audio' : 'image'),
@@ -1585,14 +1489,19 @@ function addMediaToTimeline(index) {
         start: startTime,
         duration: duration,
         title: file.name.split('.')[0].slice(0, 20),
-        content: file.url,
+        content: contentUrl,
         color: COLORS[type] || '#666',
         icon: TYPE_ICONS[type] || '📄',
-        metadata: { file: file.name, size: file.size, index: index }
+        metadata: { 
+            file: file.name, 
+            size: file.size, 
+            index: index,
+            type: file.type
+        }
     };
     
-    clips.push(clip);
-    totalDuration = Math.max(totalDuration, clip.start + clip.duration + 1);
+    projectData.clips.push(clip);
+    projectData.totalDuration = Math.max(projectData.totalDuration, clip.start + clip.duration + 1);
     renderTimeline();
     renderMediaGallery();
     updateStatus();
@@ -1601,18 +1510,20 @@ function addMediaToTimeline(index) {
 }
 
 function getLayerEndTime(layerIndex) {
-    const layerClips = clips.filter(c => c.layer === layerIndex);
+    const layerClips = projectData.clips.filter(c => c.layer === layerIndex);
     if (layerClips.length === 0) return 0;
-    const lastClip = layerClips.reduce((max, c) => c.start + c.duration > max.start + max.duration ? c : max);
+    const lastClip = layerClips.reduce((max, c) => 
+        c.start + c.duration > max.start + max.duration ? c : max
+    );
     return lastClip.start + lastClip.duration;
 }
 
 function removeMediaFile(index) {
-    const file = mediaFiles[index];
+    const file = projectData.mediaFiles[index];
     if (file.url && file.url.startsWith('blob:')) {
         URL.revokeObjectURL(file.url);
     }
-    mediaFiles.splice(index, 1);
+    projectData.mediaFiles.splice(index, 1);
     renderMediaGallery();
     updateStatus();
     showToast('🗑️ تم حذف الملف', 'success');
@@ -1620,7 +1531,7 @@ function removeMediaFile(index) {
 
 function addMediaFile(file) {
     const url = URL.createObjectURL(file);
-    mediaFiles.push({
+    projectData.mediaFiles.push({
         name: file.name,
         size: file.size,
         type: file.type,
@@ -1632,18 +1543,18 @@ function addMediaFile(file) {
 }
 
 // ============================================================
-//  LAYERS - محسّن
+//  LAYERS - إدارة الطبقات
 // ============================================================
 function renderLayers() {
     const container = document.getElementById('layersList');
     container.innerHTML = '';
     
-    layers.forEach((layer, index) => {
+    projectData.layers.forEach((layer, index) => {
         const div = document.createElement('div');
         div.className = `layer-item${index === selectedLayerIndex ? ' active' : ''}`;
         div.dataset.index = index;
         
-        const clipCount = clips.filter(c => c.layer === index).length;
+        const clipCount = projectData.clips.filter(c => c.layer === index).length;
         
         div.innerHTML = `
             <span class="layer-drag-handle" title="سحب لإعادة الترتيب">⠿</span>
@@ -1665,29 +1576,29 @@ function renderLayers() {
         container.appendChild(div);
     });
     
-    document.getElementById('layerCount').textContent = layers.length;
-    document.getElementById('statusLayers').textContent = `${layers.length} طبقة`;
+    document.getElementById('layerCount').textContent = projectData.layers.length;
+    document.getElementById('statusLayers').textContent = `${projectData.layers.length} طبقة`;
 }
 
 function addLayer() {
-    const name = prompt('اسم الطبقة الجديدة:', `طبقة ${layers.length + 1}`);
+    const name = prompt('اسم الطبقة الجديدة:', `طبقة ${projectData.layers.length + 1}`);
     if (name && name.trim()) {
-        layers.push({ name: name.trim(), visible: true, locked: false });
+        projectData.layers.push({ name: name.trim(), visible: true, locked: false });
         renderLayers();
-        selectLayer(layers.length - 1);
+        selectLayer(projectData.layers.length - 1);
         saveProjectData();
         showToast(`✅ تم إضافة الطبقة "${name.trim()}"`, 'success');
     }
 }
 
 function deleteLayer(index) {
-    if (layers.length <= 1) {
+    if (projectData.layers.length <= 1) {
         showToast('⚠️ لا يمكن حذف الطبقة الأخيرة', 'warning');
         return;
     }
     
-    const layerName = layers[index].name;
-    const clipCount = clips.filter(c => c.layer === index).length;
+    const layerName = projectData.layers[index].name;
+    const clipCount = projectData.clips.filter(c => c.layer === index).length;
     
     let confirmMsg = `هل تريد حذف الطبقة "${layerName}"؟`;
     if (clipCount > 0) {
@@ -1696,13 +1607,13 @@ function deleteLayer(index) {
     
     if (!confirm(confirmMsg)) return;
     
-    clips = clips.filter(c => c.layer !== index);
-    clips.forEach(c => {
+    projectData.clips = projectData.clips.filter(c => c.layer !== index);
+    projectData.clips.forEach(c => {
         if (c.layer > index) c.layer--;
     });
     
-    layers.splice(index, 1);
-    if (selectedLayerIndex >= layers.length) selectedLayerIndex = layers.length - 1;
+    projectData.layers.splice(index, 1);
+    if (selectedLayerIndex >= projectData.layers.length) selectedLayerIndex = projectData.layers.length - 1;
     
     renderLayers();
     renderTimeline();
@@ -1723,16 +1634,16 @@ function selectLayer(index) {
 }
 
 function toggleLayerVisibility(index) {
-    layers[index].visible = !layers[index].visible;
+    projectData.layers[index].visible = !projectData.layers[index].visible;
     renderLayers();
     renderTimeline();
 }
 
 function renameLayer(index) {
-    const currentName = layers[index].name;
+    const currentName = projectData.layers[index].name;
     const newName = prompt('اسم الطبقة:', currentName);
     if (newName && newName.trim() && newName.trim() !== currentName) {
-        layers[index].name = newName.trim();
+        projectData.layers[index].name = newName.trim();
         renderLayers();
         saveProjectData();
     }
@@ -1741,10 +1652,12 @@ function renameLayer(index) {
 function moveLayer(direction) {
     const index = selectedLayerIndex;
     const newIndex = direction === 'up' ? index - 1 : index + 1;
-    if (newIndex < 0 || newIndex >= layers.length) return;
+    if (newIndex < 0 || newIndex >= projectData.layers.length) return;
     
-    [layers[index], layers[newIndex]] = [layers[newIndex], layers[index]];
-    clips.forEach(c => {
+    [projectData.layers[index], projectData.layers[newIndex]] = 
+    [projectData.layers[newIndex], projectData.layers[index]];
+    
+    projectData.clips.forEach(c => {
         if (c.layer === index) c.layer = newIndex;
         else if (c.layer === newIndex) c.layer = index;
     });
@@ -1756,13 +1669,13 @@ function moveLayer(direction) {
 }
 
 function mergeLayers() {
-    if (layers.length <= 1) {
+    if (projectData.layers.length <= 1) {
         showToast('يوجد طبقة واحدة فقط', 'warning');
         return;
     }
     if (confirm('دمج جميع الطبقات في طبقة واحدة؟')) {
-        clips.forEach(c => c.layer = 0);
-        layers = [{ name: 'طبقة مدمجة', visible: true, locked: false }];
+        projectData.clips.forEach(c => c.layer = 0);
+        projectData.layers = [{ name: 'طبقة مدمجة', visible: true, locked: false }];
         selectedLayerIndex = 0;
         renderLayers();
         renderTimeline();
@@ -1772,7 +1685,7 @@ function mergeLayers() {
 }
 
 // ============================================================
-//  PLAYBACK CONTROLS
+//  PLAYBACK CONTROLS - أدوات التشغيل
 // ============================================================
 function togglePlay() {
     if (isPlaying) {
@@ -1783,7 +1696,7 @@ function togglePlay() {
 }
 
 function startPlay() {
-    if (currentTime >= totalDuration) {
+    if (currentTime >= projectData.totalDuration) {
         currentTime = 0;
     }
     isPlaying = true;
@@ -1799,7 +1712,7 @@ function startPlay() {
     
     playInterval = setInterval(() => {
         currentTime += 0.04 * playbackSpeed;
-        if (currentTime >= totalDuration) {
+        if (currentTime >= projectData.totalDuration) {
             if (isLooping) {
                 currentTime = 0;
                 if (audioPlayer && audioPlayer.src) {
@@ -1836,7 +1749,7 @@ function updatePlaybackInfo() {
 }
 
 function stepForward() {
-    seekTo(Math.min(currentTime + 0.5, totalDuration));
+    seekTo(Math.min(currentTime + 0.5, projectData.totalDuration));
 }
 
 function stepBackward() {
@@ -1875,15 +1788,16 @@ function toggleFullscreen() {
 }
 
 function seekTo(time) {
-    currentTime = Math.max(0, Math.min(time, totalDuration));
+    currentTime = Math.max(0, Math.min(time, projectData.totalDuration));
     pausePlay();
     updatePlayhead();
     renderPreview(currentTime);
     updatePlaybackInfo();
+    
+    // مزامنة الصوت
     if (audioPlayer && audioPlayer.src) {
-        // البحث عن مقطع الصوت النشط
-        const activeAudio = clips.find(c => {
-            const layer = layers[c.layer];
+        const activeAudio = projectData.clips.find(c => {
+            const layer = projectData.layers[c.layer];
             return layer && layer.visible && 
                    c.type === 'audio' &&
                    currentTime >= c.start && 
@@ -1896,7 +1810,7 @@ function seekTo(time) {
 }
 
 document.getElementById('seekSlider').addEventListener('input', function() {
-    const time = (this.value / 100) * totalDuration;
+    const time = (this.value / 100) * projectData.totalDuration;
     seekTo(time);
 });
 
@@ -1949,8 +1863,10 @@ async function toggleRecording() {
             const fileName = `تسجيل ${new Date().toLocaleTimeString()}.webm`;
             const fileObj = new File([blob], fileName, { type: 'audio/webm' });
             
+            // إضافة الملف إلى المعرض
             addMediaFile(fileObj);
             
+            // إضافة المقطع الصوتي إلى التايم لاين
             let startTime = getLayerEndTime(selectedLayerIndex);
             
             const clip = {
@@ -1963,11 +1879,17 @@ async function toggleRecording() {
                 content: url,
                 color: COLORS.audio,
                 icon: '🎤',
-                metadata: { recorded: true, blob: blob, duration: duration, file: fileName }
+                metadata: { 
+                    recorded: true, 
+                    blob: blob, 
+                    duration: duration, 
+                    file: fileName,
+                    type: 'audio/webm'
+                }
             };
             
-            clips.push(clip);
-            totalDuration = Math.max(totalDuration, clip.start + clip.duration + 1);
+            projectData.clips.push(clip);
+            projectData.totalDuration = Math.max(projectData.totalDuration, clip.start + clip.duration + 1);
             renderTimeline();
             renderMediaGallery();
             updateStatus();
@@ -1996,17 +1918,17 @@ async function toggleRecording() {
 }
 
 // ============================================================
-//  TIMELINE
+//  TIMELINE - التايم لاين
 // ============================================================
 function renderTimeline() {
     const container = document.getElementById('tracksContainer');
-    const pxPerSec = cellWidth / 2;
-    const totalWidth = totalDuration * pxPerSec + 120;
+    const pxPerSec = projectData.cellWidth / 2;
+    const totalWidth = projectData.totalDuration * pxPerSec + 120;
 
     const rulerMarks = document.getElementById('rulerMarks');
     rulerMarks.innerHTML = '';
-    const step = totalDuration > 60 ? 5 : 2;
-    for (let t = 0; t <= totalDuration; t += step) {
+    const step = projectData.totalDuration > 60 ? 5 : 2;
+    for (let t = 0; t <= projectData.totalDuration; t += step) {
         const mark = document.createElement('div');
         mark.className = `ruler-mark${t % 10 === 0 ? ' major' : ''}`;
         mark.style.width = (pxPerSec * step) + 'px';
@@ -2016,7 +1938,7 @@ function renderTimeline() {
     }
 
     container.innerHTML = '';
-    layers.forEach((layer, layerIdx) => {
+    projectData.layers.forEach((layer, layerIdx) => {
         if (!layer.visible) return;
         
         const row = document.createElement('div');
@@ -2034,10 +1956,10 @@ function renderTimeline() {
         const body = document.createElement('div');
         body.className = 'track-body';
         body.style.width = totalWidth + 'px';
-        body.style.setProperty('--cell-w', cellWidth + 'px');
+        body.style.setProperty('--cell-w', projectData.cellWidth + 'px');
         body.dataset.layer = layerIdx;
 
-        const layerClips = clips.filter(c => c.layer === layerIdx);
+        const layerClips = projectData.clips.filter(c => c.layer === layerIdx);
         layerClips.sort((a, b) => a.start - b.start);
         
         layerClips.forEach((clip) => {
@@ -2108,23 +2030,23 @@ function renderTimeline() {
 
 function updatePlayhead() {
     const playhead = document.getElementById('playhead');
-    const pxPerSec = cellWidth / 2;
+    const pxPerSec = projectData.cellWidth / 2;
     const pos = currentTime * pxPerSec + 60;
     playhead.style.left = pos + 'px';
 }
 
 function updateStatus() {
-    document.getElementById('statusClips').textContent = `${clips.length} مقطع`;
-    document.getElementById('statusDuration').textContent = `المدة: ${formatTime(totalDuration)}`;
-    document.getElementById('statusLayers').textContent = `${layers.length} طبقة`;
+    document.getElementById('statusClips').textContent = `${projectData.clips.length} مقطع`;
+    document.getElementById('statusDuration').textContent = `المدة: ${formatTime(projectData.totalDuration)}`;
+    document.getElementById('statusLayers').textContent = `${projectData.layers.length} طبقة`;
 }
 
 // ============================================================
-//  CLIP OPERATIONS
+//  CLIP OPERATIONS - عمليات المقاطع
 // ============================================================
 function deleteClip(id) {
     if (!confirm('هل تريد حذف هذا المقطع؟')) return;
-    clips = clips.filter(c => c.id !== id);
+    projectData.clips = projectData.clips.filter(c => c.id !== id);
     if (selectedClipId === id) selectedClipId = null;
     renderTimeline();
     updateStatus();
@@ -2135,7 +2057,7 @@ function deleteClip(id) {
 function selectClip(id) {
     selectedClipId = id;
     renderTimeline();
-    const clip = clips.find(c => c.id === id);
+    const clip = projectData.clips.find(c => c.id === id);
     if (clip) {
         showToast(`📌 ${clip.title}`, 'info');
     }
@@ -2148,6 +2070,7 @@ function addClip(type) {
         input.accept = type === 'video' ? 'video/*' : 
                        type === 'audio' || type === 'music' ? 'audio/*' : 
                        'image/*';
+        input.multiple = true;
         input.onchange = (e) => {
             if (e.target.files.length > 0) {
                 handleFiles(e.target.files);
@@ -2173,8 +2096,8 @@ function addClip(type) {
             icon: '📝',
             metadata: {}
         };
-        clips.push(clip);
-        totalDuration = Math.max(totalDuration, clip.start + clip.duration + 1);
+        projectData.clips.push(clip);
+        projectData.totalDuration = Math.max(projectData.totalDuration, clip.start + clip.duration + 1);
         renderTimeline();
         updateStatus();
         saveProjectData();
@@ -2187,7 +2110,7 @@ function splitClip() {
         showToast('⚠️ اختر مقطعاً أولاً', 'warning');
         return;
     }
-    const clip = clips.find(c => c.id === selectedClipId);
+    const clip = projectData.clips.find(c => c.id === selectedClipId);
     if (!clip) return;
     
     const splitTime = currentTime - clip.start;
@@ -2206,7 +2129,7 @@ function splitClip() {
     clip.duration = splitTime;
     clip.title = `${clip.title} (جزء 1)`;
     
-    clips.push(newClip);
+    projectData.clips.push(newClip);
     renderTimeline();
     saveProjectData();
     showToast('✂️ تم تقسيم المقطع', 'success');
@@ -2217,7 +2140,7 @@ function duplicateClip() {
         showToast('⚠️ اختر مقطعاً أولاً', 'warning');
         return;
     }
-    const clip = clips.find(c => c.id === selectedClipId);
+    const clip = projectData.clips.find(c => c.id === selectedClipId);
     if (!clip) return;
     
     let startTime = clip.start + clip.duration + 0.5;
@@ -2228,8 +2151,8 @@ function duplicateClip() {
         start: startTime,
         title: `${clip.title} (نسخة)`
     };
-    clips.push(newClip);
-    totalDuration = Math.max(totalDuration, newClip.start + newClip.duration + 1);
+    projectData.clips.push(newClip);
+    projectData.totalDuration = Math.max(projectData.totalDuration, newClip.start + newClip.duration + 1);
     renderTimeline();
     selectClip(newClip.id);
     saveProjectData();
@@ -2245,17 +2168,17 @@ function deleteSelected() {
 }
 
 function moveClip(id, newLayer, newStart) {
-    const clip = clips.find(c => c.id === id);
+    const clip = projectData.clips.find(c => c.id === id);
     if (!clip) return;
     clip.layer = newLayer;
     clip.start = Math.max(0, newStart);
-    totalDuration = Math.max(totalDuration, clip.start + clip.duration + 1);
+    projectData.totalDuration = Math.max(projectData.totalDuration, clip.start + clip.duration + 1);
     renderTimeline();
     saveProjectData();
 }
 
 function editClipProperties(id) {
-    const clip = clips.find(c => c.id === id);
+    const clip = projectData.clips.find(c => c.id === id);
     if (!clip) return;
     
     document.getElementById('clipPropTitle').value = clip.title || '';
@@ -2265,7 +2188,7 @@ function editClipProperties(id) {
     
     const layerSelect = document.getElementById('clipPropLayer');
     layerSelect.innerHTML = '';
-    layers.forEach((layer, i) => {
+    projectData.layers.forEach((layer, i) => {
         const opt = document.createElement('option');
         opt.value = i;
         opt.textContent = layer.name;
@@ -2283,7 +2206,7 @@ function closeClipProperties() {
 
 function saveClipProperties() {
     const id = parseInt(document.getElementById('clipPropertiesModal').dataset.clipId);
-    const clip = clips.find(c => c.id === id);
+    const clip = projectData.clips.find(c => c.id === id);
     if (!clip) return;
     
     clip.title = document.getElementById('clipPropTitle').value || 'مقطع';
@@ -2294,7 +2217,7 @@ function saveClipProperties() {
     clip.icon = TYPE_ICONS[clip.type] || '📄';
     clip.color = COLORS[clip.type] || '#666';
     
-    totalDuration = Math.max(totalDuration, clip.start + clip.duration + 1);
+    projectData.totalDuration = Math.max(projectData.totalDuration, clip.start + clip.duration + 1);
     closeClipProperties();
     renderTimeline();
     saveProjectData();
@@ -2302,7 +2225,7 @@ function saveClipProperties() {
 }
 
 // ============================================================
-//  FILE HANDLING
+//  FILE HANDLING - معالجة الملفات
 // ============================================================
 function handleFiles(files) {
     Array.from(files).forEach(file => {
@@ -2372,10 +2295,9 @@ function setupDragDrop() {
 }
 
 // ============================================================
-//  TOOLS
+//  TOOLS - الأدوات
 // ============================================================
 function selectTool(tool) {
-    selectedTool = tool;
     document.querySelectorAll('.tool-btn').forEach(b => b.classList.remove('active'));
     const btn = document.getElementById('tool' + tool.charAt(0).toUpperCase() + tool.slice(1));
     if (btn) btn.classList.add('active');
@@ -2390,7 +2312,7 @@ function toggleGrid() {
 }
 
 // ============================================================
-//  KEYBOARD SHORTCUTS
+//  KEYBOARD SHORTCUTS - اختصارات لوحة المفاتيح
 // ============================================================
 function setupKeyboardShortcuts() {
     document.addEventListener('keydown', (e) => {
@@ -2415,7 +2337,7 @@ function setupKeyboardShortcuts() {
                 break;
             case 'End':
                 e.preventDefault();
-                seekTo(totalDuration);
+                seekTo(projectData.totalDuration);
                 break;
             case 'Delete':
             case 'Backspace':
@@ -2454,31 +2376,30 @@ function setupKeyboardShortcuts() {
 }
 
 // ============================================================
-//  ZOOM
+//  ZOOM - التكبير
 // ============================================================
 document.getElementById('zoom-slider').addEventListener('input', function() {
-    cellWidth = parseInt(this.value);
-    document.getElementById('zoom-val').textContent = cellWidth;
-    document.getElementById('statusZoom').textContent = `تكبير: ${cellWidth}%`;
+    projectData.cellWidth = parseInt(this.value);
+    document.getElementById('zoom-val').textContent = projectData.cellWidth;
+    document.getElementById('statusZoom').textContent = `تكبير: ${projectData.cellWidth}%`;
     renderTimeline();
 });
 
 // ============================================================
-//  EXPORT / SAVE - إصلاح حفظ واستعادة الملفات
+//  EXPORT / SAVE - حفظ وتصدير المشروع
 // ============================================================
 function saveProjectData() {
     try {
-        // حفظ البيانات الأساسية
         const data = {
-            clips: clips.map(c => ({
+            clips: projectData.clips.map(c => ({
                 ...c,
-                // لا نحفظ content لأنها blob URL
-                content: c.content ? 'blob' : null
+                // لا نحتفظ بـ content المؤقت
+                content: c.content && c.content.startsWith('blob:') ? 'blob' : c.content
             })),
-            layers: layers,
-            totalDuration: totalDuration,
-            cellWidth: cellWidth,
-            mediaFiles: mediaFiles.map(f => ({ 
+            layers: projectData.layers,
+            totalDuration: projectData.totalDuration,
+            cellWidth: projectData.cellWidth,
+            mediaFiles: projectData.mediaFiles.map(f => ({ 
                 name: f.name, 
                 size: f.size, 
                 type: f.type 
@@ -2495,26 +2416,29 @@ function loadProjectData() {
         const saved = localStorage.getItem(`project_${projectId}`);
         if (saved) {
             const data = JSON.parse(saved);
+            
+            // استعادة المقاطع
             if (data.clips) {
-                // استعادة المقاطع مع الاحتفاظ بمرجع الملفات
-                clips = data.clips.map(c => {
-                    // محاولة العثور على الملف في mediaFiles
+                projectData.clips = data.clips.map(c => {
+                    // محاولة ربط المحتوى بالملف المناسب
                     if (c.metadata && c.metadata.file) {
-                        const mediaFile = mediaFiles.find(f => f.name === c.metadata.file);
-                        if (mediaFile) {
+                        const mediaFile = projectData.mediaFiles.find(f => f.name === c.metadata.file);
+                        if (mediaFile && mediaFile.url) {
                             c.content = mediaFile.url;
                         }
                     }
                     return c;
                 });
             }
-            if (data.layers) layers = data.layers;
-            if (data.totalDuration) totalDuration = data.totalDuration;
+            
+            if (data.layers) projectData.layers = data.layers;
+            if (data.totalDuration) projectData.totalDuration = data.totalDuration;
             if (data.cellWidth) {
-                cellWidth = data.cellWidth;
-                document.getElementById('zoom-slider').value = cellWidth;
-                document.getElementById('zoom-val').textContent = cellWidth;
+                projectData.cellWidth = data.cellWidth;
+                document.getElementById('zoom-slider').value = projectData.cellWidth;
+                document.getElementById('zoom-val').textContent = projectData.cellWidth;
             }
+            
             renderLayers();
             renderTimeline();
             updateStatus();
@@ -2528,14 +2452,21 @@ function loadProjectData() {
 function exportProject() {
     const data = {
         project: projectId,
-        clips: clips.map(c => ({
+        version: '1.0',
+        exportedAt: new Date().toISOString(),
+        clips: projectData.clips.map(c => ({
             ...c,
-            content: c.content ? 'blob' : null
+            content: c.content && c.content.startsWith('blob:') ? 'blob' : c.content
         })),
-        layers: layers,
-        totalDuration: totalDuration,
-        exportedAt: new Date().toISOString()
+        layers: projectData.layers,
+        totalDuration: projectData.totalDuration,
+        mediaFiles: projectData.mediaFiles.map(f => ({ 
+            name: f.name, 
+            size: f.size, 
+            type: f.type 
+        }))
     };
+    
     const blob = new Blob([JSON.stringify(data, null, 2)], {type: 'application/json'});
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -2549,7 +2480,7 @@ function exportProject() {
 function startRender(projectId) {
     const renderData = {
         project_id: projectId,
-        clips: clips.map(c => ({
+        clips: projectData.clips.map(c => ({
             type: c.type,
             start: c.start,
             duration: c.duration,
@@ -2557,8 +2488,8 @@ function startRender(projectId) {
             content: c.content,
             title: c.title
         })),
-        layers: layers,
-        duration: totalDuration
+        layers: projectData.layers,
+        duration: projectData.totalDuration
     };
     
     fetch('/api/v1/production/render', {
@@ -2578,7 +2509,7 @@ function startRender(projectId) {
 }
 
 // ============================================================
-//  UTILITY
+//  UTILITY - دوال مساعدة
 // ============================================================
 function formatTime(seconds) {
     if (!seconds || isNaN(seconds)) return '00:00:00';
@@ -2590,17 +2521,22 @@ function formatTime(seconds) {
 }
 
 function showToast(msg, type = 'info') {
+    // إزالة أي توست سابق
+    const oldToast = document.querySelector('.toast-message');
+    if (oldToast) oldToast.remove();
+    
     const toast = document.createElement('div');
-    toast.className = `fixed bottom-20 left-1/2 transform -translate-x-1/2 px-6 py-3 rounded-lg text-white text-sm z-50 transition-all duration-300 max-w-md text-center`;
+    toast.className = `toast-message fixed bottom-20 left-1/2 transform -translate-x-1/2 px-6 py-3 rounded-lg text-white text-sm z-50 transition-all duration-300 max-w-md text-center`;
     const colors = {
         success: 'bg-emerald-600',
         error: 'bg-red-600',
         warning: 'bg-amber-600',
         info: 'bg-blue-600'
     };
-    toast.className += ' ' + (colors[type] || colors.info);
+    toast.classList.add(colors[type] || colors.info);
     toast.textContent = msg;
     document.body.appendChild(toast);
+    
     setTimeout(() => {
         toast.style.opacity = '0';
         setTimeout(() => toast.remove(), 300);
@@ -2626,7 +2562,7 @@ if (!CanvasRenderingContext2D.prototype.roundRect) {
 }
 
 // ============================================================
-//  CLEANUP
+//  CLEANUP - تنظيف عند الخروج
 // ============================================================
 window.addEventListener('beforeunload', function() {
     if (isRecording && mediaRecorder) {
@@ -2635,12 +2571,18 @@ window.addEventListener('beforeunload', function() {
     if (playInterval) {
         clearInterval(playInterval);
     }
+    // تنظيف الـ blob URLs
+    projectData.mediaFiles.forEach(f => {
+        if (f.url && f.url.startsWith('blob:')) {
+            try { URL.revokeObjectURL(f.url); } catch(e) {}
+        }
+    });
 });
 
-console.log('🎬 استوديو الإنتاج المتكامل جاهز');
+console.log('🎬 استوديو الإنتاج المتكامل V2 جاهز');
 console.log(`📁 المشروع: ${projectId}`);
-console.log(`📊 المقاطع: ${clips.length}`);
-console.log(`🧩 الطبقات: ${layers.length}`);
-console.log(`📁 الملفات: ${mediaFiles.length}`);
+console.log(`📊 المقاطع: ${projectData.clips.length}`);
+console.log(`🧩 الطبقات: ${projectData.layers.length}`);
+console.log(`📁 الملفات: ${projectData.mediaFiles.length}`);
 </script>
 {% endblock %}
