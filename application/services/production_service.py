@@ -4,7 +4,8 @@ import logging
 import re
 import uuid
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List, Dict, Any
+from datetime import datetime
 
 from core.domain.rendering.render_job import RenderJob
 from infrastructure.repositories.sql_project_repository import SQLProjectRepository
@@ -39,26 +40,114 @@ class ProductionService:
         self._bus = event_bus
         self._registry = plugin_registry
 
+    async def save_project_data(
+        self,
+        project_id: uuid.UUID,
+        clips: List[Dict[str, Any]],
+        layers: List[Dict[str, Any]],
+        total_duration: float,
+        media_files: List[Dict[str, Any]]
+    ) -> None:
+        """
+        Save project data from client (clips, layers, media files)
+        This is called before rendering if the client sends full project data
+        """
+        try:
+            project = await self._projects.get(project_id)
+            if not project:
+                raise ProjectNotFoundError(f"Project {project_id} not found")
+            
+            # Update project data
+            project_data = project.to_dict() if hasattr(project, 'to_dict') else {}
+            
+            # Preserve existing data and merge with new data
+            existing_data = project_data.get('data', {})
+            existing_data.update({
+                "clips": clips,
+                "layers": layers,
+                "total_duration": total_duration,
+                "media_files": media_files,
+                "updated_at": datetime.utcnow().isoformat()
+            })
+            
+            # Update the project
+            if hasattr(project, 'update_data'):
+                project.update_data(existing_data)
+            else:
+                # Direct attribute update if method doesn't exist
+                project.data = existing_data
+            
+            await self._projects.save(project)
+            logger.info(f"✅ Project data saved: {project_id} with {len(clips)} clips, {len(layers)} layers")
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to save project data: {str(e)}", exc_info=True)
+            raise
+
     async def start_render(
         self,
         project_id: uuid.UUID,
         render_settings: Optional[dict] = None,
+        project_data: Optional[Dict[str, Any]] = None,
     ) -> RenderJob:
+        """
+        Start a render job for a project
+        
+        Args:
+            project_id: ID of the project to render
+            render_settings: Render settings (fps, width, height, quality)
+            project_data: Optional project data from client (clips, layers, etc.)
+        """
+        # Get project from database
         project = await self._projects.get(project_id)
         if not project:
-            raise ProjectNotFoundError(project_id)
+            raise ProjectNotFoundError(f"Project {project_id} not found")
 
-        job = RenderJob(project_id=project_id, settings=render_settings or {})
+        # If client sent project data, update the project first
+        if project_data:
+            try:
+                await self.save_project_data(
+                    project_id=project_id,
+                    clips=project_data.get('clips', []),
+                    layers=project_data.get('layers', []),
+                    total_duration=project_data.get('total_duration', 10.0),
+                    media_files=project_data.get('media_files', [])
+                )
+                # Refresh project after update
+                project = await self._projects.get(project_id)
+            except Exception as e:
+                logger.warning(f"⚠️ Could not save project data: {str(e)}")
+
+        # Create render job
+        job = RenderJob(
+            project_id=project_id,
+            settings=render_settings or {},
+            status="pending",
+            progress=0,
+            created_at=datetime.utcnow()
+        )
+        
         project.start_production()
 
+        # Save job and project
         await self._jobs.save(job)
         await self._projects.save(project)
-        await self._bus.publish(ProductionStarted(project_id=project_id, render_job_id=job.id))
+        
+        # Publish event
+        await self._bus.publish(
+            ProductionStarted(
+                project_id=project_id,
+                render_job_id=job.id
+            )
+        )
 
+        # Start background render task
         task = asyncio.create_task(
-            self._run_render(job.id, project.to_dict())
+            self._run_render(job.id, project.to_dict() if hasattr(project, 'to_dict') else {'id': str(project_id)})
         )
         _active_renders[str(job.id)] = task
+        
+        logger.info(f"🚀 Render job started: {job.id} for project {project_id}")
         return job
 
     async def _run_render(self, job_id: uuid.UUID, project_data: dict) -> None:
@@ -95,22 +184,33 @@ class ProductionService:
             temp_dir = settings.TEMP_DIR / str(job_id)
             temp_dir.mkdir(parents=True, exist_ok=True)
 
-            rs = RenderSettings(fps=30, resolution_width=1920, resolution_height=1080)
+            rs = RenderSettings(
+                fps=render_settings.get('fps', 30) if hasattr(self, 'render_settings') else 30,
+                resolution_width=render_settings.get('width', 1920) if hasattr(self, 'render_settings') else 1920,
+                resolution_height=render_settings.get('height', 1080) if hasattr(self, 'render_settings') else 1080
+            )
 
             await save_progress(5.0, "تحليل النص وتقسيمه إلى مشاهد")
 
             # ── Build scenes from project script ──────────────────────────────
-            script    = project_data.get("script", "")
-            title     = project_data.get("title", "")
+            script = project_data.get("script", "")
+            title = project_data.get("title", "")
             brand_colors = project_data.get("brand_colors", {})
-            brand_color  = (brand_colors.get("primary") if brand_colors else None)
+            brand_color = (brand_colors.get("primary") if brand_colors else None)
 
-            raw_scenes = _split_script_to_scenes(script, title)
+            # Check if we have clips from client (imported from timeline)
+            clips = project_data.get("data", {}).get("clips", [])
+            if clips:
+                # Use client-provided clips
+                raw_scenes = self._build_scenes_from_clips(clips)
+            else:
+                # Fallback: split script into scenes
+                raw_scenes = _split_script_to_scenes(script, title)
 
             await save_progress(10.0, f"توليد {len(raw_scenes)} مشهد")
 
             # ── Resolve active HF models (if any) ────────────────────────────
-            voice_plugin    = await _resolve_voice_plugin(self._registry)
+            voice_plugin = await _resolve_voice_plugin(self._registry)
             image_generator = await _resolve_image_generator(rs)
 
             from shared.ports.voice_port import VoiceConfig
@@ -132,11 +232,11 @@ class ProductionService:
                         output_path=audio_path,
                     )
                     actual_audio = voice_result.audio_path
-                    duration     = voice_result.duration
+                    duration = voice_result.duration
                 except Exception as e:
                     logger.warning("TTS failed for scene %d: %s", i, e)
                     actual_audio = None
-                    words    = len(scene_text.split())
+                    words = len(scene_text.split())
                     duration = max(3.0, (words / 150) * 60)
 
                 # Scene image
@@ -154,10 +254,10 @@ class ProductionService:
                     image_path = None
 
                 scenes_data.append({
-                    "text":       scene_text,
+                    "text": scene_text,
                     "image_path": str(image_path) if image_path else "",
                     "audio_path": str(actual_audio) if actual_audio else "",
-                    "duration":   duration,
+                    "duration": duration,
                     "transition": "fade",
                 })
 
@@ -165,7 +265,7 @@ class ProductionService:
 
             # ── Render ────────────────────────────────────────────────────────
             result = await renderer.render(
-                project_id=uuid.UUID(project_data["id"]),
+                project_id=uuid.UUID(project_data.get("id", str(project_id))),
                 timeline_data={"scenes": scenes_data},
                 assets={},
                 settings=rs,
@@ -188,11 +288,11 @@ class ProductionService:
             await save_progress(100.0, "اكتمل")
 
             async with factory() as session:
-                job_repo  = SQLRenderJobRepository(session)
+                job_repo = SQLRenderJobRepository(session)
                 proj_repo = SQLProjectRepository(session)
-                job       = await job_repo.get(job_id)
-                project_id = uuid.UUID(project_data["id"])
-                project   = await proj_repo.get(project_id)
+                job = await job_repo.get(job_id)
+                project_id_obj = uuid.UUID(project_data.get("id", str(project_id)))
+                project = await proj_repo.get(project_id_obj)
                 if job:
                     job.complete(str(result.output_path))
                     await job_repo.save(job)
@@ -203,19 +303,19 @@ class ProductionService:
 
             await self._bus.publish(RenderCompleted(
                 job_id=job_id,
-                project_id=uuid.UUID(project_data["id"]),
+                project_id=uuid.UUID(project_data.get("id", str(project_id))),
                 output_path=str(result.output_path),
             ))
-            logger.info("Render completed: job=%s output=%s", job_id, result.output_path)
+            logger.info("✅ Render completed: job=%s output=%s", job_id, result.output_path)
 
         except Exception as exc:
-            logger.exception("Render failed: job=%s error=%s", job_id, exc)
+            logger.exception("❌ Render failed: job=%s error=%s", job_id, exc)
             async with factory() as session:
-                job_repo  = SQLRenderJobRepository(session)
+                job_repo = SQLRenderJobRepository(session)
                 proj_repo = SQLProjectRepository(session)
-                job       = await job_repo.get(job_id)
-                project_id = uuid.UUID(project_data["id"])
-                project   = await proj_repo.get(project_id)
+                job = await job_repo.get(job_id)
+                project_id_obj = uuid.UUID(project_data.get("id", str(project_id)))
+                project = await proj_repo.get(project_id_obj)
                 if job:
                     job.fail(str(exc))
                     await job_repo.save(job)
@@ -225,20 +325,51 @@ class ProductionService:
                 await session.commit()
             await self._bus.publish(RenderFailed(
                 job_id=job_id,
-                project_id=uuid.UUID(project_data["id"]),
+                project_id=uuid.UUID(project_data.get("id", str(project_id))),
                 error=str(exc),
             ))
         finally:
             _active_renders.pop(str(job_id), None)
 
+    def _build_scenes_from_clips(self, clips: List[Dict[str, Any]]) -> List[str]:
+        """Convert client clips to scene text list"""
+        scenes = []
+        for clip in clips:
+            if clip.get('type') == 'text':
+                scenes.append(clip.get('content', ''))
+            elif clip.get('type') == 'image':
+                scenes.append(f"[صورة] {clip.get('title', '')}")
+            elif clip.get('type') == 'video':
+                scenes.append(f"[فيديو] {clip.get('title', '')}")
+            elif clip.get('type') == 'audio':
+                scenes.append(f"[صوت] {clip.get('title', '')}")
+            else:
+                scenes.append(clip.get('title', 'مقطع'))
+        
+        return scenes if scenes else ["مشهد بدون نص"]
+
     async def get_job(self, job_id: uuid.UUID) -> RenderJob:
+        """Get a render job by ID"""
         job = await self._jobs.get(job_id)
         if not job:
-            raise RenderJobNotFoundError(job_id)
+            raise RenderJobNotFoundError(f"Render job {job_id} not found")
         return job
 
     async def list_jobs(self, limit: int = 20) -> list[RenderJob]:
+        """List recent render jobs"""
         return await self._jobs.list_recent(limit=limit)
+
+    async def cancel_job(self, job_id: uuid.UUID) -> None:
+        """Cancel a running render job"""
+        task = _active_renders.get(str(job_id))
+        if task and not task.done():
+            task.cancel()
+            logger.info(f"🛑 Cancelled render job: {job_id}")
+        
+        job = await self._jobs.get(job_id)
+        if job and job.status in ["pending", "processing"]:
+            job.fail("Cancelled by user")
+            await self._jobs.save(job)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -294,7 +425,7 @@ async def _resolve_voice_plugin(registry):
             active = await repo.get_active("tts")
             if active:
                 from plugins.hf.hf_tts_plugin import HFTTSPlugin
-                logger.info("Using HF TTS model: %s", active.hf_model_id)
+                logger.info("✅ Using HF TTS model: %s", active.hf_model_id)
                 return HFTTSPlugin(model_id=active.hf_model_id, config=active.config)
     except Exception as e:
         logger.warning("HF TTS lookup failed: %s — using edge_tts", e)
@@ -312,7 +443,7 @@ async def _resolve_image_generator(rs: RenderSettings):
             active = await repo.get_active("text-to-image")
             if active:
                 from plugins.hf.hf_image_plugin import HFImagePlugin
-                logger.info("Using HF image model: %s", active.hf_model_id)
+                logger.info("✅ Using HF image model: %s", active.hf_model_id)
                 return _HFImageAdapter(
                     HFImagePlugin(model_id=active.hf_model_id, config=active.config),
                     rs,
@@ -350,3 +481,21 @@ class _HFImageAdapter:
                 text=text, output_path=output_path, scene_index=scene_index,
                 title=title, brand_color=brand_color,
             )
+
+
+# ── Render Settings Storage ──────────────────────────────────────────────────
+# Store render settings on the service instance for use in _run_render
+# This is a temporary solution - better to pass settings through the render job
+_render_settings_cache: Dict[str, Dict[str, Any]] = {}
+
+def store_render_settings(job_id: uuid.UUID, settings: Dict[str, Any]) -> None:
+    """Store render settings for a job"""
+    _render_settings_cache[str(job_id)] = settings
+
+def get_render_settings(job_id: uuid.UUID) -> Optional[Dict[str, Any]]:
+    """Get render settings for a job"""
+    return _render_settings_cache.get(str(job_id))
+
+def clear_render_settings(job_id: uuid.UUID) -> None:
+    """Clear render settings cache for a job"""
+    _render_settings_cache.pop(str(job_id), None)
