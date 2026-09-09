@@ -137,7 +137,7 @@ class StartRenderRequest(BaseModel):
 
 class RenderJobResponse(BaseModel):
     """استجابة مهمة الرندر"""
-    id: UUID = Field(..., description="معرف مهمة الرندر")
+    job_id: UUID = Field(..., description="معرف مهمة الرندر")  # ← job_id بدلاً من id
     project_id: UUID = Field(..., description="معرف المشروع")
     renderer: str = Field(default="default", description="نوع الرندر المستخدم")
     status: str = Field(..., description="حالة المهمة: pending, processing, completed, failed, cancelled")
@@ -148,11 +148,12 @@ class RenderJobResponse(BaseModel):
     started_at: Optional[datetime] = Field(None, description="وقت بدء الرندر")
     completed_at: Optional[datetime] = Field(None, description="وقت الانتهاء")
     created_at: datetime = Field(..., description="وقت الإنشاء")
+    render_settings: Optional[Dict[str, Any]] = Field(None, description="إعدادات الرندر المستخدمة")
     
     class Config:
         schema_extra = {
             "example": {
-                "id": "123e4567-e89b-12d3-a456-426614174000",
+                "job_id": "123e4567-e89b-12d3-a456-426614174000",
                 "project_id": "778bf000-e348-4fad-8fc8-9f418ec9d190",
                 "renderer": "ffmpeg",
                 "status": "processing",
@@ -162,7 +163,8 @@ class RenderJobResponse(BaseModel):
                 "error_message": None,
                 "started_at": "2026-09-09T13:20:11.652443Z",
                 "completed_at": None,
-                "created_at": "2026-09-09T13:20:11.652443Z"
+                "created_at": "2026-09-09T13:20:11.652443Z",
+                "render_settings": {"fps": 30, "width": 1920, "height": 1080}
             }
         }
 
