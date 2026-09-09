@@ -2980,7 +2980,7 @@ function exportProject() {
 }
 
 // ============================================================
-//  RENDER
+//  RENDER - UPDATED with full status polling
 // ============================================================
 function startRender(projectId) {
     const btn = document.getElementById('renderBtn');
@@ -3048,64 +3048,119 @@ function startRender(projectId) {
     });
 }
 
+// ============================================================
+//  POLL RENDER STATUS - UPDATED with full monitoring
+// ============================================================
 function pollRenderStatus(jobId) {
+    // Clear any existing interval
     if (renderPollInterval) {
         clearInterval(renderPollInterval);
+        renderPollInterval = null;
     }
     
     let attempts = 0;
-    const maxAttempts = 60;
+    let consecutiveErrors = 0;
+    const maxConsecutiveErrors = 5;
+    
+    const statusEl = document.getElementById('renderStatus');
+    const progressFill = document.getElementById('renderProgressFill');
+    const loading = document.getElementById('renderLoading');
+    const btn = document.getElementById('renderBtn');
     
     renderPollInterval = setInterval(() => {
         attempts++;
         
-        fetch(`/api/v1/production/render/status/${jobId}`)
+        fetch(`/api/v1/production/jobs/${jobId}/status`)
             .then(resp => {
-                if (!resp.ok) return null;
+                if (!resp.ok) {
+                    if (resp.status === 404) {
+                        clearInterval(renderPollInterval);
+                        renderPollInterval = null;
+                        if (statusEl) statusEl.textContent = '❌ لم يتم العثور على المهمة';
+                        showToast('⚠️ لم يتم العثور على المهمة', 'warning');
+                        resetRenderUI();
+                        return;
+                    }
+                    consecutiveErrors++;
+                    if (consecutiveErrors >= maxConsecutiveErrors) {
+                        clearInterval(renderPollInterval);
+                        renderPollInterval = null;
+                        if (statusEl) statusEl.textContent = '❌ فشل الاتصال بالخادم';
+                        showToast('❌ فشل الاتصال بالخادم', 'error');
+                        resetRenderUI();
+                        return;
+                    }
+                    return null;
+                }
+                consecutiveErrors = 0;
                 return resp.json();
             })
             .then(data => {
                 if (!data) return;
                 
-                const status = document.getElementById('renderStatus');
-                const progressFill = document.getElementById('renderProgressFill');
+                // Log for debugging
+                console.log('📊 Render status:', data);
                 
-                if (data.progress !== undefined) {
+                // Update progress
+                if (progressFill && data.progress !== undefined) {
                     progressFill.style.width = Math.min(data.progress, 100) + '%';
                 }
                 
+                // Handle different statuses
                 if (data.status === 'completed') {
                     clearInterval(renderPollInterval);
                     renderPollInterval = null;
-                    document.getElementById('renderLoading').classList.remove('active');
-                    document.getElementById('renderBtn').disabled = false;
-                    document.getElementById('renderBtn').style.opacity = '1';
+                    if (statusEl) statusEl.textContent = '✅ اكتمل الرندر بنجاح!';
+                    if (loading) loading.classList.remove('active');
+                    resetRenderUI();
                     showToast('✅ تم الرندر بنجاح!', 'success');
-                    setTimeout(() => window.location.href = '/render-queue', 1500);
+                    if (data.output_url) {
+                        window.open(data.output_url, '_blank');
+                    }
+                    setTimeout(() => window.location.reload(), 2000);
+                    
                 } else if (data.status === 'failed') {
                     clearInterval(renderPollInterval);
                     renderPollInterval = null;
-                    document.getElementById('renderLoading').classList.remove('active');
-                    document.getElementById('renderBtn').disabled = false;
-                    document.getElementById('renderBtn').style.opacity = '1';
-                    showToast('❌ فشل الرندر: ' + (data.error || 'خطأ غير معروف'), 'error');
+                    const errorMsg = data.error || 'خطأ غير معروف';
+                    if (statusEl) statusEl.textContent = `❌ فشل الرندر: ${errorMsg}`;
+                    if (loading) loading.classList.remove('active');
+                    resetRenderUI();
+                    showToast(`❌ فشل الرندر: ${errorMsg}`, 'error');
+                    
                 } else if (data.status === 'processing') {
-                    status.textContent = `جاري الرندر... ${Math.round(data.progress || 0)}%`;
+                    if (statusEl) {
+                        let msg = `🔄 جاري الرندر... ${Math.round(data.progress || 0)}%`;
+                        if (data.current_stage) {
+                            msg += ` - ${data.current_stage}`;
+                        }
+                        statusEl.textContent = msg;
+                    }
+                    
+                } else if (data.status === 'pending') {
+                    if (statusEl) statusEl.textContent = '⏳ في انتظار البدء...';
+                    
                 } else {
-                    status.textContent = `في انتظار البدء...`;
-                }
-                
-                if (attempts >= maxAttempts) {
-                    clearInterval(renderPollInterval);
-                    renderPollInterval = null;
-                    document.getElementById('renderLoading').classList.remove('active');
-                    document.getElementById('renderBtn').disabled = false;
-                    document.getElementById('renderBtn').style.opacity = '1';
-                    showToast('⏰ انتهت مهلة الرندر', 'warning');
+                    if (statusEl) statusEl.textContent = `📊 الحالة: ${data.status}`;
                 }
             })
-            .catch(() => {});
-    }, 5000);
+            .catch(err => {
+                console.error('❌ Error polling status:', err);
+                if (attempts % 6 === 0) {  // كل 30 ثانية
+                    if (statusEl) statusEl.textContent = '🔄 جاري المحاولة مرة أخرى...';
+                }
+            });
+    }, 5000);  // كل 5 ثواني
+}
+
+function resetRenderUI() {
+    const btn = document.getElementById('renderBtn');
+    const loading = document.getElementById('renderLoading');
+    if (btn) {
+        btn.disabled = false;
+        btn.style.opacity = '1';
+    }
+    if (loading) loading.classList.remove('active');
 }
 
 // ============================================================
