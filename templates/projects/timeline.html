@@ -851,6 +851,54 @@
         height: 100% !important;
     }
 
+    /* ====== حالة المزامنة ====== */
+    .sync-status {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        font-size: 10px;
+        padding: 2px 8px;
+        border-radius: 12px;
+        background: rgba(255,255,255,0.05);
+        color: var(--text-muted);
+    }
+    .sync-status.synced { color: #34d399; background: rgba(52,211,153,0.1); }
+    .sync-status.syncing { color: #fbbf24; background: rgba(251,191,36,0.1); animation: pulse-sync 1s infinite; }
+    .sync-status.error { color: #ef4444; background: rgba(239,68,68,0.1); }
+    @keyframes pulse-sync {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.4; }
+    }
+
+    .loading-overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(15,23,42,0.9);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        z-index: 99999;
+        transition: opacity 0.5s;
+    }
+    .loading-overlay.hidden {
+        opacity: 0;
+        pointer-events: none;
+    }
+    .loading-overlay .spinner-large {
+        width: 48px;
+        height: 48px;
+        border: 4px solid rgba(37,99,235,0.2);
+        border-top-color: var(--primary);
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+    }
+    .loading-overlay p {
+        color: var(--text-muted);
+        margin-top: 16px;
+        font-size: 14px;
+    }
+
     @media (max-width: 768px) {
         .editor-container { height: calc(100vh - 140px); }
         .preview-area { min-height: 160px; }
@@ -878,6 +926,24 @@
     <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/></svg>
     <span class="hidden xs:inline">المشروع</span>
 </a>
+
+<!-- ====== زر المزامنة ====== -->
+<button onclick="syncProject()" class="btn-secondary btn-sm" title="مزامنة مع السحابة" id="syncBtn">
+    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.418 0V4m0 5h-.582M4 15v5h.582m15.418 0V15m0 5h-.582"/>
+    </svg>
+    <span class="hidden xs:inline">مزامنة</span>
+</button>
+<span class="sync-status" id="syncStatus">✅ متزامن</span>
+
+<!-- ====== زر المشاركة ====== -->
+<button onclick="openShareModal()" class="btn-secondary btn-sm" title="مشاركة المشروع">
+    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"/>
+    </svg>
+    <span class="hidden xs:inline">مشاركة</span>
+</button>
+
 <div class="render-loading" id="renderLoading">
     <div class="spinner"></div>
     <span id="renderStatus" style="font-size:12px;color:var(--text-muted);">جاري الرندر...</span>
@@ -898,6 +964,12 @@
 {% endblock %}
 
 {% block content %}
+<!-- ====== شاشة التحميل ====== -->
+<div class="loading-overlay" id="loadingOverlay">
+    <div class="spinner-large"></div>
+    <p>🔄 جاري تحميل المشروع...</p>
+</div>
+
 <!-- رأس المشروع -->
 <div class="flex flex-wrap items-center gap-2 sm:gap-3 mb-4">
     <span class="badge status-{{ project.status.value }}">
@@ -1106,6 +1178,21 @@
     </div>
 </div>
 
+<!-- ====== مودال المشاركة ====== -->
+<div id="shareModal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+    <div class="bg-slate-800 rounded-xl p-6 max-w-md w-full border border-slate-700">
+        <h3 class="text-white text-lg font-semibold mb-4">👥 مشاركة المشروع</h3>
+        <p class="text-slate-400 text-sm mb-4">أدخل البريد الإلكتروني للمستخدم لمشاركة المشروع معه</p>
+        <div>
+            <input type="email" id="shareEmail" placeholder="user@example.com" class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-white text-sm">
+        </div>
+        <div class="flex justify-end mt-4 gap-2">
+            <button onclick="closeShareModal()" class="btn-secondary btn-sm">إلغاء</button>
+            <button onclick="shareProject()" class="btn-primary btn-sm">مشاركة</button>
+        </div>
+    </div>
+</div>
+
 {% endblock %}
 
 {% block scripts %}
@@ -1115,6 +1202,8 @@
 // ============================================================
 const scenes = {{ scenes_json | safe }};
 const projectId = "{{ project.id }}";
+const currentUserId = "{{ current_user.id if current_user else '' }}";
+const currentUserEmail = "{{ current_user.email if current_user else '' }}";
 
 let projectData = {
     clips: [],
@@ -1139,13 +1228,14 @@ let clipIdCounter = 0;
 let currentClipAtTime = null;
 let renderPollInterval = null;
 let renderJobId = null;
+let isSyncing = false;
+let isDataLoaded = false;
 
 let canvas = null;
 let ctx = null;
 let audioPlayer = null;
 let isCanvasReady = false;
 let imageCache = {};
-let videoCache = {};
 let videoElements = {};
 
 const COLORS = {
@@ -1163,65 +1253,211 @@ const TYPE_ICONS = {
 };
 
 // ============================================================
-//  INITIALIZE
+//  SUPABASE INTEGRATION - ONLY SUPABASE, NO localStorage
 // ============================================================
-document.addEventListener('DOMContentLoaded', function() {
-    canvas = document.getElementById('previewCanvas');
-    ctx = canvas.getContext('2d');
-    audioPlayer = document.getElementById('audioPlayer');
-    
-    resizeCanvas();
-    window.addEventListener('resize', resizeCanvas);
-    
-    if (projectData.layers.length === 0) {
-        projectData.layers.push({ name: 'طبقة 1', visible: true, locked: false });
-    }
-    
-    if (scenes && scenes.length > 0) {
-        scenes.forEach((scene, i) => {
-            const clip = {
-                id: clipIdCounter++,
-                type: 'image',
-                layer: 0,
-                start: scene.start_time || i * 3,
-                duration: scene.duration || 3,
-                title: scene.title || `مشهد ${i+1}`,
-                content: scene.content || '',
-                color: COLORS.image,
-                icon: '🖼️',
-                metadata: { scene_id: scene.id }
-            };
-            projectData.clips.push(clip);
-        });
-        projectData.totalDuration = Math.max(...projectData.clips.map(c => c.start + c.duration), 10);
-    }
-    
-    renderLayers();
-    renderTimeline();
-    updateStatus();
-    renderMediaGallery();
-    setupDragDrop();
-    setupKeyboardShortcuts();
-    loadProjectData();
-    renderPreview(currentTime);
-});
 
-function resizeCanvas() {
-    const container = document.getElementById('previewArea');
-    if (!container || !canvas) return;
-    const rect = container.getBoundingClientRect();
-    const w = rect.width || 800;
-    const h = Math.min(rect.height || 400, w * 9 / 16);
-    canvas.width = w;
-    canvas.height = h;
-    canvas.style.width = w + 'px';
-    canvas.style.height = h + 'px';
-    isCanvasReady = true;
-    renderPreview(currentTime);
+// ====== حفظ المشروع على Supabase ======
+async function saveProjectToSupabase(projectId, data) {
+    try {
+        const response = await fetch(`/api/v1/projects/save`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                project_id: projectId,
+                user_id: currentUserId,
+                data: {
+                    clips: data.clips.map(c => ({
+                        id: c.id,
+                        type: c.type,
+                        layer: c.layer,
+                        start: c.start,
+                        duration: c.duration,
+                        title: c.title,
+                        content: c.content && c.content.startsWith('blob:') ? null : c.content,
+                        color: c.color,
+                        icon: c.icon,
+                        metadata: c.metadata || {}
+                    })),
+                    layers: data.layers,
+                    total_duration: data.totalDuration,
+                    cell_width: data.cellWidth,
+                    media_files: data.mediaFiles.map(f => ({
+                        name: f.name,
+                        size: f.size,
+                        type: f.type
+                    }))
+                }
+            })
+        });
+        
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'فشل الحفظ');
+        }
+        
+        const result = await response.json();
+        updateSyncStatus('synced');
+        return result;
+        
+    } catch(e) {
+        console.error('❌ فشل الحفظ على Supabase:', e);
+        updateSyncStatus('error');
+        showToast('❌ فشل حفظ المشروع: ' + e.message, 'error');
+        throw e;
+    }
+}
+
+// ====== تحميل المشروع من Supabase ======
+async function loadProjectFromSupabase(projectId) {
+    try {
+        const response = await fetch(`/api/v1/projects/${projectId}?user_id=${currentUserId}`);
+        
+        if (response.status === 404) {
+            return null;
+        }
+        
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'فشل التحميل');
+        }
+        
+        const result = await response.json();
+        const saved = result.data;
+        
+        if (saved && saved.data) {
+            return {
+                clips: saved.data.clips || [],
+                layers: saved.data.layers || [{ name: 'طبقة 1', visible: true, locked: false }],
+                totalDuration: saved.data.total_duration || 10,
+                cellWidth: saved.data.cell_width || 80,
+                mediaFiles: saved.data.media_files || []
+            };
+        }
+        
+        return null;
+        
+    } catch(e) {
+        console.error('❌ فشل التحميل:', e);
+        throw e;
+    }
+}
+
+// ====== تحميل مشروع مشترك ======
+async function loadSharedProject(projectId) {
+    try {
+        const response = await fetch(`/api/v1/projects/${projectId}/shared?user_email=${encodeURIComponent(currentUserEmail)}`);
+        
+        if (!response.ok) {
+            throw new Error('لا تملك صلاحية الوصول');
+        }
+        
+        const result = await response.json();
+        return result.data;
+        
+    } catch(e) {
+        showToast('❌ ' + e.message, 'error');
+        return null;
+    }
+}
+
+// ====== مشاركة المشروع ======
+async function shareProjectWithUser(projectId, email) {
+    try {
+        const response = await fetch(`/api/v1/projects/${projectId}/share`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ email: email })
+        });
+        
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'فشل المشاركة');
+        }
+        
+        const result = await response.json();
+        showToast('✅ ' + result.message, 'success');
+        return true;
+        
+    } catch(e) {
+        showToast('❌ ' + e.message, 'error');
+        return false;
+    }
+}
+
+// ====== تحديث حالة المزامنة ======
+function updateSyncStatus(status) {
+    const el = document.getElementById('syncStatus');
+    if (!el) return;
+    
+    el.className = 'sync-status';
+    if (status === 'synced') {
+        el.classList.add('synced');
+        el.textContent = '✅ متزامن';
+    } else if (status === 'syncing') {
+        el.classList.add('syncing');
+        el.textContent = '🔄 جاري...';
+    } else if (status === 'error') {
+        el.classList.add('error');
+        el.textContent = '⚠️ خطأ';
+    }
+}
+
+// ====== وظيفة المزامنة ======
+async function syncProject() {
+    if (isSyncing) return;
+    isSyncing = true;
+    updateSyncStatus('syncing');
+    showToast('🔄 جاري المزامنة...', 'info');
+    
+    try {
+        const data = {
+            clips: projectData.clips,
+            layers: projectData.layers,
+            totalDuration: projectData.totalDuration,
+            cellWidth: projectData.cellWidth,
+            mediaFiles: projectData.mediaFiles
+        };
+        
+        await saveProjectToSupabase(projectId, data);
+        showToast('✅ تمت المزامنة بنجاح', 'success');
+    } catch(e) {
+        showToast('❌ فشل المزامنة: ' + e.message, 'error');
+        updateSyncStatus('error');
+    }
+    
+    isSyncing = false;
+}
+
+// ====== فتح مودال المشاركة ======
+function openShareModal() {
+    document.getElementById('shareModal').classList.remove('hidden');
+    document.getElementById('shareEmail').value = '';
+    document.getElementById('shareEmail').focus();
+}
+
+function closeShareModal() {
+    document.getElementById('shareModal').classList.add('hidden');
+}
+
+async function shareProject() {
+    const email = document.getElementById('shareEmail').value.trim();
+    if (!email || !email.includes('@')) {
+        showToast('⚠️ بريد إلكتروني غير صحيح', 'warning');
+        return;
+    }
+    
+    const success = await shareProjectWithUser(projectId, email);
+    if (success) {
+        closeShareModal();
+    }
 }
 
 // ============================================================
-//  RENDER PREVIEW - معاينة مع دعم الفيديو
+//  RENDER PREVIEW
 // ============================================================
 function renderPreview(time) {
     if (!isCanvasReady || !ctx) return;
@@ -1384,7 +1620,6 @@ function drawVideoFrame(ctx, clip, x, y, w, h, time) {
         } catch(e) {}
     }
     
-    // Fallback: عرض أيقونة التحميل
     ctx.fillStyle = 'rgba(0,0,0,0.7)';
     ctx.fillRect(x - w/4, y - h/4, w/2, h/2);
     ctx.fillStyle = 'rgba(255,255,255,0.1)';
@@ -1449,7 +1684,6 @@ function drawTextOnly(ctx, text, x, y, w, h) {
     const totalHeight = lines.length * lineHeight;
     const startY = y - totalHeight / 2 + lineHeight / 2;
     
-    // إضافة خلفية شفافة للنص
     if (lines.length > 1) {
         ctx.shadowBlur = 0;
         ctx.fillStyle = 'rgba(0,0,0,0.3)';
@@ -1470,7 +1704,7 @@ function drawTextOnly(ctx, text, x, y, w, h) {
 }
 
 // ============================================================
-//  SYNC AUDIO - دعم مقاطع صوتية متعددة
+//  SYNC AUDIO
 // ============================================================
 let audioContext = null;
 let audioBuffers = {};
@@ -1486,17 +1720,14 @@ function syncAudio(time) {
     });
     
     if (activeAudios.length > 0) {
-        // استخدام Web Audio API لتشغيل عدة مقاطع صوتية
         if (!audioContext) {
             audioContext = new (window.AudioContext || window.webkitAudioContext)();
         }
         
-        // تشغيل كل مقطع صوتي
         activeAudios.forEach(audioClip => {
             const src = audioClip.content;
             if (!src || src === 'blob') return;
             
-            // تحميل الصوت إذا لم يكن محملاً
             if (!audioBuffers[src]) {
                 fetch(src)
                     .then(res => res.arrayBuffer())
@@ -1512,7 +1743,6 @@ function syncAudio(time) {
             playAudioBuffer(src, audioBuffers[src], audioClip, time);
         });
         
-        // إزالة العقد القديمة
         audioNodes = audioNodes.filter(node => {
             if (node.isPlaying && node.clipId) {
                 const clip = projectData.clips.find(c => c.id === node.clipId);
@@ -1527,7 +1757,6 @@ function syncAudio(time) {
         });
         
     } else {
-        // إيقاف جميع الصوتيات
         audioNodes.forEach(node => {
             if (node.source) {
                 try { node.source.stop(); } catch(e) {}
@@ -1544,7 +1773,6 @@ function playAudioBuffer(src, buffer, clip, time) {
     const localTime = time - clip.start;
     if (localTime < 0 || localTime > clip.duration) return;
     
-    // التحقق من وجود عقدة تشغيل لهذا المقطع
     const existingNode = audioNodes.find(n => n.clipId === clip.id && n.isPlaying);
     if (existingNode) {
         if (Math.abs(existingNode.startTime - localTime) > 0.1) {
@@ -1927,7 +2155,6 @@ function renderTimeline() {
                 editClipProperties(clip.id);
             };
             
-            // سحب لإعادة تحديد المدة من الأطراف
             const resizeHandle = document.createElement('div');
             resizeHandle.style.cssText = 'position:absolute;right:-4px;top:0;width:8px;height:100%;cursor:ew-resize;z-index:5;';
             resizeHandle.onmousedown = (e) => {
@@ -1983,7 +2210,6 @@ function renderTimeline() {
     updateStatus();
 }
 
-// ====== تغيير حجم المقطع ======
 let resizeClipData = null;
 
 function startResizeClip(e, clipId, side) {
@@ -2250,7 +2476,6 @@ function startPlay() {
         audioPlayer.play().catch(() => {});
     }
     
-    // تشغيل فيديوهات المعاينة
     Object.values(videoElements).forEach(v => {
         if (!v.paused) return;
         v.play().catch(() => {});
@@ -2360,7 +2585,6 @@ function seekTo(time) {
         renderPreview(currentTime);
     }
     
-    // مزامنة الصوت
     if (audioPlayer && audioPlayer.src) {
         const activeAudio = projectData.clips.find(c => {
             const layer = projectData.layers[c.layer];
@@ -2479,7 +2703,6 @@ function handleFiles(files) {
         if (['video', 'audio', 'image'].includes(type)) {
             addMediaFile(file);
             
-            // إضافة معاينة
             const preview = document.createElement('span');
             preview.className = 'text-xs bg-slate-700 text-slate-300 px-2 py-1 rounded';
             preview.textContent = `${TYPE_ICONS[type] || '📄'} ${file.name.slice(0, 12)}`;
@@ -2610,94 +2833,123 @@ document.getElementById('zoom-slider').addEventListener('input', function() {
 });
 
 // ============================================================
-//  EXPORT / SAVE
+//  SAVE - ONLY SUPABASE
 // ============================================================
 function saveProjectData() {
-    try {
-        const data = {
-            clips: projectData.clips.map(c => {
-                // تحويل محتوى blob إلى placeholder للحفظ
-                let content = c.content;
-                if (content && content.startsWith('blob:')) {
-                    // محاولة العثور على الملف الأصلي
-                    const mediaFile = projectData.mediaFiles.find(f => f.url === content);
-                    if (mediaFile && mediaFile.file) {
-                        // لا يمكن حفظ Blob في localStorage، نستخدم placeholder
-                        content = 'blob';
-                    } else {
-                        content = 'blob';
-                    }
-                }
-                return {
-                    ...c,
-                    content: content,
-                    // حفظ بيانات الملف للاستعادة
-                    _fileRef: c.metadata && c.metadata.file ? c.metadata.file : null
-                };
-            }),
-            layers: projectData.layers,
-            totalDuration: projectData.totalDuration,
-            cellWidth: projectData.cellWidth,
-            mediaFiles: projectData.mediaFiles.map(f => ({ 
-                name: f.name, 
-                size: f.size, 
-                type: f.type,
-                // لا نحفظ url لأنها blob
-                _hasBlob: !!f.url
-            }))
-        };
-        localStorage.setItem(`project_${projectId}`, JSON.stringify(data));
-    } catch(e) {
-        // في حال تجاوز حجم localStorage
-        showToast('⚠️ تعذر حفظ المشروع (حجم كبير)', 'warning');
-    }
+    if (!isDataLoaded) return;
+    
+    const data = {
+        clips: projectData.clips,
+        layers: projectData.layers,
+        totalDuration: projectData.totalDuration,
+        cellWidth: projectData.cellWidth,
+        mediaFiles: projectData.mediaFiles
+    };
+    
+    saveProjectToSupabase(projectId, data).catch(() => {
+        updateSyncStatus('error');
+    });
 }
 
-function loadProjectData() {
+// ============================================================
+//  LOAD - ONLY SUPABASE
+// ============================================================
+async function loadProjectData() {
+    const overlay = document.getElementById('loadingOverlay');
+    overlay.classList.remove('hidden');
+    
     try {
-        const saved = localStorage.getItem(`project_${projectId}`);
-        if (saved) {
-            const data = JSON.parse(saved);
+        const data = await loadProjectFromSupabase(projectId);
+        
+        if (data) {
+            projectData.clips = data.clips || [];
+            projectData.layers = data.layers || [{ name: 'طبقة 1', visible: true, locked: false }];
+            projectData.totalDuration = data.totalDuration || 10;
+            projectData.cellWidth = data.cellWidth || 80;
+            projectData.mediaFiles = data.mediaFiles || [];
             
-            if (data.clips) {
-                projectData.clips = data.clips.map(c => {
-                    // استعادة المراجع للملفات
-                    if (c._fileRef) {
-                        const mediaFile = projectData.mediaFiles.find(f => f.name === c._fileRef);
-                        if (mediaFile && mediaFile.url) {
-                            c.content = mediaFile.url;
-                        }
-                    }
-                    // إذا كان المحتوى placeholder ووجدنا ملف مطابق
-                    if (c.content === 'blob' && c._fileRef) {
-                        const mediaFile = projectData.mediaFiles.find(f => f.name === c._fileRef);
-                        if (mediaFile && mediaFile.url) {
-                            c.content = mediaFile.url;
-                        }
-                    }
-                    delete c._fileRef;
-                    return c;
-                });
-            }
-            
-            if (data.layers) projectData.layers = data.layers;
-            if (data.totalDuration) projectData.totalDuration = data.totalDuration;
-            if (data.cellWidth) {
-                projectData.cellWidth = data.cellWidth;
-                document.getElementById('zoom-slider').value = projectData.cellWidth;
-                document.getElementById('zoom-val').textContent = projectData.cellWidth;
+            if (projectData.clips.length > 0) {
+                clipIdCounter = Math.max(...projectData.clips.map(c => c.id)) + 1;
             }
             
             renderLayers();
             renderTimeline();
             updateStatus();
+            renderMediaGallery();
             renderPreview(currentTime);
+            
+            updateSyncStatus('synced');
+            isDataLoaded = true;
+            overlay.classList.add('hidden');
+            showToast('✅ تم تحميل المشروع من Supabase', 'success');
+            return;
         }
+        
+        // إذا كان هناك مشاهد من الخادم (مشروع جديد)
+        if (scenes && scenes.length > 0) {
+            scenes.forEach((scene, i) => {
+                const clip = {
+                    id: clipIdCounter++,
+                    type: 'image',
+                    layer: 0,
+                    start: scene.start_time || i * 3,
+                    duration: scene.duration || 3,
+                    title: scene.title || `مشهد ${i+1}`,
+                    content: scene.content || '',
+                    color: COLORS.image,
+                    icon: '🖼️',
+                    metadata: { scene_id: scene.id }
+                };
+                projectData.clips.push(clip);
+            });
+            projectData.totalDuration = Math.max(...projectData.clips.map(c => c.start + c.duration), 10);
+            
+            renderLayers();
+            renderTimeline();
+            updateStatus();
+            renderMediaGallery();
+            renderPreview(currentTime);
+            
+            // حفظ المشروع الجديد على Supabase
+            await saveProjectData();
+            
+            isDataLoaded = true;
+            overlay.classList.add('hidden');
+            showToast('✅ تم إنشاء مشروع جديد', 'success');
+            return;
+        }
+        
+        // مشروع فارغ
+        projectData.layers = [{ name: 'طبقة 1', visible: true, locked: false }];
+        renderLayers();
+        renderTimeline();
+        updateStatus();
+        renderMediaGallery();
+        renderPreview(currentTime);
+        
+        isDataLoaded = true;
+        overlay.classList.add('hidden');
+        
     } catch(e) {
-        console.warn('Failed to load project data:', e);
+        console.error('❌ فشل تحميل المشروع:', e);
+        overlay.classList.add('hidden');
+        showToast('❌ تعذر تحميل المشروع: ' + e.message, 'error');
+        updateSyncStatus('error');
+        
+        // عرض واجهة فارغة
+        projectData.layers = [{ name: 'طبقة 1', visible: true, locked: false }];
+        renderLayers();
+        renderTimeline();
+        updateStatus();
+        renderMediaGallery();
+        renderPreview(currentTime);
+        isDataLoaded = true;
     }
 }
 
+// ============================================================
+//  EXPORT
+// ============================================================
 function exportProject() {
     const data = {
         project: projectId,
@@ -2706,7 +2958,6 @@ function exportProject() {
         clips: projectData.clips.map(c => ({
             ...c,
             content: c.content && c.content.startsWith('blob:') ? 'blob' : c.content,
-            // حفظ مرجع الملف للتصدير
             _fileRef: c.metadata && c.metadata.file ? c.metadata.file : null
         })),
         layers: projectData.layers,
@@ -2729,7 +2980,7 @@ function exportProject() {
 }
 
 // ============================================================
-//  RENDER - مع دعم التقدم
+//  RENDER
 // ============================================================
 function startRender(projectId) {
     const btn = document.getElementById('renderBtn');
@@ -2803,7 +3054,7 @@ function pollRenderStatus(jobId) {
     }
     
     let attempts = 0;
-    const maxAttempts = 60; // 5 دقائق
+    const maxAttempts = 60;
     
     renderPollInterval = setInterval(() => {
         attempts++;
@@ -2858,6 +3109,38 @@ function pollRenderStatus(jobId) {
 }
 
 // ============================================================
+//  INIT
+// ============================================================
+document.addEventListener('DOMContentLoaded', function() {
+    canvas = document.getElementById('previewCanvas');
+    ctx = canvas.getContext('2d');
+    audioPlayer = document.getElementById('audioPlayer');
+    
+    resizeCanvas();
+    window.addEventListener('resize', resizeCanvas);
+    
+    if (projectData.layers.length === 0) {
+        projectData.layers.push({ name: 'طبقة 1', visible: true, locked: false });
+    }
+    
+    loadProjectData();
+});
+
+function resizeCanvas() {
+    const container = document.getElementById('previewArea');
+    if (!container || !canvas) return;
+    const rect = container.getBoundingClientRect();
+    const w = rect.width || 800;
+    const h = Math.min(rect.height || 400, w * 9 / 16);
+    canvas.width = w;
+    canvas.height = h;
+    canvas.style.width = w + 'px';
+    canvas.style.height = h + 'px';
+    isCanvasReady = true;
+    renderPreview(currentTime);
+}
+
+// ============================================================
 //  UTILITY
 // ============================================================
 function formatTime(seconds) {
@@ -2905,19 +3188,16 @@ window.addEventListener('beforeunload', function() {
         clearInterval(renderPollInterval);
     }
     
-    // تحرير موارد الصوت
     if (audioContext) {
         try { audioContext.close(); } catch(e) {}
     }
     
-    // تحرير Blob URLs
     projectData.mediaFiles.forEach(f => {
         if (f.url && f.url.startsWith('blob:')) {
             try { URL.revokeObjectURL(f.url); } catch(e) {}
         }
     });
     
-    // إيقاف فيديوهات المعاينة
     Object.values(videoElements).forEach(v => {
         try {
             v.pause();
@@ -2927,6 +3207,6 @@ window.addEventListener('beforeunload', function() {
     });
 });
 
-console.log('🎬 المحرر جاهز (الإصدار المحسن)');
+console.log('🎬 المحرر جاهز - التخزين على Supabase فقط ✅');
 </script>
 {% endblock %}
