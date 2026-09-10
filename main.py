@@ -81,7 +81,7 @@ async def get_supabase_status() -> dict:
     
     # Test database connection
     try:
-        db_status = get_db_status()
+        db_status = await get_db_status()
         if db_status.get("available", False):
             status["connection"]["status"] = "connected"
             status["connection"]["message"] = "Database connection successful"
@@ -204,7 +204,7 @@ async def lifespan(app: FastAPI):
         logger.warning("⚠️ Continuing without database - some features will be unavailable")
     
     # Display database status
-    status = get_db_status()
+    status = await get_db_status()
     logger.info("📊 Database status: Available=%s, Engine Initialized=%s", 
                 status.get('available', False), 
                 status.get('engine_initialized', False))
