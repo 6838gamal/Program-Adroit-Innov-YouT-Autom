@@ -6,6 +6,7 @@ Falls back to a simple single-asset render when no scenes are provided.
 import asyncio
 import logging
 import subprocess
+import traceback
 from pathlib import Path
 from typing import Callable, Awaitable
 import uuid
@@ -19,6 +20,20 @@ from shared.ports.renderer_port import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _diag(msg: str) -> None:
+    print(msg, flush=True)
+    logger.info(msg)
+
+
+def _diag_err(msg: str, exc: BaseException | None = None) -> None:
+    print(msg, flush=True)
+    if exc is not None:
+        logger.error(msg, exc_info=exc)
+        traceback.print_exception(type(exc), exc, exc.__traceback__)
+    else:
+        logger.error(msg)
 
 
 class FFmpegRendererPlugin(RendererPort):
@@ -50,16 +65,32 @@ class FFmpegRendererPlugin(RendererPort):
         temp_dir: Path,
         progress_callback: Callable[[float, str], Awaitable[None]],
     ) -> RenderResult:
+        _diag(f"🎬 FFmpegRenderer.render START project={project_id}")
+        _diag(f"🎬 temp_dir={temp_dir}")
+        _diag(f"🎬 settings fps={settings.fps} W={settings.resolution_width} H={settings.resolution_height}")
+        _diag(f"🎬 timeline_data keys={list(timeline_data.keys())}")
+
         output_path = temp_dir / f"render_{project_id}.mp4"
+        _diag(f"🎬 output_path={output_path}")
 
         # ── Scene-based render (new pipeline) ─────────────────────────────────
         scenes: list[dict] = timeline_data.get("scenes", [])
+        _diag(f"🎬 scenes count={len(scenes)}")
+
         if scenes:
+            for i, sc in enumerate(scenes):
+                _diag(
+                    f"🎬 scene[{i}] text_len={len(sc.get('text', ''))} "
+                    f"image={sc.get('image_path', '')!r} "
+                    f"audio={sc.get('audio_path', '')!r} "
+                    f"dur={sc.get('duration')}"
+                )
             return await self._render_scenes(
                 scenes, output_path, settings, temp_dir, progress_callback
             )
 
         # ── Legacy single-asset render ─────────────────────────────────────────
+        _diag("🎬 No scenes — falling back to single-asset render")
         return await self._render_single_asset(
             timeline_data, assets, output_path, settings, progress_callback
         )
@@ -89,6 +120,8 @@ class FFmpegRendererPlugin(RendererPort):
         fps = settings.fps
         total = len(scenes)
 
+        _diag(f"🎬 _render_scenes START total={total} W={W} H={H} fps={fps}")
+
         await progress_callback(10.0, f"تجهيز {total} مشهد")
 
         # Step 1: Render each scene to a temp clip
@@ -97,15 +130,25 @@ class FFmpegRendererPlugin(RendererPort):
             progress = 10.0 + (i / total) * 60.0
             await progress_callback(progress, f"تركيب المشهد {i + 1}/{total}")
 
-            clip_path = temp_dir / f"scene_{i:04d}.mp4"
-            await self._render_single_scene(scene, clip_path, W, H, fps)
-            if clip_path.exists():
+            clip_path = temp_dir / f"clip_{i:04d}.mp4"  # ← اسم مميز لتجنب التعارض مع scene_{i}.jpg
+            _diag(f"🎬 Rendering scene {i + 1}/{total} → {clip_path}")
+
+            try:
+                await self._render_single_scene(scene, clip_path, W, H, fps)
+            except Exception as e:
+                _diag_err(f"💥 _render_single_scene failed for scene {i}: {e}", e)
+                continue
+
+            if clip_path.exists() and clip_path.stat().st_size > 0:
+                _diag(f"✅ scene {i} clip OK size={clip_path.stat().st_size}")
                 clips.append(clip_path)
             else:
-                logger.warning("Scene %d render failed, skipping", i)
+                _diag_err(f"⚠️ Scene {i} render produced no/invalid output: {clip_path}")
 
         if not clips:
             raise RuntimeError("جميع المشاهد فشلت في التحويل")
+
+        _diag(f"🎬 All scenes rendered, clips={len(clips)}")
 
         await progress_callback(72.0, "دمج المشاهد")
 
@@ -114,6 +157,7 @@ class FFmpegRendererPlugin(RendererPort):
         with open(concat_list, "w") as f:
             for clip in clips:
                 f.write(f"file '{clip}'\n")
+        _diag(f"🎬 concat.txt written with {len(clips)} entries")
 
         cmd = [
             "ffmpeg", "-y",
@@ -131,17 +175,22 @@ class FFmpegRendererPlugin(RendererPort):
         ]
 
         await progress_callback(80.0, "الترميز النهائي")
+        _diag(f"🎬 Running concat FFmpeg cmd: {' '.join(cmd)}")
         success = await self._run_ffmpeg(cmd)
+        _diag(f"🎬 Concat FFmpeg success={success}")
 
         if not success or not output_path.exists():
             raise RuntimeError("FFmpeg concat render failed")
 
         await progress_callback(95.0, "اكتمل الرندر")
-        return RenderResult(
+
+        result = RenderResult(
             output_path=output_path,
             duration=sum(s.get("duration", 5.0) for s in scenes),
             file_size=output_path.stat().st_size,
         )
+        _diag(f"🎬 _render_scenes END output={output_path} size={result.file_size}")
+        return result
 
     async def _render_single_scene(
         self,
@@ -157,12 +206,17 @@ class FFmpegRendererPlugin(RendererPort):
         duration   = float(scene.get("duration", 5.0))
         transition = scene.get("transition", "fade")
 
-        has_image = image_path and Path(image_path).exists()
-        has_audio = audio_path and Path(audio_path).exists()
+        has_image = bool(image_path) and Path(image_path).exists()
+        has_audio = bool(audio_path) and Path(audio_path).exists()
 
-        # Build video input
+        _diag(
+            f"🎬 _render_single_scene: image={has_image} audio={has_audio} "
+            f"duration={duration} transition={transition}"
+        )
+
+        # ── Build video input ────────────────────────────────────────────────
         if has_image:
-            video_input = ["-loop", "1", "-t", str(duration), "-i", image_path]
+            video_input = ["-loop", "1", "-i", image_path]
             vf = (
                 f"scale={W}:{H}:force_original_aspect_ratio=decrease,"
                 f"pad={W}:{H}:(ow-iw)/2:(oh-ih)/2:color=black,"
@@ -182,15 +236,12 @@ class FFmpegRendererPlugin(RendererPort):
             ]
             vf = "format=yuv420p"
 
-        # Build audio input
+        # ── Build audio input ────────────────────────────────────────────────
         if has_audio:
             audio_input = ["-i", audio_path]
             audio_encode = ["-c:a", "aac", "-b:a", "192k"]
-            # Trim/pad audio to match duration
-            audio_filter = [
-                "-af",
-                f"apad,atrim=0:{duration}",
-            ]
+            # Trim audio to match duration WITHOUT apad (apad + shortest = hang)
+            audio_filter = ["-af", f"atrim=0:{duration}"]
         else:
             # Silent audio
             audio_input = [
@@ -200,28 +251,36 @@ class FFmpegRendererPlugin(RendererPort):
             audio_encode = ["-c:a", "aac", "-b:a", "64k"]
             audio_filter = []
 
+        # ── Build full command ───────────────────────────────────────────────
+        # IMPORTANT: -t on OUTPUT (not input), and -shortest only for audio
+        # Remove "-shortest" entirely to avoid deadlocks; use -t on output.
         cmd = (
-            ["ffmpeg", "-y"]
+            ["ffmpeg", "-y", "-nostdin"]
             + video_input
             + audio_input
             + [
                 "-vf", vf,
                 "-r", str(fps),
-                "-t", str(duration),
+                "-t", str(duration),  # ← output duration (limits both streams)
                 "-c:v", "libx264",
                 "-preset", "fast",
                 "-crf", "23",
+                "-pix_fmt", "yuv420p",
             ]
             + audio_encode
             + audio_filter
             + [
-                "-shortest",
                 "-movflags", "+faststart",
                 str(output_path),
             ]
         )
 
-        await self._run_ffmpeg(cmd)
+        _diag(f"🎬 Scene FFmpeg cmd: {' '.join(cmd)}")
+        ok = await self._run_ffmpeg(cmd)
+        _diag(f"🎬 Scene FFmpeg success={ok} exists={output_path.exists()}")
+
+        if not ok:
+            raise RuntimeError(f"Scene render failed: {output_path}")
 
     # ─── Legacy single-asset render ───────────────────────────────────────────
 
@@ -238,6 +297,8 @@ class FFmpegRendererPlugin(RendererPort):
         H = settings.resolution_height
         fps = settings.fps
 
+        _diag(f"🎬 _render_single_asset START duration={duration}")
+
         await progress_callback(5.0, "تجهيز الأصول")
 
         video_assets = [a for a in assets.values() if a.get("type") == "video" and a.get("file_path")]
@@ -247,27 +308,30 @@ class FFmpegRendererPlugin(RendererPort):
 
         if video_assets:
             cmd = [
-                "ffmpeg", "-y", "-i", video_assets[0]["file_path"],
+                "ffmpeg", "-y", "-nostdin", "-i", video_assets[0]["file_path"],
                 "-vf", f"scale={W}:{H}:force_original_aspect_ratio=decrease,pad={W}:{H}:(ow-iw)/2:(oh-ih)/2",
                 "-r", str(fps), "-c:v", "libx264", "-preset", "fast", "-crf", "23",
                 "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(output_path),
             ]
         elif image_assets:
             cmd = [
-                "ffmpeg", "-y", "-loop", "1", "-i", image_assets[0]["file_path"],
+                "ffmpeg", "-y", "-nostdin",
+                "-loop", "1", "-i", image_assets[0]["file_path"],
                 "-t", str(duration),
                 "-vf", f"scale={W}:{H}:force_original_aspect_ratio=decrease,pad={W}:{H}:(ow-iw)/2:(oh-ih)/2,format=yuv420p",
                 "-r", str(fps), "-c:v", "libx264", "-preset", "fast", "-crf", "23", str(output_path),
             ]
         else:
             cmd = [
-                "ffmpeg", "-y", "-f", "lavfi",
+                "ffmpeg", "-y", "-nostdin", "-f", "lavfi",
                 "-i", f"color=black:size={W}x{H}:rate={fps}:duration={duration}",
                 "-c:v", "libx264", "-preset", "fast", "-crf", "28", str(output_path),
             ]
 
         await progress_callback(30.0, "تشفير الفيديو")
+        _diag(f"🎬 Single-asset FFmpeg cmd: {' '.join(cmd)}")
         success = await self._run_ffmpeg(cmd)
+        _diag(f"🎬 Single-asset success={success}")
 
         if not success or not output_path.exists():
             raise RuntimeError("FFmpeg render failed")
@@ -287,8 +351,10 @@ class FFmpegRendererPlugin(RendererPort):
         config: ThumbnailConfig,
         output_path: Path,
     ) -> Path:
+        _diag(f"🎬 generate_thumbnail video={video_path} → {output_path}")
+
         cmd = [
-            "ffmpeg", "-y", "-i", str(video_path),
+            "ffmpeg", "-y", "-nostdin", "-i", str(video_path),
             "-ss", "00:00:01.000", "-vframes", "1",
             "-vf", (
                 f"scale={config.width}:{config.height}:force_original_aspect_ratio=decrease,"
@@ -296,7 +362,9 @@ class FFmpegRendererPlugin(RendererPort):
             ),
             str(output_path),
         ]
-        await self._run_ffmpeg(cmd)
+        ok = await self._run_ffmpeg(cmd)
+        _diag(f"🎬 thumbnail ffmpeg ok={ok} exists={output_path.exists()}")
+
         if not output_path.exists():
             await self._create_blank_thumbnail(config, output_path)
         return output_path
@@ -304,18 +372,38 @@ class FFmpegRendererPlugin(RendererPort):
     # ─── Utilities ────────────────────────────────────────────────────────────
 
     async def _run_ffmpeg(self, cmd: list[str]) -> bool:
+        """Run FFmpeg with proper stdin/stdout handling and timeout."""
         loop = asyncio.get_event_loop()
-        try:
-            result = await loop.run_in_executor(
-                None,
-                lambda: subprocess.run(cmd, capture_output=True, text=True, timeout=300),
+
+        def _run():
+            return subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=300,
+                stdin=subprocess.DEVNULL,  # ← CRITICAL: prevent hangs
             )
+
+        try:
+            _diag(f"🎬 FFmpeg exec: {' '.join(cmd[:8])} ...")
+            result = await loop.run_in_executor(None, _run)
+
             if result.returncode != 0:
-                logger.error("FFmpeg error:\n%s", result.stderr[-3000:])
+                _diag_err(
+                    f"💥 FFmpeg failed (rc={result.returncode})\n"
+                    f"STDERR tail:\n{result.stderr[-3000:]}"
+                )
                 return False
+
+            _diag(f"✅ FFmpeg OK (rc=0)")
             return True
+
+        except subprocess.TimeoutExpired as e:
+            _diag_err(f"💥 FFmpeg TIMEOUT after 300s: {e}", e)
+            return False
+
         except Exception as e:
-            logger.exception("FFmpeg execution error: %s", e)
+            _diag_err(f"💥 FFmpeg execution error: {e}", e)
             return False
 
     async def _create_blank_thumbnail(self, config: ThumbnailConfig, output_path: Path) -> None:
@@ -336,5 +424,6 @@ class FFmpegRendererPlugin(RendererPort):
                     fill=config.text_color, anchor="mm",
                 )
             img.save(str(output_path), "JPEG", quality=90)
+            _diag(f"✅ Blank thumbnail created: {output_path}")
         except Exception as e:
-            logger.warning("Could not create thumbnail: %s", e)
+            _diag_err(f"⚠️ Could not create blank thumbnail: {e}", e)
