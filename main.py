@@ -18,7 +18,7 @@ from infrastructure.database.session import (
     check_connection, 
     is_database_available,
     get_db_status,
-    get_db_error,
+    get_database_error,
     get_session_factory,
     _use_supabase_client
 )
