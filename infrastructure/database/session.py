@@ -1,4 +1,3 @@
-```python
 import logging
 import os
 import re
@@ -601,4 +600,3 @@ async def get_db_status() -> dict:
         "configured": get_database_url() is not None,
         "error": _db_error,
     }
-```
