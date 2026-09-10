@@ -19,9 +19,9 @@ from infrastructure.database.session import (
     is_database_available,
     get_db_status,
     get_database_error,
-    get_session_factory,
-    _use_supabase_client
+    get_session_factory
 )
+from infrastructure.database.supabase_client import SupabaseClient
 from plugins.registry import PluginRegistry, PluginLoader
 from interfaces.api.router import api_router
 from interfaces.api.oauth import router as oauth_router
