@@ -1,8 +1,13 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from uuid import UUID
 from typing import Annotated, Optional, List, Dict, Any
+from functools import lru_cache
 import logging
+import os
+import shutil
+import subprocess
+import time
 from datetime import datetime
 
 from application.services.production_service import ProductionService
@@ -11,10 +16,10 @@ from infrastructure.repositories.sql_project_repository import SQLProjectReposit
 from infrastructure.repositories.sql_render_job_repository import SQLRenderJobRepository
 from infrastructure.event_bus.in_memory_event_bus import InMemoryEventBus
 from interfaces.schemas.production_schemas import (
-    StartRenderRequest, 
+    StartRenderRequest,
     RenderJobResponse,
     RenderStatusResponse,
-    CancelRenderResponse
+    CancelRenderResponse,
 )
 from shared.exceptions import ProjectNotFoundError, RenderJobNotFoundError
 
@@ -26,18 +31,39 @@ router = APIRouter(prefix="/production", tags=["production"])
 _event_bus = InMemoryEventBus()
 
 
-def get_production_service(
-    session: AsyncSession = Depends(get_db),
-) -> ProductionService:
-    from interfaces.web.dependencies import get_plugin_registry_from_app
-    from fastapi import Request
-    # Import registry lazily to avoid circular imports
+# ═══════════════════════════════════════════════════════════════════════════
+# Plugin Registry — cached ONCE per process (fixes repeated loading)
+# ═══════════════════════════════════════════════════════════════════════════
+
+@lru_cache(maxsize=1)
+def _load_plugin_registry():
+    """
+    Load the PluginRegistry exactly once per process.
+    Subsequent calls return the same cached instance.
+    """
     from plugins.registry import PluginRegistry, PluginLoader
     from config.settings import settings
 
+    logger.info("🔌 Loading PluginRegistry (ONCE per process)…")
     registry = PluginRegistry()
     loader = PluginLoader()
     loader.load_all(settings.PLUGIN_CONFIG_PATH, registry)
+    logger.info("✅ PluginRegistry loaded and cached")
+    return registry
+
+
+def get_production_service(
+    session: AsyncSession = Depends(get_db),
+) -> ProductionService:
+    """Build a ProductionService with a CACHED plugin registry."""
+    try:
+        registry = _load_plugin_registry()
+    except Exception as e:
+        logger.error(f"💥 Failed to load PluginRegistry: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Plugin registry initialization failed: {e}",
+        )
 
     return ProductionService(
         project_repo=SQLProjectRepository(session),
@@ -47,6 +73,10 @@ def get_production_service(
     )
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# Render endpoints
+# ═══════════════════════════════════════════════════════════════════════════
+
 @router.post("/render", response_model=RenderJobResponse, status_code=202)
 async def start_render(
     body: StartRenderRequest,
@@ -54,11 +84,11 @@ async def start_render(
 ):
     """
     بدء عملية الرندر لمشروع معين
-    
+
     يمكن للعميل إرسال:
     1. فقط project_id (لرندر مشروع موجود)
     2. project_id + بيانات المشروع الكاملة (لحفظ المشروع ثم رندره)
-    
+
     Returns:
         RenderJobResponse: معلومات عن مهمة الرندر
     """
@@ -66,57 +96,55 @@ async def start_render(
         # ====== 1. التحقق الأساسي ======
         if not body.project_id:
             raise HTTPException(status_code=400, detail="project_id is required")
-        
+
         logger.info(f"📥 طلب رندر للمشروع: {body.project_id}")
-        
+
         # ====== 2. حفظ بيانات المشروع إذا أرسلها العميل ======
         if body.clips is not None:
             try:
                 logger.info(f"💾 حفظ بيانات المشروع {body.project_id} قبل الرندر")
-                
-                # تحويل البيانات إلى تنسيق مناسب للتخزين
+
                 clips_data = []
                 if body.clips:
                     for clip in body.clips:
-                        clip_dict = clip.dict() if hasattr(clip, 'dict') else clip
+                        clip_dict = clip.dict() if hasattr(clip, "dict") else clip
                         clips_data.append(clip_dict)
-                
+
                 layers_data = []
                 if body.layers:
                     for layer in body.layers:
-                        layer_dict = layer.dict() if hasattr(layer, 'dict') else layer
+                        layer_dict = layer.dict() if hasattr(layer, "dict") else layer
                         layers_data.append(layer_dict)
-                
+
                 media_data = []
                 if body.mediaFiles:
                     for media in body.mediaFiles:
-                        media_dict = media.dict() if hasattr(media, 'dict') else media
+                        media_dict = media.dict() if hasattr(media, "dict") else media
                         media_data.append(media_dict)
-                
-                # حفظ البيانات في قاعدة البيانات
+
                 await service.save_project_data(
                     project_id=body.project_id,
                     clips=clips_data,
                     layers=layers_data,
                     total_duration=body.duration or 10.0,
-                    media_files=media_data
+                    media_files=media_data,
                 )
                 logger.info(f"✅ تم حفظ بيانات المشروع {body.project_id} بنجاح")
-                
+
             except Exception as e:
                 logger.warning(f"⚠️ فشل حفظ بيانات المشروع: {str(e)}")
                 # نستمر في الرندر حتى لو فشل الحفظ
-        
+
         # ====== 3. تحويل data إلى dict للمشروع ======
         project_data = None
         if body.clips is not None or body.layers is not None:
             project_data = {
-                "clips": [c.dict() if hasattr(c, 'dict') else c for c in (body.clips or [])],
-                "layers": [l.dict() if hasattr(l, 'dict') else l for l in (body.layers or [])],
+                "clips": [c.dict() if hasattr(c, "dict") else c for c in (body.clips or [])],
+                "layers": [l.dict() if hasattr(l, "dict") else l for l in (body.layers or [])],
                 "total_duration": body.duration or 10.0,
-                "media_files": [m.dict() if hasattr(m, 'dict') else m for m in (body.mediaFiles or [])]
+                "media_files": [m.dict() if hasattr(m, "dict") else m for m in (body.mediaFiles or [])],
             }
-        
+
         # ====== 4. بدء الرندر ======
         render_settings = {
             "fps": body.fps or 30,
@@ -124,41 +152,41 @@ async def start_render(
             "height": body.height or 1080,
             "quality": body.quality or "medium",
         }
-        
+
         logger.info(f"🎬 بدء الرندر للمشروع {body.project_id} بالإعدادات: {render_settings}")
-        
+
         job = await service.start_render(
             project_id=body.project_id,
             render_settings=render_settings,
             project_data=project_data,
         )
-        
+
         logger.info(f"✅ تم إنشاء مهمة الرندر: {job.id} للمشروع {body.project_id}")
-        
+
         # ====== 5. إرجاع النتيجة ======
         return RenderJobResponse(
             job_id=job.id,
             project_id=job.project_id,
-            renderer=getattr(job, 'renderer', 'default'),
-            status=job.status.value if hasattr(job.status, 'value') else str(job.status),
+            renderer=getattr(job, "renderer", "default"),
+            status=job.status.value if hasattr(job.status, "value") else str(job.status),
             progress=job.progress or 0,
-            current_stage=getattr(job, 'current_stage', ''),
-            output_path=getattr(job, 'output_path', None),
-            error_message=getattr(job, 'error_message', None),
-            started_at=getattr(job, 'started_at', None),
-            completed_at=getattr(job, 'completed_at', None),
+            current_stage=getattr(job, "current_stage", ""),
+            output_path=getattr(job, "output_path", None),
+            error_message=getattr(job, "error_message", None),
+            started_at=getattr(job, "started_at", None),
+            completed_at=getattr(job, "completed_at", None),
             created_at=job.created_at,
-            render_settings=getattr(job, 'settings', render_settings),
+            render_settings=getattr(job, "settings", render_settings),
         )
-        
+
     except ProjectNotFoundError as e:
         logger.error(f"❌ مشروع غير موجود: {str(e)}")
         raise HTTPException(status_code=404, detail=f"Project not found: {str(e)}")
-    
+
     except ValueError as e:
         logger.error(f"❌ خطأ في البيانات: {str(e)}")
         raise HTTPException(status_code=400, detail=f"Invalid data: {str(e)}")
-    
+
     except Exception as e:
         logger.error(f"❌ فشل الرندر: {str(e)}", exc_info=True)
         raise HTTPException(status_code=400, detail=f"Render failed: {str(e)}")
@@ -168,27 +196,25 @@ async def start_render(
 async def list_render_jobs(
     service: ProductionService = Depends(get_production_service),
 ):
-    """
-    الحصول على قائمة بجميع مهام الرندر
-    """
+    """الحصول على قائمة بجميع مهام الرندر."""
     try:
         jobs = await service.list_jobs()
         logger.info(f"📋 تم جلب {len(jobs)} مهمة رندر")
-        
+
         return [
             RenderJobResponse(
                 job_id=job.id,
                 project_id=job.project_id,
-                renderer=getattr(job, 'renderer', 'default'),
-                status=job.status.value if hasattr(job.status, 'value') else str(job.status),
+                renderer=getattr(job, "renderer", "default"),
+                status=job.status.value if hasattr(job.status, "value") else str(job.status),
                 progress=job.progress or 0,
-                current_stage=getattr(job, 'current_stage', ''),
-                output_path=getattr(job, 'output_path', None),
-                error_message=getattr(job, 'error_message', None),
-                started_at=getattr(job, 'started_at', None),
-                completed_at=getattr(job, 'completed_at', None),
+                current_stage=getattr(job, "current_stage", ""),
+                output_path=getattr(job, "output_path", None),
+                error_message=getattr(job, "error_message", None),
+                started_at=getattr(job, "started_at", None),
+                completed_at=getattr(job, "completed_at", None),
                 created_at=job.created_at,
-                render_settings=getattr(job, 'settings', {}),
+                render_settings=getattr(job, "settings", {}),
             )
             for job in jobs
         ]
@@ -202,32 +228,30 @@ async def get_render_job(
     job_id: UUID,
     service: ProductionService = Depends(get_production_service),
 ):
-    """
-    الحصول على تفاصيل مهمة رندر محددة
-    """
+    """الحصول على تفاصيل مهمة رندر محددة."""
     try:
         job = await service.get_job(job_id)
         logger.info(f"📄 تم جلب تفاصيل المهمة: {job_id}")
-        
+
         return RenderJobResponse(
             job_id=job.id,
             project_id=job.project_id,
-            renderer=getattr(job, 'renderer', 'default'),
-            status=job.status.value if hasattr(job.status, 'value') else str(job.status),
+            renderer=getattr(job, "renderer", "default"),
+            status=job.status.value if hasattr(job.status, "value") else str(job.status),
             progress=job.progress or 0,
-            current_stage=getattr(job, 'current_stage', ''),
-            output_path=getattr(job, 'output_path', None),
-            error_message=getattr(job, 'error_message', None),
-            started_at=getattr(job, 'started_at', None),
-            completed_at=getattr(job, 'completed_at', None),
+            current_stage=getattr(job, "current_stage", ""),
+            output_path=getattr(job, "output_path", None),
+            error_message=getattr(job, "error_message", None),
+            started_at=getattr(job, "started_at", None),
+            completed_at=getattr(job, "completed_at", None),
             created_at=job.created_at,
-            render_settings=getattr(job, 'settings', {}),
+            render_settings=getattr(job, "settings", {}),
         )
-        
+
     except RenderJobNotFoundError as e:
         logger.warning(f"⚠️ مهمة غير موجودة: {job_id}")
         raise HTTPException(status_code=404, detail=f"Render job not found: {str(e)}")
-    
+
     except Exception as e:
         logger.error(f"❌ فشل جلب المهمة {job_id}: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to get job: {str(e)}")
@@ -238,26 +262,24 @@ async def get_render_status(
     job_id: UUID,
     service: ProductionService = Depends(get_production_service),
 ):
-    """
-    الحصول على حالة مهمة رندر محددة (نظام المراقبة)
-    """
+    """الحصول على حالة مهمة رندر محددة (نظام المراقبة)."""
     try:
         job = await service.get_job(job_id)
-        
+
         return RenderStatusResponse(
             job_id=str(job.id),
             project_id=str(job.project_id),
-            status=job.status.value if hasattr(job.status, 'value') else str(job.status),
+            status=job.status.value if hasattr(job.status, "value") else str(job.status),
             progress=int(job.progress or 0),
-            current_stage=getattr(job, 'current_stage', None),
-            error=getattr(job, 'error_message', None),
-            output_url=getattr(job, 'output_path', None),
+            current_stage=getattr(job, "current_stage", None),
+            error=getattr(job, "error_message", None),
+            output_url=getattr(job, "output_path", None),
             updated_at=datetime.utcnow().isoformat(),
         )
-        
+
     except RenderJobNotFoundError:
         raise HTTPException(status_code=404, detail="Render job not found")
-    
+
     except Exception as e:
         logger.error(f"❌ فشل جلب حالة المهمة {job_id}: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to get status: {str(e)}")
@@ -268,32 +290,131 @@ async def cancel_render_job(
     job_id: UUID,
     service: ProductionService = Depends(get_production_service),
 ):
-    """
-    إلغاء مهمة رندر قيد التنفيذ
-    """
+    """إلغاء مهمة رندر قيد التنفيذ."""
     try:
         job = await service.get_job(job_id)
-        
-        current_status = job.status.value if hasattr(job.status, 'value') else str(job.status)
+
+        current_status = job.status.value if hasattr(job.status, "value") else str(job.status)
         if current_status not in ["pending", "processing"]:
             raise HTTPException(
-                status_code=400, 
-                detail=f"Cannot cancel job with status: {current_status}"
+                status_code=400,
+                detail=f"Cannot cancel job with status: {current_status}",
             )
-        
+
         await service.cancel_job(job_id)
         logger.info(f"🛑 تم إلغاء المهمة: {job_id}")
-        
+
         return CancelRenderResponse(
             job_id=str(job_id),
             status="cancelled",
-            message="Render job cancelled successfully"
+            message="Render job cancelled successfully",
         )
-        
+
     except RenderJobNotFoundError as e:
         logger.warning(f"⚠️ مهمة غير موجودة للإلغاء: {job_id}")
         raise HTTPException(status_code=404, detail=f"Render job not found: {str(e)}")
-    
+
+    except HTTPException:
+        raise
+
     except Exception as e:
         logger.error(f"❌ فشل إلغاء المهمة {job_id}: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to cancel job: {str(e)}")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Diagnostic endpoints (help debug Render.com resource issues)
+# ═══════════════════════════════════════════════════════════════════════════
+
+@router.get("/debug/ffmpeg")
+async def debug_ffmpeg():
+    """
+    Check FFmpeg availability, version, and system resources.
+    Useful for debugging render hangs on cloud platforms.
+    """
+    # FFmpeg version
+    ffmpeg_ok = False
+    ffmpeg_version = ""
+    ffmpeg_path = ""
+    try:
+        result = subprocess.run(
+            ["ffmpeg", "-version"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            stdin=subprocess.DEVNULL,
+        )
+        ffmpeg_ok = result.returncode == 0
+        ffmpeg_version = (
+            result.stdout.split("\n")[0] if ffmpeg_ok else result.stderr[:500]
+        )
+        ffmpeg_path = shutil.which("ffmpeg") or "not found"
+    except Exception as e:
+        ffmpeg_version = f"error: {e}"
+
+    # Memory
+    memory = {}
+    try:
+        with open("/proc/meminfo") as f:
+            for line in f:
+                if line.startswith(("MemTotal", "MemAvailable", "MemFree")):
+                    k, v = line.split(":")
+                    memory[k] = v.strip()
+    except Exception:
+        pass
+
+    # Disk
+    disk_info = {}
+    try:
+        disk = shutil.disk_usage("/app")
+        disk_info = {
+            "total_gb": round(disk.total / 1e9, 2),
+            "used_gb": round(disk.used / 1e9, 2),
+            "free_gb": round(disk.free / 1e9, 2),
+        }
+    except Exception:
+        pass
+
+    # Load average (Linux only)
+    load = {}
+    try:
+        load = dict(zip(("1min", "5min", "15min"), os.getloadavg()))
+    except Exception:
+        pass
+
+    return {
+        "ffmpeg_available": ffmpeg_ok,
+        "ffmpeg_path": ffmpeg_path,
+        "ffmpeg_version": ffmpeg_version,
+        "cpu_count": os.cpu_count(),
+        "load_average": load,
+        "memory": memory,
+        "disk_app": disk_info,
+    }
+
+
+@router.get("/debug/registry")
+async def debug_registry():
+    """Check which plugins are loaded in the cached registry."""
+    try:
+        registry = _load_plugin_registry()
+        # Try to list plugins — the registry may have different APIs
+        info = {"type": type(registry).__name__, "cached": True}
+        for attr in ("list_plugins", "plugins", "_plugins", "registry"):
+            val = getattr(registry, attr, None)
+            if val is None:
+                continue
+            if callable(val):
+                try:
+                    info[attr] = list(val()) if not isinstance(val(), dict) else val()
+                except Exception as e:
+                    info[attr] = f"error: {e}"
+            else:
+                try:
+                    info[attr] = list(val.keys()) if hasattr(val, "keys") else str(val)
+                except Exception:
+                    info[attr] = str(val)
+        return info
+    except Exception as e:
+        logger.error(f"💥 debug_registry failed: {e}", exc_info=True)
+        return {"error": str(e)}
