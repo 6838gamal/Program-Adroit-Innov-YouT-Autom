@@ -248,6 +248,97 @@
 </div>
 {% endif %}
 </div>
+
+<!-- ====== Modal النشر ====== -->
+<div id="publishModal" class="hidden fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+    <div class="card w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+        <div class="flex items-center justify-between mb-4 pb-3 border-b border-slate-700">
+            <h3 class="text-white font-semibold text-lg flex items-center gap-2">
+                <svg class="w-5 h-5 text-indigo-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
+                </svg>
+                نشر المشروع
+            </h3>
+            <button onclick="closePublishModal()" class="text-slate-400 hover:text-white">
+                <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                </svg>
+            </button>
+        </div>
+
+        <!-- معلومات المشروع -->
+        <div class="mb-4 p-3 bg-slate-800/50 rounded-lg">
+            <div class="text-xs text-slate-400 mb-1">المشروع</div>
+            <div class="text-white font-medium" id="publishProjectTitle">—</div>
+        </div>
+
+        <!-- اختيار الحسابات -->
+        <div class="mb-4">
+            <label class="block text-sm text-slate-300 mb-2">
+                اختر الحسابات للنشر عليها
+                <span class="text-xs text-slate-500">(يمكن اختيار أكثر من حساب)</span>
+            </label>
+            <div id="publishAccountsList" class="space-y-2">
+                <div class="text-center py-4 text-slate-500 text-sm">جاري تحميل الحسابات...</div>
+            </div>
+        </div>
+
+        <!-- تفاصيل النشر -->
+        <div class="space-y-3 mb-4">
+            <div>
+                <label class="block text-sm text-slate-300 mb-1">العنوان</label>
+                <input type="text" id="publishTitle" class="input w-full" 
+                       placeholder="عنوان الفيديو على المنصة" maxlength="100">
+            </div>
+            <div>
+                <label class="block text-sm text-slate-300 mb-1">الوصف</label>
+                <textarea id="publishDescription" class="input w-full" rows="3"
+                          placeholder="وصف الفيديو (اختياري)" maxlength="5000"></textarea>
+            </div>
+            <div>
+                <label class="block text-sm text-slate-300 mb-1">الوسوم (مفصولة بفواصل)</label>
+                <input type="text" id="publishTags" class="input w-full" 
+                       placeholder="تعليم, تقنية, برمجة">
+            </div>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                    <label class="block text-sm text-slate-300 mb-1">الخصوصية</label>
+                    <select id="publishPrivacy" class="input w-full">
+                        <option value="public">🌍 عام</option>
+                        <option value="unlisted">🔗 غير مدرج</option>
+                        <option value="private">🔒 خاص</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm text-slate-300 mb-1">الجدولة (اختياري)</label>
+                    <input type="datetime-local" id="publishScheduledAt" class="input w-full">
+                </div>
+            </div>
+        </div>
+
+        <!-- أزرار -->
+        <div class="flex gap-2 justify-end pt-3 border-t border-slate-700">
+            <button onclick="closePublishModal()" class="btn-secondary">إلغاء</button>
+            <button onclick="submitPublish()" class="btn-primary" id="publishSubmitBtn">
+                <svg class="w-4 h-4 inline ml-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+                </svg>
+                نشر الآن
+            </button>
+        </div>
+
+        <!-- حالة النشر -->
+        <div id="publishProgress" class="hidden mt-4 p-3 bg-slate-800/50 rounded-lg">
+            <div class="flex items-center gap-2 mb-2">
+                <div class="spinner"></div>
+                <span class="text-sm text-slate-300" id="publishProgressText">جاري النشر...</span>
+            </div>
+            <div class="w-full bg-slate-700 rounded-full h-2">
+                <div id="publishProgressBar" class="bg-indigo-500 h-2 rounded-full transition-all" style="width: 0%"></div>
+            </div>
+        </div>
+    </div>
+</div>
 {% endblock %}
 
 {% block scripts %}
@@ -297,25 +388,183 @@ async function startRender(projectId) {
     }
 }
 
-// نشر المشروع
+// ============================================
+// نظام النشر المتقدم
+// ============================================
+
+let _currentPublishProjectId = null;
+
 async function publishProject(projectId) {
-    if (!confirm('هل أنت متأكد من نشر هذا المشروع؟')) return;
+    _currentPublishProjectId = projectId;
+    
+    // 1) افتح modal
+    document.getElementById('publishModal').classList.remove('hidden');
+    
+    // 2) حمّل الحسابات المتصلة
+    await loadPublishAccounts();
+    
+    // 3) املأ التفاصيل الافتراضية
+    await loadProjectDefaults(projectId);
+}
+
+function closePublishModal() {
+    document.getElementById('publishModal').classList.add('hidden');
+    _currentPublishProjectId = null;
+    document.getElementById('publishProgress').classList.add('hidden');
+    document.getElementById('publishSubmitBtn').disabled = false;
+    document.getElementById('publishProgressBar').style.background = '#6366f1';
+}
+
+async function loadPublishAccounts() {
+    const container = document.getElementById('publishAccountsList');
+    container.innerHTML = '<div class="text-center py-4 text-slate-500 text-sm">جاري تحميل الحسابات...</div>';
+    
     try {
-        const resp = await fetch(`/api/v1/projects/${projectId}/publish`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' }
-        });
-        if (resp.ok) {
-            showToast('🚀 تم نشر المشروع بنجاح', 'success');
-            setTimeout(() => window.location.reload(), 1000);
-        } else {
-            const err = await resp.json();
-            showToast(err.detail || '❌ فشل النشر', 'error');
+        const resp = await fetch('/api/v1/publishing/accounts');
+        if (!resp.ok) throw new Error('فشل تحميل الحسابات');
+        
+        const data = await resp.json();
+        const accounts = data.items || data.accounts || [];
+        
+        if (accounts.length === 0) {
+            container.innerHTML = `
+                <div class="text-center py-4 text-slate-500 text-sm">
+                    لا توجد حسابات متصلة.
+                    <a href="/platforms" class="text-indigo-400 hover:underline mr-1">ربط حساب</a>
+                </div>
+            `;
+            return;
         }
-    } catch (e) { 
-        showToast('❌ خطأ في الاتصال', 'error'); 
+        
+        container.innerHTML = accounts.map(acc => `
+            <label class="flex items-center gap-3 p-3 bg-slate-800/50 rounded-lg hover:bg-slate-700/50 cursor-pointer transition">
+                <input type="checkbox" class="publish-account-checkbox" 
+                       value="${acc.id}" 
+                       data-platform="${acc.platform_name || acc.platform || 'youtube'}">
+                <div class="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center flex-shrink-0">
+                    ${acc.platform_name === 'youtube' || acc.platform === 'youtube' ? '▶️' : 
+                      acc.platform_name === 'tiktok' || acc.platform === 'tiktok' ? '🎵' : 
+                      acc.platform_name === 'instagram' || acc.platform === 'instagram' ? '📷' : '🌐'}
+                </div>
+                <div class="flex-1 min-w-0">
+                    <div class="text-white text-sm font-medium truncate">${acc.name || 'حساب'}</div>
+                    <div class="text-xs text-slate-400 capitalize">${acc.platform_name || acc.platform || 'منصة'}</div>
+                </div>
+                ${acc.is_verified || acc.verified ? 
+                    '<span class="text-xs text-green-400">✅ متصل</span>' : 
+                    '<span class="text-xs text-yellow-400">⚠️ غير مُتحقق</span>'}
+            </label>
+        `).join('');
+        
+    } catch (e) {
+        console.error('loadPublishAccounts error:', e);
+        container.innerHTML = `
+            <div class="text-center py-4 text-red-400 text-sm">
+                فشل تحميل الحسابات: ${e.message}
+            </div>
+        `;
     }
 }
+
+async function loadProjectDefaults(projectId) {
+    try {
+        const resp = await fetch(`/api/v1/projects/${projectId}`);
+        if (resp.ok) {
+            const project = await resp.json();
+            document.getElementById('publishProjectTitle').textContent = project.title || '—';
+            document.getElementById('publishTitle').value = project.title || '';
+            document.getElementById('publishDescription').value = project.description || '';
+            document.getElementById('publishTags').value = (project.tags || []).join(', ');
+        }
+    } catch (e) {
+        console.error('loadProjectDefaults error:', e);
+    }
+}
+
+async function submitPublish() {
+    const btn = document.getElementById('publishSubmitBtn');
+    const progress = document.getElementById('publishProgress');
+    const progressBar = document.getElementById('publishProgressBar');
+    const progressText = document.getElementById('publishProgressText');
+    
+    // 1) اجمع الحسابات المختارة
+    const selected = Array.from(document.querySelectorAll('.publish-account-checkbox:checked'))
+        .map(cb => ({
+            account_id: cb.value,
+            platform: cb.dataset.platform,
+        }));
+    
+    if (selected.length === 0) {
+        showToast('⚠️ اختر حساباً واحداً على الأقل', 'warning');
+        return;
+    }
+    
+    // 2) اجمع التفاصيل
+    const title = document.getElementById('publishTitle').value.trim();
+    if (!title) {
+        showToast('⚠️ العنوان مطلوب', 'warning');
+        return;
+    }
+    
+    const description = document.getElementById('publishDescription').value.trim();
+    const tagsRaw = document.getElementById('publishTags').value.trim();
+    const tags = tagsRaw ? tagsRaw.split(',').map(t => t.trim()).filter(Boolean) : [];
+    const privacy = document.getElementById('publishPrivacy').value;
+    const scheduledAtRaw = document.getElementById('publishScheduledAt').value;
+    const scheduled_at = scheduledAtRaw ? new Date(scheduledAtRaw).toISOString() : null;
+    
+    // 3) أرسل الطلب
+    btn.disabled = true;
+    progress.classList.remove('hidden');
+    progressBar.style.width = '10%';
+    progressBar.style.background = '#6366f1';
+    progressText.textContent = 'جاري إرسال الطلب...';
+    
+    try {
+        const resp = await fetch(`/api/v1/projects/${_currentPublishProjectId}/publish-to`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                accounts: selected,
+                title: title,
+                description: description,
+                tags: tags,
+                privacy: privacy,
+                scheduled_at: scheduled_at,
+            }),
+        });
+        
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => ({}));
+            throw new Error(err.detail || 'فشل النشر');
+        }
+        
+        const result = await resp.json();
+        
+        progressBar.style.width = '100%';
+        progressText.textContent = `✅ تم إرسال ${result.jobs_created || selected.length} مهمة نشر`;
+        
+        showToast(`✅ تم إرسال ${result.jobs_created || selected.length} مهمة نشر`, 'success');
+        
+        setTimeout(() => {
+            closePublishModal();
+            window.location.reload();
+        }, 1500);
+        
+    } catch (e) {
+        console.error('submitPublish error:', e);
+        progressText.textContent = `❌ فشل النشر: ${e.message}`;
+        progressBar.style.background = '#ef4444';
+        progressBar.style.width = '100%';
+        showToast('❌ ' + e.message, 'error');
+        btn.disabled = false;
+    }
+}
+
+// إغلاق modal بضغط ESC
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closePublishModal();
+});
 
 // مشاركة المشروع
 function shareProject(projectId) {
@@ -442,10 +691,7 @@ window.addEventListener('projectCreated', (event) => {
     const { projectId, project } = event.detail;
     console.log('🔄 تم استلام مشروع جديد:', project);
     
-    // تحديث الإحصائيات
     updateStats(project);
-    
-    // إضافة المشروع إلى الشبكة
     addProjectToGrid(project);
     
     showToast('✅ تم إضافة المشروع الجديد بنجاح', 'success');
@@ -478,13 +724,11 @@ function addProjectToGrid(project) {
     const container = document.getElementById('projects-container');
     if (!container) return;
     
-    // إزالة رسالة "لا توجد مشاريع"
     const emptyMessage = container.querySelector('.text-center.py-16');
     if (emptyMessage) {
         emptyMessage.remove();
     }
     
-    // إنشاء بطاقة المشروع وإضافتها
     const card = createProjectCard(project);
     container.insertAdjacentHTML('afterbegin', card);
 }
@@ -605,14 +849,12 @@ setInterval(updateProgress, 3000);
 // ============================================
 window.addEventListener('error', (event) => {
     console.error('Global error:', event.error);
-    showToast('❌ حدث خطأ غير متوقع.', 'error');
 });
 
 window.addEventListener('unhandledrejection', (event) => {
     console.error('Unhandled rejection:', event.reason);
-    showToast('❌ حدث خطأ غير متوقع.', 'error');
 });
 
-console.log('📋 Projects Page initialized');
+console.log('📋 Projects Page initialized with Publish Modal');
 </script>
 {% endblock %}
