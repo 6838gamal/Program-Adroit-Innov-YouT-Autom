@@ -4,7 +4,7 @@
 
 {% block header_actions %}
 {% if project.status.value in ['draft', 'rendered', 'failed'] %}
-<button onclick="startRender('{{ project.id }}')" class="btn-primary btn-sm">
+<button onclick="startRender('{{ project.id }}')" class="btn-primary btn-sm" id="header-render-btn">
     <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
     <span class="hidden xs:inline">رندر</span>
 </button>
@@ -33,10 +33,10 @@
                 <svg class="w-4 h-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.069A1 1 0 0121 8.87v6.26a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
                 معاينة الفيديو
             </h3>
-            {% if project.video_url %}
+            {% if video_url %}
             <div class="relative bg-black rounded-lg overflow-hidden aspect-video">
-                <video id="project-video" class="w-full h-full" controls controlsList="nodownload">
-                    <source src="{{ project.video_url }}" type="video/mp4">
+                <video id="project-video" class="w-full h-full" controls controlsList="nodownload" preload="metadata">
+                    <source src="{{ video_url }}" type="video/mp4">
                     متصفحك لا يدعم تشغيل الفيديو
                 </video>
             </div>
@@ -58,6 +58,16 @@
                     <span class="text-slate-500 block">📐 الأبعاد</span>
                     <span class="text-slate-300">{{ project.dimensions or '—' }}</span>
                 </div>
+            </div>
+            <div class="mt-2 flex flex-wrap gap-2">
+                <a href="{{ video_url }}" download class="btn-secondary btn-sm">
+                    <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+                    تحميل الفيديو
+                </a>
+                <a href="{{ video_url }}" target="_blank" class="btn-secondary btn-sm">
+                    <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
+                    فتح في تبويب جديد
+                </a>
             </div>
             {% if project.uploader %}
             <div class="mt-2 grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
@@ -96,7 +106,7 @@
             </div>
             {% endif %}
             {% else %}
-            <div class="text-center py-8 text-slate-500">
+            <div class="text-center py-8 text-slate-500" id="no-video-placeholder">
                 <svg class="w-12 h-12 mx-auto mb-3 opacity-20" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.069A1 1 0 0121 8.87v6.26a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
                 <p class="text-sm">لا يوجد فيديو معاينة</p>
                 <p class="text-xs mt-1">قم بتشغيل الرندر لتوليد الفيديو</p>
@@ -118,11 +128,11 @@
                 <span class="text-slate-500 text-xs">{{ project.created_at.strftime('%Y-%m-%d %H:%M') if project.created_at else '—' }}</span>
                 <span class="text-slate-500 text-xs">🆔 {{ project.id|string|truncate(10, True, '') }}...</span>
             </div>
-            
+
             {% if project.description %}
             <p class="text-slate-300 text-sm sm:text-base mb-4">{{ project.description }}</p>
             {% endif %}
-            
+
             {% if project.script %}
             <div>
                 <h3 class="text-slate-400 text-xs sm:text-sm mb-2 flex items-center gap-1.5">
@@ -132,7 +142,7 @@
                 <div class="bg-slate-900 rounded-lg p-3 sm:p-4 text-xs sm:text-sm text-slate-300 font-mono max-h-40 sm:max-h-52 overflow-y-auto whitespace-pre-wrap leading-relaxed">{{ project.script }}</div>
             </div>
             {% endif %}
-            
+
             {% if project.tags %}
             <div class="flex flex-wrap gap-1.5 mt-4">
                 {% for tag in project.tags %}
@@ -151,20 +161,16 @@
             {% if render_jobs %}
             <div class="space-y-2.5" id="render-jobs">
                 {% for job in render_jobs %}
-                <div class="bg-slate-700/50 rounded-lg p-3" id="job-{{ job.id }}">
+                <div class="bg-slate-700/50 rounded-lg p-3" id="job-{{ job.id }}" data-status="{{ job.status.value }}">
                     <div class="flex items-center justify-between mb-2">
                         <span class="text-white text-xs font-mono truncate max-w-[140px] sm:max-w-xs">{{ job.id | string | truncate(22, True, '…') }}</span>
                         <span class="badge status-{{ job.status.value }} mr-2 flex-shrink-0">{{ job.status.value }}</span>
                     </div>
                     {% if job.status.value == 'processing' %}
-                    <div class="w-full bg-slate-600 rounded-full h-2 mb-1"
-                         hx-get="/api/v1/production/jobs/{{ job.id }}"
-                         hx-trigger="every 2s"
-                         hx-swap="none"
-                         hx-on="htmx:afterRequest: updateJobProgress(event, '{{ job.id }}')">
-                        <div id="progress-{{ job.id }}" class="bg-blue-500 h-2 rounded-full progress-bar" style="width: {{ job.progress }}%"></div>
+                    <div class="w-full bg-slate-600 rounded-full h-2 mb-1">
+                        <div id="progress-{{ job.id }}" class="bg-blue-500 h-2 rounded-full progress-bar transition-all" style="width: {{ job.progress }}%"></div>
                     </div>
-                    <div id="stage-{{ job.id }}" class="text-xs text-slate-400">{{ job.progress | round(1) }}% — {{ job.current_stage }}</div>
+                    <div id="stage-{{ job.id }}" class="text-xs text-slate-400">{{ job.progress | round(1) }}% — {{ job.current_stage or '' }}</div>
                     {% elif job.status.value == 'completed' %}
                     <div class="text-xs text-green-400 flex items-center gap-1">
                         <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
@@ -189,6 +195,7 @@
     <!-- الشريط الجانبي -->
     <div class="space-y-4">
         <!-- الألوان -->
+        {% if project.brand_colors %}
         <div class="card">
             <h3 class="text-slate-300 font-medium mb-3 text-sm flex items-center gap-2">
                 <svg class="w-4 h-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01"/></svg>
@@ -202,6 +209,7 @@
                 {% endfor %}
             </div>
         </div>
+        {% endif %}
 
         <!-- إجراءات -->
         <div class="card">
@@ -211,6 +219,10 @@
                     <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 10h16M4 14h16M4 18h16"/></svg>
                     محرر التايم لاين
                 </a>
+                <button onclick="startRender('{{ project.id }}')" class="btn-primary w-full justify-center text-sm" id="sidebar-render-btn">
+                    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/></svg>
+                    إعادة الرندر
+                </button>
                 <button onclick="deleteProject('{{ project.id }}')" class="btn-danger w-full justify-center text-sm">
                     <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
                     حذف المشروع
@@ -240,34 +252,159 @@
 
 {% block scripts %}
 <script>
-function openPublishModal() { document.getElementById('publish-modal').classList.remove('hidden'); }
+// ============================================================
+//  PROJECT ID
+// ============================================================
+const PROJECT_ID = "{{ project.id }}";
+
+// ============================================================
+//  PUBLISH MODAL
+// ============================================================
+function openPublishModal() {
+    document.getElementById('publish-modal').classList.remove('hidden');
+}
+
+// ============================================================
+//  RENDER (Start + Poll)
+// ============================================================
+let detailPollInterval = null;
 
 async function startRender(projectId) {
+    showToast('⏳ جاري بدء الرندر...', 'info');
+
     try {
         const resp = await fetch('/api/v1/production/render', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ project_id: projectId })
         });
-        if (resp.ok) { 
-            showToast('بدأت عملية الرندر', 'success'); 
-            setTimeout(() => location.reload(), 1500); 
-        } else { 
-            const err = await resp.json(); 
-            showToast(err.detail || 'فشل بدء الرندر', 'error'); 
+
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => ({}));
+            showToast(err.detail || 'فشل بدء الرندر', 'error');
+            return;
         }
-    } catch (e) { showToast('خطأ في الاتصال', 'error'); }
+
+        const data = await resp.json();
+        console.log('📤 Render response:', data);
+
+        if (data.job_id) {
+            showToast('✅ بدأ الرندر — جاري المتابعة', 'success');
+            pollRenderStatus(data.job_id);
+        } else if (data.status === 'completed') {
+            showToast('✅ تم الرندر! جاري تحديث الصفحة...', 'success');
+            setTimeout(() => location.reload(), 1500);
+        } else {
+            showToast('✅ بدأ الرندر', 'success');
+            // أعد التحميل بعد لحظات
+            setTimeout(() => location.reload(), 2500);
+        }
+    } catch (e) {
+        showToast('خطأ في الاتصال: ' + e.message, 'error');
+    }
 }
 
+function pollRenderStatus(jobId) {
+    if (detailPollInterval) clearInterval(detailPollInterval);
+
+    let errors = 0;
+    const maxErrors = 5;
+
+    // تأكد من وجود عنصر المهمة (إن لم يكن موجوداً، لا شيء)
+    const jobEl = document.getElementById(`job-${jobId}`);
+
+    detailPollInterval = setInterval(async () => {
+        try {
+            const resp = await fetch(`/api/v1/production/jobs/${jobId}/status`);
+            if (!resp.ok) {
+                errors++;
+                if (errors >= maxErrors) {
+                    clearInterval(detailPollInterval);
+                    detailPollInterval = null;
+                    showToast('❌ فشل الاتصال بالخادم', 'error');
+                }
+                return;
+            }
+            errors = 0;
+            const data = await resp.json();
+            console.log('📊 Render status:', data);
+
+            // حدّث شريط التقدم إن وُجد
+            const prog = document.getElementById(`progress-${jobId}`);
+            const stage = document.getElementById(`stage-${jobId}`);
+            if (prog) prog.style.width = (data.progress || 0) + '%';
+            if (stage) {
+                stage.textContent = `${(data.progress || 0).toFixed(1)}% — ${data.current_stage || ''}`;
+            }
+
+            if (data.status === 'completed') {
+                clearInterval(detailPollInterval);
+                detailPollInterval = null;
+                showToast('✅ اكتمل الرندر! جاري تحديث الصفحة...', 'success');
+                setTimeout(() => location.reload(), 1500);
+
+            } else if (data.status === 'failed') {
+                clearInterval(detailPollInterval);
+                detailPollInterval = null;
+                showToast(`❌ فشل الرندر: ${data.error || 'خطأ'}`, 'error');
+                setTimeout(() => location.reload(), 1500);
+            }
+        } catch (e) {
+            console.error('Poll error:', e);
+        }
+    }, 4000);
+}
+
+// ============================================================
+//  AUTO-RESUME POLLING IF RENDER IS RUNNING
+// ============================================================
+document.addEventListener('DOMContentLoaded', function() {
+    // ابحث عن أول مهمة بحالة processing لاستئناف المتابعة
+    const processingJobEl = document.querySelector('[data-status="processing"]');
+    if (processingJobEl) {
+        const jobId = processingJobEl.id.replace('job-', '');
+        console.log('🔄 استئناف متابعة الرندر:', jobId);
+        pollRenderStatus(jobId);
+    }
+
+    // تحديث مدة الفيديو من المتصفح
+    const video = document.getElementById('project-video');
+    if (video) {
+        video.addEventListener('loadedmetadata', function() {
+            if (this.duration && !isNaN(this.duration)) {
+                const mins = Math.floor(this.duration / 60);
+                const secs = Math.floor(this.duration % 60);
+                const el = document.getElementById('video-duration-display');
+                if (el) el.textContent = `${mins}:${String(secs).padStart(2, '0')}`;
+            }
+        });
+
+        // في حال فشل تحميل الفيديو، اعرض رسالة واضحة
+        video.addEventListener('error', function(e) {
+            const src = video.querySelector('source')?.src || '—';
+            console.error('❌ فشل تحميل الفيديو:', src);
+            showToast('⚠️ تعذر تحميل الفيديو — تحقق من إعدادات Supabase', 'warning');
+        });
+    }
+});
+
+// ============================================================
+//  DELETE
+// ============================================================
 async function deleteProject(id) {
     if (!confirm('هل أنت متأكد من حذف هذا المشروع؟')) return;
     const resp = await fetch(`/api/v1/projects/${id}`, { method: 'DELETE' });
-    if (resp.ok) { 
-        showToast('تم الحذف', 'success'); 
-        setTimeout(() => window.location.href = '/projects', 800); 
-    } else showToast('فشل الحذف', 'error');
+    if (resp.ok) {
+        showToast('تم الحذف', 'success');
+        setTimeout(() => window.location.href = '/projects', 800);
+    } else {
+        showToast('فشل الحذف', 'error');
+    }
 }
 
+// ============================================================
+//  PUBLISH
+// ============================================================
 async function publishProject(id) {
     document.getElementById('publish-modal').classList.add('hidden');
     try {
@@ -279,38 +416,39 @@ async function publishProject(id) {
             showToast('✅ تم النشر بنجاح!', 'success');
             setTimeout(() => location.reload(), 1000);
         } else {
-            const err = await resp.json();
+            const err = await resp.json().catch(() => ({}));
             showToast(err.detail || 'فشل النشر', 'error');
         }
-    } catch (e) { showToast('خطأ في الاتصال', 'error'); }
-}
-
-function updateJobProgress(event, jobId) {
-    try {
-        const data = JSON.parse(event.detail.xhr.responseText);
-        const prog = document.getElementById(`progress-${jobId}`);
-        const stage = document.getElementById(`stage-${jobId}`);
-        if (prog) prog.style.width = data.progress + '%';
-        if (stage) stage.textContent = `${data.progress.toFixed(1)}% — ${data.current_stage}`;
-        if (['completed', 'failed', 'cancelled'].includes(data.status)) {
-            setTimeout(() => location.reload(), 1000);
-        }
-    } catch(e) {}
-}
-
-// تحديث مدة الفيديو من المتصفح
-document.addEventListener('DOMContentLoaded', function() {
-    const video = document.getElementById('project-video');
-    if (video) {
-        video.addEventListener('loadedmetadata', function() {
-            if (this.duration && !isNaN(this.duration)) {
-                const mins = Math.floor(this.duration / 60);
-                const secs = Math.floor(this.duration % 60);
-                document.getElementById('video-duration-display').textContent = 
-                    `${mins}:${String(secs).padStart(2, '0')}`;
-            }
-        });
+    } catch (e) {
+        showToast('خطأ في الاتصال', 'error');
     }
-});
+}
+
+// ============================================================
+//  TOAST (fallback إن لم يكن موجوداً في base.html)
+// ============================================================
+if (typeof window.showToast !== 'function') {
+    window.showToast = function(msg, type = 'info') {
+        const oldToast = document.querySelector('.toast-message');
+        if (oldToast) oldToast.remove();
+
+        const toast = document.createElement('div');
+        toast.className = 'toast-message fixed bottom-20 left-1/2 transform -translate-x-1/2 px-4 py-2 rounded-lg text-white text-sm z-50 transition-all duration-300 max-w-md text-center';
+        const colors = {
+            success: 'bg-emerald-600',
+            error: 'bg-red-600',
+            warning: 'bg-amber-600',
+            info: 'bg-blue-600'
+        };
+        toast.classList.add(colors[type] || colors.info);
+        toast.textContent = msg;
+        document.body.appendChild(toast);
+
+        setTimeout(() => {
+            toast.style.opacity = '0';
+            setTimeout(() => toast.remove(), 300);
+        }, 3000);
+    };
+}
 </script>
 {% endblock %}
