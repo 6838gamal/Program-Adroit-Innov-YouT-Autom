@@ -955,8 +955,7 @@
 </button>
 <button onclick="exportProject()" class="btn-secondary btn-sm">
     <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
-    تصدير
-</button>
+    تصدير</button>
 <button onclick="openImportModal()" class="btn-secondary btn-sm">
     <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
     استيراد
@@ -2980,7 +2979,7 @@ function exportProject() {
 }
 
 // ============================================================
-//  RENDER - UPDATED with full status polling
+//  RENDER - UPDATED: Redirect to /projects/{id} on success
 // ============================================================
 function startRender(projectId) {
     const btn = document.getElementById('renderBtn');
@@ -3031,11 +3030,14 @@ function startRender(projectId) {
             status.textContent = 'جاري الرندر...';
             pollRenderStatus(renderJobId);
         } else if (data.status === 'completed') {
-            showToast('✅ تم الرندر بنجاح!', 'success');
+            showToast('✅ تم الرندر بنجاح! جاري فتح صفحة المشروع...', 'success');
             loading.classList.remove('active');
             btn.disabled = false;
             btn.style.opacity = '1';
-            setTimeout(() => window.location.href = '/render-queue', 1500);
+            // ✅ التوجيه إلى صفحة تفاصيل المشروع
+            setTimeout(() => {
+                window.location.href = `/projects/${projectId}`;
+            }, 1200);
         } else {
             throw new Error('استجابة غير متوقعة');
         }
@@ -3049,7 +3051,7 @@ function startRender(projectId) {
 }
 
 // ============================================================
-//  POLL RENDER STATUS - UPDATED with full monitoring
+//  POLL RENDER STATUS - Redirect to /projects/{id} on success
 // ============================================================
 function pollRenderStatus(jobId) {
     // Clear any existing interval
@@ -3110,14 +3112,18 @@ function pollRenderStatus(jobId) {
                 if (data.status === 'completed') {
                     clearInterval(renderPollInterval);
                     renderPollInterval = null;
-                    if (statusEl) statusEl.textContent = '✅ اكتمل الرندر بنجاح!';
+                    
+                    if (statusEl) statusEl.textContent = '✅ اكتمل الرندر بنجاح! جاري التحويل...';
                     if (loading) loading.classList.remove('active');
+                    if (progressFill) progressFill.style.width = '100%';
+                    
                     resetRenderUI();
-                    showToast('✅ تم الرندر بنجاح!', 'success');
-                    if (data.output_url) {
-                        window.open(data.output_url, '_blank');
-                    }
-                    setTimeout(() => window.location.reload(), 2000);
+                    showToast('✅ تم الرندر بنجاح! جاري فتح صفحة المشروع...', 'success');
+                    
+                    // ✅ التوجيه إلى صفحة تفاصيل المشروع
+                    setTimeout(() => {
+                        window.location.href = `/projects/${projectId}`;
+                    }, 1200);
                     
                 } else if (data.status === 'failed') {
                     clearInterval(renderPollInterval);
@@ -3177,6 +3183,9 @@ document.addEventListener('DOMContentLoaded', function() {
     if (projectData.layers.length === 0) {
         projectData.layers.push({ name: 'طبقة 1', visible: true, locked: false });
     }
+    
+    setupDragDrop();
+    setupKeyboardShortcuts();
     
     loadProjectData();
 });
