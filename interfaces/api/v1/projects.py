@@ -4,11 +4,10 @@ from uuid import UUID
 from typing import Optional, List, Dict, Any
 import asyncio
 import uuid
+import logging
 from datetime import datetime
 import re
 import json
-import subprocess
-import os
 import shutil
 from urllib.parse import urlparse
 
@@ -25,6 +24,9 @@ from interfaces.schemas.project_schemas import (
 )
 from shared.exceptions import ProjectNotFoundError
 from utils.video_utils import get_download_info, get_youtube_thumbnail, download_video
+
+# ✅ logger في الأعلى
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
@@ -44,7 +46,7 @@ def get_youtube_service() -> YouTubeService:
 
 
 # ============================================
-# تعريف نماذج Pydantic
+# نماذج Pydantic
 # ============================================
 
 class VideoProcessRequest(BaseModel):
@@ -75,10 +77,6 @@ class YouTubeAuthRequest(BaseModel):
     user_id: str = "default"
 
 
-# ============================================
-# نماذج حفظ المشروع في Supabase
-# ============================================
-
 class ProjectSaveRequest(BaseModel):
     project_id: str
     user_id: Optional[str] = None
@@ -88,10 +86,6 @@ class ProjectSaveRequest(BaseModel):
 class ProjectShareRequest(BaseModel):
     email: str
 
-
-# ============================================
-# ✅ نماذج النشر متعدد المنصات (جديد)
-# ============================================
 
 class PublishAccountTarget(BaseModel):
     account_id: str
@@ -108,232 +102,11 @@ class PublishToPlatformsRequest(BaseModel):
 
 
 # ============================================
-# التحقق من وجود yt-dlp (كخيار احتياطي)
+# Helpers
 # ============================================
 
 def is_ytdlp_available() -> bool:
     return shutil.which("yt-dlp") is not None
-
-
-# ============================================
-# استخراج معلومات الفيديو المحسّن
-# ============================================
-
-async def extract_youtube_video_info(url: str, use_auth: bool = False) -> Dict[str, Any]:
-    service = YouTubeService()
-    video_id = service.extract_video_id(url)
-    
-    if not video_id:
-        print(f"⚠️ لم يتم العثور على معرف الفيديو في: {url}")
-        return extract_video_info_manual(url)
-    
-    try:
-        print(f"📡 جلب معلومات الفيديو من YouTube Data API: {video_id}")
-        info = service.get_video_info(video_id, use_auth=use_auth)
-        
-        if info:
-            print(f"✅ تم الحصول على المعلومات من API")
-        else:
-            print(f"⚠️ فشل API، محاولة استخدام pytube...")
-            download_info = get_download_info(video_id)
-            if download_info and not download_info.get('error'):
-                return {
-                    'video_id': video_id,
-                    'title': download_info.get('title', 'فيديو يوتيوب'),
-                    'duration': download_info.get('length', 0),
-                    'thumbnail': download_info.get('thumbnail', get_youtube_thumbnail(video_id)),
-                    'uploader': download_info.get('author', 'YouTube'),
-                    'description': download_info.get('description', ''),
-                    'view_count': 0,
-                    'like_count': 0,
-                    'platform': 'youtube',
-                    'is_external': True,
-                    'url': url,
-                    'format': 'mp4',
-                    'size': None,
-                    'size_bytes': None,
-                    'dimensions': '1920x1080',
-                    'download': download_info,
-                    'warning': 'تم استخدام pytube بدلاً من YouTube API'
-                }
-            else:
-                print(f"⚠️ فشل pytube أيضاً، استخدام الطريقة اليدوية")
-                return extract_video_info_manual(url)
-        
-        download_info = get_download_info(video_id)
-        
-        result = {
-            'video_id': video_id,
-            'title': info.get('title', 'فيديو يوتيوب'),
-            'duration': info.get('duration', 0),
-            'thumbnail': info.get('thumbnail') or get_youtube_thumbnail(video_id),
-            'uploader': info.get('channel_title', 'YouTube'),
-            'uploader_id': info.get('channel_id', ''),
-            'description': info.get('description', ''),
-            'view_count': info.get('view_count', 0),
-            'like_count': info.get('like_count', 0),
-            'comment_count': info.get('comment_count', 0),
-            'platform': 'youtube',
-            'is_external': True,
-            'url': url,
-            'format': 'mp4',
-            'size': None,
-            'size_bytes': None,
-            'dimensions': info.get('dimensions', '1920x1080'),
-            'tags': info.get('tags', []),
-            'category_id': info.get('category_id', ''),
-            'is_private': info.get('is_private', False),
-            'is_unlisted': info.get('is_unlisted', False),
-            'is_embeddable': info.get('is_embeddable', True),
-            'published_at': info.get('published_at', ''),
-            'download': download_info if download_info and not download_info.get('error') else None,
-            'ytdlp_available': False,
-            'ytdlp_error': None,
-            'warning': None,
-            'use_auth': use_auth
-        }
-        
-        if result['duration']:
-            estimated_size_mb = max(result['duration'] * 2.5, 10)
-            result['size_bytes'] = int(estimated_size_mb * 1024 * 1024)
-            result['size'] = f"~{estimated_size_mb:.1f} MB"
-        
-        print(f"✅ تم استخراج معلومات الفيديو بنجاح: {result['title']}")
-        return result
-        
-    except Exception as e:
-        print(f"⚠️ خطأ في استخراج المعلومات: {e}")
-        return extract_video_info_manual(url)
-
-
-def extract_video_info_manual(
-    url: str, 
-    youtube_auth_error: bool = False, 
-    video_unavailable: bool = False,
-    age_restricted: bool = False
-) -> Dict[str, Any]:
-    parsed_url = urlparse(url)
-    domain = parsed_url.netloc.lower()
-    
-    info = {
-        "title": None,
-        "duration": None,
-        "format": "mp4",
-        "size": None,
-        "size_bytes": None,
-        "dimensions": "1280x720",
-        "thumbnail": None,
-        "uploader": None,
-        "description": None,
-        "view_count": None,
-        "like_count": None,
-        "platform": "generic",
-        "ytdlp_error": None,
-        "warning": None,
-        "is_external": True,
-        "video_id": None
-    }
-    
-    if "youtube.com" in domain or "youtu.be" in domain:
-        info["platform"] = "youtube"
-        info["is_external"] = True
-        video_id = extract_youtube_id(url)
-        info["video_id"] = video_id
-        
-        if video_id:
-            info["thumbnail"] = get_youtube_thumbnail(video_id)
-        
-        if age_restricted:
-            info["ytdlp_error"] = "age_restricted"
-            info["warning"] = "الفيديو مقيد بالعمر - سيتم استخدام فيديو تجريبي للعرض"
-            info["title"] = "فيديو يوتيوب (مقيد بالعمر)"
-            info["duration"] = 60
-            info["size"] = "~30.0 MB"
-            info["size_bytes"] = 30 * 1024 * 1024
-        elif video_unavailable:
-            info["ytdlp_error"] = "video_unavailable"
-            info["warning"] = "الفيديو غير متاح - سيتم استخدام فيديو تجريبي للعرض"
-            info["title"] = "فيديو يوتيوب (غير متاح)"
-            info["duration"] = 60
-            info["size"] = "~30.0 MB"
-            info["size_bytes"] = 30 * 1024 * 1024
-        elif youtube_auth_error:
-            info["ytdlp_error"] = "auth_required"
-            info["warning"] = "يوتيوب يطلب تسجيل الدخول - سيتم استخدام فيديو تجريبي للعرض"
-            info["title"] = "فيديو يوتيوب (يتطلب تسجيل الدخول)"
-            info["duration"] = 120
-            info["size"] = "~45.6 MB"
-            info["size_bytes"] = 45.6 * 1024 * 1024
-        else:
-            info["title"] = f"فيديو يوتيوب {f'(ID: {video_id[:8]}...)' if video_id else ''}"
-            info["duration"] = 120
-            info["size"] = "~45.6 MB"
-            info["size_bytes"] = 45.6 * 1024 * 1024
-            info["warning"] = "سيتم استخدام فيديو تجريبي للعرض (YouTube Data API غير متاح)"
-        
-        info["description"] = "فيديو من يوتيوب"
-        info["uploader"] = "YouTube"
-            
-    elif "tiktok.com" in domain:
-        info["platform"] = "tiktok"
-        info["is_external"] = True
-        info["title"] = "فيديو تيك توك"
-        info["duration"] = 60
-        info["size"] = "~15.2 MB"
-        info["size_bytes"] = 15.2 * 1024 * 1024
-        info["dimensions"] = "1080x1920"
-        info["uploader"] = "TikTok"
-        info["description"] = "فيديو من تيك توك"
-        info["warning"] = "سيتم استخدام فيديو تجريبي للعرض"
-        
-    elif "vimeo.com" in domain:
-        info["platform"] = "vimeo"
-        info["is_external"] = False
-        info["title"] = "فيديو Vimeo"
-        info["duration"] = 180
-        info["size"] = "~89.3 MB"
-        info["size_bytes"] = 89.3 * 1024 * 1024
-        info["uploader"] = "Vimeo"
-        info["description"] = "فيديو من Vimeo"
-        
-    elif "facebook.com" in domain:
-        info["platform"] = "facebook"
-        info["is_external"] = True
-        info["title"] = "فيديو فيسبوك"
-        info["duration"] = 120
-        info["size"] = "~35.0 MB"
-        info["size_bytes"] = 35 * 1024 * 1024
-        info["uploader"] = "Facebook"
-        info["description"] = "فيديو من فيسبوك"
-        info["warning"] = "سيتم استخدام فيديو تجريبي للعرض"
-        
-    elif "instagram.com" in domain:
-        info["platform"] = "instagram"
-        info["is_external"] = True
-        info["title"] = "فيديو إنستغرام"
-        info["duration"] = 60
-        info["size"] = "~20.0 MB"
-        info["size_bytes"] = 20 * 1024 * 1024
-        info["uploader"] = "Instagram"
-        info["description"] = "فيديو من إنستغرام"
-        info["warning"] = "سيتم استخدام فيديو تجريبي للعرض"
-        
-    else:
-        info["platform"] = "generic"
-        info["is_external"] = True
-        info["title"] = f"فيديو من {domain}"
-        info["duration"] = 90
-        info["size"] = "~30.0 MB"
-        info["size_bytes"] = 30 * 1024 * 1024
-        info["format"] = detect_video_format(url)
-        info["description"] = f"فيديو من {domain}"
-        info["warning"] = "سيتم استخدام فيديو تجريبي للعرض"
-    
-    print(f"ℹ️ تم استخراج معلومات الفيديو يدوياً: {info['title']} ({info['platform']})")
-    if info.get("warning"):
-        print(f"⚠️ {info['warning']}")
-    
-    return info
 
 
 def extract_youtube_id(url: str) -> Optional[str]:
@@ -345,9 +118,8 @@ def extract_youtube_id(url: str) -> Optional[str]:
         r'(?:youtube\.com\/v\/)([\w-]+)',
         r'(?:youtube\.com\/watch\?.*?v=)([\w-]+)',
         r'(?:youtube\.com\/@[\w-]+\/video\/)([\w-]+)',
-        r'(?:youtube\.com\/live\/)([\w-]+)'
+        r'(?:youtube\.com\/live\/)([\w-]+)',
     ]
-    
     for pattern in patterns:
         match = re.search(pattern, url)
         if match:
@@ -357,15 +129,9 @@ def extract_youtube_id(url: str) -> Optional[str]:
 
 def detect_video_format(url: str) -> str:
     extensions = {
-        '.mp4': 'mp4',
-        '.webm': 'webm',
-        '.avi': 'avi',
-        '.mov': 'mov',
-        '.mkv': 'mkv',
-        '.flv': 'flv',
-        '.wmv': 'wmv'
+        '.mp4': 'mp4', '.webm': 'webm', '.avi': 'avi',
+        '.mov': 'mov', '.mkv': 'mkv', '.flv': 'flv', '.wmv': 'wmv',
     }
-    
     for ext, format_name in extensions.items():
         if ext in url.lower():
             return format_name
@@ -383,8 +149,182 @@ def format_file_size(bytes_size: int) -> str:
         return f"{bytes_size / (1024 * 1024 * 1024):.2f} GB"
 
 
+def extract_video_info_manual(
+    url: str,
+    youtube_auth_error: bool = False,
+    video_unavailable: bool = False,
+    age_restricted: bool = False,
+) -> Dict[str, Any]:
+    parsed_url = urlparse(url)
+    domain = parsed_url.netloc.lower()
+
+    info = {
+        "title": None, "duration": None, "format": "mp4",
+        "size": None, "size_bytes": None, "dimensions": "1280x720",
+        "thumbnail": None, "uploader": None, "description": None,
+        "view_count": None, "like_count": None, "platform": "generic",
+        "ytdlp_error": None, "warning": None, "is_external": True,
+        "video_id": None,
+    }
+
+    if "youtube.com" in domain or "youtu.be" in domain:
+        info["platform"] = "youtube"
+        info["is_external"] = True
+        video_id = extract_youtube_id(url)
+        info["video_id"] = video_id
+        if video_id:
+            info["thumbnail"] = get_youtube_thumbnail(video_id)
+
+        if age_restricted:
+            info["ytdlp_error"] = "age_restricted"
+            info["warning"] = "الفيديو مقيد بالعمر"
+            info["title"] = "فيديو يوتيوب (مقيد بالعمر)"
+            info["duration"] = 60
+            info["size"] = "~30.0 MB"
+            info["size_bytes"] = 30 * 1024 * 1024
+        elif video_unavailable:
+            info["ytdlp_error"] = "video_unavailable"
+            info["warning"] = "الفيديو غير متاح"
+            info["title"] = "فيديو يوتيوب (غير متاح)"
+            info["duration"] = 60
+            info["size"] = "~30.0 MB"
+            info["size_bytes"] = 30 * 1024 * 1024
+        elif youtube_auth_error:
+            info["ytdlp_error"] = "auth_required"
+            info["warning"] = "يوتيوب يطلب تسجيل الدخول"
+            info["title"] = "فيديو يوتيوب (يتطلب تسجيل الدخول)"
+            info["duration"] = 120
+            info["size"] = "~45.6 MB"
+            info["size_bytes"] = 45.6 * 1024 * 1024
+        else:
+            info["title"] = f"فيديو يوتيوب {f'(ID: {video_id[:8]}...)' if video_id else ''}"
+            info["duration"] = 120
+            info["size"] = "~45.6 MB"
+            info["size_bytes"] = 45.6 * 1024 * 1024
+            info["warning"] = "سيتم استخدام فيديو تجريبي للعرض"
+
+        info["description"] = "فيديو من يوتيوب"
+        info["uploader"] = "YouTube"
+
+    elif "tiktok.com" in domain:
+        info["platform"] = "tiktok"
+        info["is_external"] = True
+        info["title"] = "فيديو تيك توك"
+        info["duration"] = 60
+        info["size"] = "~15.2 MB"
+        info["size_bytes"] = 15.2 * 1024 * 1024
+        info["dimensions"] = "1080x1920"
+        info["uploader"] = "TikTok"
+        info["description"] = "فيديو من تيك توك"
+        info["warning"] = "سيتم استخدام فيديو تجريبي للعرض"
+
+    elif "vimeo.com" in domain:
+        info["platform"] = "vimeo"
+        info["is_external"] = False
+        info["title"] = "فيديو Vimeo"
+        info["duration"] = 180
+        info["size"] = "~89.3 MB"
+        info["size_bytes"] = 89.3 * 1024 * 1024
+        info["uploader"] = "Vimeo"
+        info["description"] = "فيديو من Vimeo"
+
+    elif "facebook.com" in domain:
+        info["platform"] = "facebook"
+        info["is_external"] = True
+        info["title"] = "فيديو فيسبوك"
+        info["duration"] = 120
+        info["size"] = "~35.0 MB"
+        info["size_bytes"] = 35 * 1024 * 1024
+        info["uploader"] = "Facebook"
+        info["description"] = "فيديو من فيسبوك"
+        info["warning"] = "سيتم استخدام فيديو تجريبي للعرض"
+
+    elif "instagram.com" in domain:
+        info["platform"] = "instagram"
+        info["is_external"] = True
+        info["title"] = "فيديو إنستغرام"
+        info["duration"] = 60
+        info["size"] = "~20.0 MB"
+        info["size_bytes"] = 20 * 1024 * 1024
+        info["uploader"] = "Instagram"
+        info["description"] = "فيديو من إنستغرام"
+        info["warning"] = "سيتم استخدام فيديو تجريبي للعرض"
+
+    else:
+        info["platform"] = "generic"
+        info["is_external"] = True
+        info["title"] = f"فيديو من {domain}"
+        info["duration"] = 90
+        info["size"] = "~30.0 MB"
+        info["size_bytes"] = 30 * 1024 * 1024
+        info["format"] = detect_video_format(url)
+        info["description"] = f"فيديو من {domain}"
+        info["warning"] = "سيتم استخدام فيديو تجريبي للعرض"
+
+    print(f"ℹ️ استخراج يدوي: {info['title']} ({info['platform']})")
+    return info
+
+
+async def extract_youtube_video_info(url: str, use_auth: bool = False) -> Dict[str, Any]:
+    service = YouTubeService()
+    video_id = service.extract_video_id(url)
+
+    if not video_id:
+        return extract_video_info_manual(url)
+
+    try:
+        info = service.get_video_info(video_id, use_auth=use_auth)
+
+        if info:
+            download_info = get_download_info(video_id)
+            result = {
+                'video_id': video_id,
+                'title': info.get('title', 'فيديو يوتيوب'),
+                'duration': info.get('duration', 0),
+                'thumbnail': info.get('thumbnail') or get_youtube_thumbnail(video_id),
+                'uploader': info.get('channel_title', 'YouTube'),
+                'description': info.get('description', ''),
+                'view_count': info.get('view_count', 0),
+                'like_count': info.get('like_count', 0),
+                'platform': 'youtube', 'is_external': True,
+                'url': url, 'format': 'mp4',
+                'size': None, 'size_bytes': None,
+                'dimensions': info.get('dimensions', '1920x1080'),
+                'tags': info.get('tags', []),
+                'download': download_info if download_info and not download_info.get('error') else None,
+                'warning': None, 'use_auth': use_auth,
+            }
+            if result['duration']:
+                mb = max(result['duration'] * 2.5, 10)
+                result['size_bytes'] = int(mb * 1024 * 1024)
+                result['size'] = f"~{mb:.1f} MB"
+            return result
+
+        download_info = get_download_info(video_id)
+        if download_info and not download_info.get('error'):
+            return {
+                'video_id': video_id,
+                'title': download_info.get('title', 'فيديو يوتيوب'),
+                'duration': download_info.get('length', 0),
+                'thumbnail': download_info.get('thumbnail', get_youtube_thumbnail(video_id)),
+                'uploader': download_info.get('author', 'YouTube'),
+                'description': download_info.get('description', ''),
+                'view_count': 0, 'like_count': 0,
+                'platform': 'youtube', 'is_external': True,
+                'url': url, 'format': 'mp4',
+                'size': None, 'size_bytes': None,
+                'dimensions': '1920x1080',
+                'download': download_info,
+                'warning': 'يُستخدم pytube',
+            }
+    except Exception as e:
+        print(f"⚠️ خطأ: {e}")
+
+    return extract_video_info_manual(url)
+
+
 # ============================================
-# نقاط النهاية الأساسية للمشاريع
+# CRUD الأساسي
 # ============================================
 
 @router.get("", response_model=ProjectListResponse)
@@ -398,9 +338,7 @@ async def list_projects(
     projects, total = await service.list_all(limit=limit, offset=offset, status=status, search=search)
     return ProjectListResponse(
         items=[ProjectResponse(**p.to_dict()) for p in projects],
-        total=total,
-        limit=limit,
-        offset=offset,
+        total=total, limit=limit, offset=offset,
     )
 
 
@@ -410,11 +348,8 @@ async def create_project(
     service: ProjectService = Depends(get_project_service),
 ):
     project = await service.create(
-        title=body.title,
-        description=body.description,
-        script=body.script,
-        tags=body.tags,
-        template_id=body.template_id,
+        title=body.title, description=body.description, script=body.script,
+        tags=body.tags, template_id=body.template_id,
         brand_colors=body.brand_colors.model_dump() if body.brand_colors else None,
     )
     return ProjectResponse(**project.to_dict())
@@ -441,10 +376,8 @@ async def update_project(
     try:
         project = await service.update(
             project_id=project_id,
-            title=body.title,
-            description=body.description,
-            script=body.script,
-            tags=body.tags,
+            title=body.title, description=body.description,
+            script=body.script, tags=body.tags,
             template_id=body.template_id,
             brand_colors=body.brand_colors.model_dump() if body.brand_colors else None,
             settings=body.settings,
@@ -466,7 +399,7 @@ async def delete_project(
 
 
 # ============================================
-# نقاط النهاية الإضافية للمشاريع
+# Publish (single)
 # ============================================
 
 @router.post("/{project_id}/publish")
@@ -474,11 +407,6 @@ async def publish_project(
     project_id: UUID,
     service: ProjectService = Depends(get_project_service),
 ):
-    """
-    نشر المشروع (تحويل حالته إلى published).
-
-    ✅ يستخدم service.publish() الذي يستدعي project.mark_published()
-    """
     try:
         updated_project = await service.publish(project_id)
         return {
@@ -492,7 +420,7 @@ async def publish_project(
 
 
 # ============================================
-# ✅ نشر متعدد المنصات (جديد)
+# ✅ Publish to multiple platforms (مصحح بالكامل)
 # ============================================
 
 @router.post("/{project_id}/publish-to")
@@ -504,27 +432,14 @@ async def publish_project_to_platforms(
 ):
     """
     نشر المشروع على منصات متعددة مع تفاصيل كاملة.
-
-    Body:
-    {
-        "accounts": [
-            {"account_id": "uuid", "platform": "youtube"},
-            {"account_id": "uuid", "platform": "tiktok"}
-        ],
-        "title": "...",
-        "description": "...",
-        "tags": ["tag1", "tag2"],
-        "privacy": "public|unlisted|private",
-        "scheduled_at": "2026-09-12T10:00:00Z"  // optional
-    }
     """
     try:
-        # 1) تأكد من وجود المشروع
+        # 1) المشروع
         project = await service.get(project_id)
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
 
-        # 2) تأكد أن المشروع عنده فيديو مُنتَج
+        # 2) الفيديو
         video_url = getattr(project, "video_url", None)
         if not video_url:
             data = getattr(project, "data", None) or {}
@@ -536,15 +451,17 @@ async def publish_project_to_platforms(
                 detail="المشروع ليس له فيديو مُنتَج — قم بالرندر أولاً",
             )
 
-        # 3) جهّز repos
+        # 3) repos + domain
         from infrastructure.repositories.sql_publishing_repository import (
             SQLPublishingJobRepository,
             SQLAccountRepository,
         )
+        from publishing.domain.publishing_job import PublishingJob
 
         acc_repo = SQLAccountRepository(session)
         pub_repo = SQLPublishingJobRepository(session)
 
+        # 4) scheduled_at
         scheduled_at_dt = None
         if body.scheduled_at:
             try:
@@ -554,10 +471,10 @@ async def publish_project_to_platforms(
             except Exception:
                 pass
 
+        # 5) إنشاء المهام
         created_jobs = []
 
         for target in body.accounts:
-            # جلب الحساب
             try:
                 account_uuid = uuid.UUID(target.account_id)
                 account = await acc_repo.get(account_uuid)
@@ -568,30 +485,24 @@ async def publish_project_to_platforms(
             if not account:
                 continue
 
-            # إنشاء مهمة نشر
             try:
-                from core.domain.publishing.publishing_job import PublishingJob
-
+                # ✅ البناء الصحيح مع metadata
                 job = PublishingJob(
                     project_id=project_id,
                     account_id=account.id,
-                    platform=target.platform,
+                    metadata={
+                        "title": body.title,
+                        "description": body.description,
+                        "tags": body.tags,
+                        "privacy": body.privacy,
+                        "video_url": video_url,
+                        "platform": target.platform,
+                    },
+                    scheduled_at=scheduled_at_dt,
                 )
 
-                # حقول إضافية إن كانت مدعومة
-                for attr, val in [
-                    ("title", body.title),
-                    ("description", body.description),
-                    ("tags", body.tags),
-                    ("privacy", body.privacy),
-                    ("scheduled_at", scheduled_at_dt),
-                ]:
-                    try:
-                        setattr(job, attr, val)
-                    except Exception:
-                        pass
-
                 await pub_repo.save(job)
+                await session.commit()  # ✅ مهم
 
                 created_jobs.append({
                     "id": str(job.id),
@@ -600,10 +511,10 @@ async def publish_project_to_platforms(
                 })
 
             except Exception as e:
-                logger.exception(f"Failed to create job for {target.account_id}")
+                logger.exception(f"Failed to create job for {target.account_id}: {e}")
                 continue
 
-        # 4) حدّث حالة المشروع إلى published
+        # 6) حدّث حالة المشروع
         if created_jobs:
             try:
                 await service.publish(project_id)
@@ -625,15 +536,7 @@ async def publish_project_to_platforms(
 
 
 # ============================================
-# استيراد logger (يجب أن يكون في أعلى الملف)
-# ============================================
-
-import logging
-logger = logging.getLogger(__name__)
-
-
-# ============================================
-# نقاط النهاية الإضافية
+# Export / Duplicate / Render
 # ============================================
 
 @router.get("/{project_id}/export")
@@ -643,12 +546,9 @@ async def export_project(
 ):
     try:
         project = await service.get(project_id)
-        if not project:
-            raise HTTPException(status_code=404, detail="Project not found")
-        
         return {
             "project": project.to_dict(),
-            "exported_at": datetime.now().isoformat()
+            "exported_at": datetime.now().isoformat(),
         }
     except ProjectNotFoundError:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -665,16 +565,15 @@ async def duplicate_project(
         original = await service.get(project_id)
         if not original:
             raise HTTPException(status_code=404, detail="Project not found")
-        
+
         new_project = await service.create(
             title=f"{original.title} (نسخة)",
             description=original.description,
             script=original.script,
             tags=original.tags,
             template_id=original.template_id,
-            brand_colors=original.brand_colors
+            brand_colors=original.brand_colors,
         )
-        
         return ProjectResponse(**new_project.to_dict())
     except ProjectNotFoundError:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -687,9 +586,6 @@ async def render_project(
     project_id: UUID,
     service: ProjectService = Depends(get_project_service),
 ):
-    """
-    بدء الرندر (تحويل الحالة إلى in_production).
-    """
     try:
         updated_project = await service.update(
             project_id=project_id,
@@ -706,82 +602,59 @@ async def render_project(
 
 
 # ============================================
-# نقاط النهاية لحفظ واستعادة المشاريع (Supabase)
+# Supabase save/load
 # ============================================
 
 @router.post("/save")
 async def save_project_data(payload: ProjectSaveRequest):
     try:
         from infrastructure.database.supabase_client import get_supabase_admin
-        
         supabase = get_supabase_admin()
         user_id = payload.user_id if payload.user_id else None
-        
+
         existing = supabase.table('project_data') \
-            .select('project_id') \
-            .eq('project_id', payload.project_id) \
-            .execute()
-        
+            .select('project_id').eq('project_id', payload.project_id).execute()
+
         if existing.data:
             result = supabase.table('project_data') \
-                .update({
-                    'data': payload.data,
-                    'updated_at': 'now()'
-                }) \
-                .eq('project_id', payload.project_id) \
-                .execute()
+                .update({'data': payload.data, 'updated_at': 'now()'}) \
+                .eq('project_id', payload.project_id).execute()
             message = "Project updated successfully"
         else:
-            result = supabase.table('project_data') \
-                .insert({
-                    'project_id': payload.project_id,
-                    'user_id': user_id,
-                    'data': payload.data,
-                    'created_at': 'now()',
-                    'updated_at': 'now()',
-                    'shared_with': []
-                }) \
-                .execute()
+            result = supabase.table('project_data').insert({
+                'project_id': payload.project_id,
+                'user_id': user_id,
+                'data': payload.data,
+                'created_at': 'now()',
+                'updated_at': 'now()',
+                'shared_with': [],
+            }).execute()
             message = "Project created successfully"
-        
+
         return {
             "status": "success",
             "message": message,
-            "data": result.data[0] if result.data else None
+            "data": result.data[0] if result.data else None,
         }
-        
     except Exception as e:
         print(f"❌ Error saving project: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/{project_id}/data")
-async def get_project_data(
-    project_id: str,
-    user_id: str = Query(None)
-):
+async def get_project_data(project_id: str, user_id: str = Query(None)):
     try:
         from infrastructure.database.supabase_client import get_supabase_admin
-        
         supabase = get_supabase_admin()
-        
         query = supabase.table('project_data') \
             .select('data, shared_with, user_id, created_at, updated_at') \
             .eq('project_id', project_id)
-        
         if user_id:
             query = query.eq('user_id', user_id)
-        
         result = query.maybe_single().execute()
-        
         if not result.data:
             raise HTTPException(status_code=404, detail="Project not found")
-        
-        return {
-            "status": "success",
-            "data": result.data
-        }
-        
+        return {"status": "success", "data": result.data}
     except HTTPException:
         raise
     except Exception as e:
@@ -793,28 +666,19 @@ async def get_project_data(
 async def get_project_blob(project_id: str):
     try:
         from infrastructure.database.supabase_client import get_supabase_admin
-        
         supabase = get_supabase_admin()
-        
         result = supabase.table('project_data') \
-            .select('data') \
-            .eq('project_id', project_id) \
-            .maybe_single() \
-            .execute()
-        
+            .select('data').eq('project_id', project_id) \
+            .maybe_single().execute()
         if not result.data:
             raise HTTPException(status_code=404, detail="Project not found")
-        
         project_data = result.data.get('data', {})
-        blob_content = project_data.get('blob', {})
-        
         return {
             "status": "success",
             "project_id": project_id,
-            "blob": blob_content,
-            "data": project_data
+            "blob": project_data.get('blob', {}),
+            "data": project_data,
         }
-        
     except HTTPException:
         raise
     except Exception as e:
@@ -826,33 +690,23 @@ async def get_project_blob(project_id: str):
 async def share_project(project_id: str, payload: ProjectShareRequest):
     try:
         from infrastructure.database.supabase_client import get_supabase_admin
-        
         supabase = get_supabase_admin()
-        
         result = supabase.table('project_data') \
-            .select('shared_with') \
-            .eq('project_id', project_id) \
-            .maybe_single() \
-            .execute()
-        
+            .select('shared_with').eq('project_id', project_id) \
+            .maybe_single().execute()
         if not result.data:
             raise HTTPException(status_code=404, detail="Project not found")
-        
         shared_with = result.data.get('shared_with', [])
         if payload.email not in shared_with:
             shared_with.append(payload.email)
-        
         supabase.table('project_data') \
             .update({'shared_with': shared_with}) \
-            .eq('project_id', project_id) \
-            .execute()
-        
+            .eq('project_id', project_id).execute()
         return {
             "status": "success",
             "message": f"Project shared with {payload.email}",
-            "shared_with": shared_with
+            "shared_with": shared_with,
         }
-        
     except HTTPException:
         raise
     except Exception as e:
@@ -862,29 +716,20 @@ async def share_project(project_id: str, payload: ProjectShareRequest):
 
 @router.get("/{project_id}/shared")
 async def get_shared_project(
-    project_id: str, 
-    user_email: str = Query(..., description="البريد الإلكتروني للمستخدم")
+    project_id: str,
+    user_email: str = Query(...),
 ):
     try:
         from infrastructure.database.supabase_client import get_supabase_admin
-        
         supabase = get_supabase_admin()
-        
         result = supabase.table('project_data') \
             .select('data, user_id, shared_with, created_at, updated_at') \
             .eq('project_id', project_id) \
             .contains('shared_with', [user_email]) \
-            .maybe_single() \
-            .execute()
-        
+            .maybe_single().execute()
         if not result.data:
             raise HTTPException(status_code=404, detail="Project not shared with you")
-        
-        return {
-            "status": "success",
-            "data": result.data
-        }
-        
+        return {"status": "success", "data": result.data}
     except HTTPException:
         raise
     except Exception as e:
@@ -893,29 +738,15 @@ async def get_shared_project(
 
 
 @router.delete("/{project_id}/data")
-async def delete_project_data(
-    project_id: str, 
-    user_id: str = Query(..., description="معرف المستخدم")
-):
+async def delete_project_data(project_id: str, user_id: str = Query(...)):
     try:
         from infrastructure.database.supabase_client import get_supabase_admin
-        
         supabase = get_supabase_admin()
-        
         result = supabase.table('project_data') \
-            .delete() \
-            .eq('project_id', project_id) \
-            .eq('user_id', user_id) \
-            .execute()
-        
+            .delete().eq('project_id', project_id).eq('user_id', user_id).execute()
         if not result.data:
             raise HTTPException(status_code=404, detail="Project not found")
-        
-        return {
-            "status": "success",
-            "message": "Project deleted successfully"
-        }
-        
+        return {"status": "success", "message": "Project deleted successfully"}
     except HTTPException:
         raise
     except Exception as e:
@@ -927,21 +758,11 @@ async def delete_project_data(
 async def check_project_exists(project_id: str):
     try:
         from infrastructure.database.supabase_client import get_supabase_admin
-        
         supabase = get_supabase_admin()
-        
         result = supabase.table('project_data') \
             .select('project_id, user_id, shared_with') \
-            .eq('project_id', project_id) \
-            .maybe_single() \
-            .execute()
-        
-        return {
-            "status": "success",
-            "exists": bool(result.data),
-            "data": result.data
-        }
-        
+            .eq('project_id', project_id).maybe_single().execute()
+        return {"status": "success", "exists": bool(result.data), "data": result.data}
     except Exception as e:
         print(f"❌ Error checking project: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -951,226 +772,153 @@ async def check_project_exists(project_id: str):
 async def get_user_projects(user_id: str):
     try:
         from infrastructure.database.supabase_client import get_supabase_admin
-        
         supabase = get_supabase_admin()
-        
         result = supabase.table('project_data') \
             .select('project_id, data, shared_with, created_at, updated_at') \
-            .eq('user_id', user_id) \
-            .order('updated_at', desc=True) \
-            .execute()
-        
+            .eq('user_id', user_id).order('updated_at', desc=True).execute()
         return {
             "status": "success",
             "count": len(result.data),
-            "projects": result.data
+            "projects": result.data,
         }
-        
     except Exception as e:
         print(f"❌ Error getting user projects: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
 # ============================================
-# نقاط النهاية لمعالجة الفيديو
+# Video processing endpoints
 # ============================================
 
 @router.post("/video/process")
-async def process_video(
-    request: VideoProcessRequest,
-    background_tasks: BackgroundTasks,
-):
+async def process_video(request: VideoProcessRequest, background_tasks: BackgroundTasks):
     session_id = request.session_id or str(uuid.uuid4())
     ytdlp_available = is_ytdlp_available()
-    
     processing_sessions[session_id] = {
-        "session_id": session_id,
-        "status": "initializing",
-        "progress": 0,
-        "detail": "جاري تهيئة المعالجة...",
-        "step": "تهيئة",
-        "completed": False,
-        "video_url": None,
-        "title": None,
-        "duration": None,
-        "format": None,
-        "size": None,
-        "size_bytes": None,
-        "dimensions": None,
-        "thumbnail": None,
-        "uploader": None,
-        "description": None,
-        "view_count": None,
-        "like_count": None,
-        "error": None,
-        "started_at": datetime.now().isoformat(),
-        "url": request.url,
-        "ytdlp_available": ytdlp_available,
-        "ytdlp_error": None,
-        "platform": None,
-        "warning": None,
-        "is_external": False,
-        "use_auth": request.use_auth,
-        "video_id": None
+        "session_id": session_id, "status": "initializing", "progress": 0,
+        "detail": "جاري تهيئة المعالجة...", "step": "تهيئة", "completed": False,
+        "video_url": None, "title": None, "duration": None, "format": None,
+        "size": None, "size_bytes": None, "dimensions": None, "thumbnail": None,
+        "uploader": None, "description": None, "view_count": None, "like_count": None,
+        "error": None, "started_at": datetime.now().isoformat(),
+        "url": request.url, "ytdlp_available": ytdlp_available,
+        "ytdlp_error": None, "platform": None, "warning": None,
+        "is_external": False, "use_auth": request.use_auth, "video_id": None,
     }
-    
     background_tasks.add_task(process_video_background, session_id, request.url, request.use_auth)
-    
-    return {
-        "session_id": session_id,
-        "status": "processing",
-        "message": "جاري معالجة الفيديو..."
-    }
+    return {"session_id": session_id, "status": "processing", "message": "جاري معالجة الفيديو..."}
 
 
 @router.get("/video/process/{session_id}/status")
 async def get_processing_status(session_id: str):
     if session_id not in processing_sessions:
         raise HTTPException(status_code=404, detail="Session not found")
-    
-    session = processing_sessions[session_id]
-    
+    s = processing_sessions[session_id]
     return {
         "session_id": session_id,
-        "status": session.get("status", "unknown"),
-        "progress": session.get("progress", 0),
-        "detail": session.get("detail", ""),
-        "step": session.get("step", ""),
-        "completed": session.get("completed", False),
-        "video_url": session.get("video_url"),
-        "title": session.get("title"),
-        "duration": session.get("duration"),
-        "format": session.get("format"),
-        "size": session.get("size"),
-        "size_bytes": session.get("size_bytes"),
-        "dimensions": session.get("dimensions"),
-        "thumbnail": session.get("thumbnail"),
-        "uploader": session.get("uploader"),
-        "description": session.get("description"),
-        "view_count": session.get("view_count"),
-        "like_count": session.get("like_count"),
-        "error": session.get("error"),
-        "warning": session.get("warning"),
-        "started_at": session.get("started_at"),
+        "status": s.get("status", "unknown"),
+        "progress": s.get("progress", 0),
+        "detail": s.get("detail", ""),
+        "step": s.get("step", ""),
+        "completed": s.get("completed", False),
+        "video_url": s.get("video_url"),
+        "title": s.get("title"),
+        "duration": s.get("duration"),
+        "format": s.get("format"),
+        "size": s.get("size"),
+        "size_bytes": s.get("size_bytes"),
+        "dimensions": s.get("dimensions"),
+        "thumbnail": s.get("thumbnail"),
+        "uploader": s.get("uploader"),
+        "description": s.get("description"),
+        "view_count": s.get("view_count"),
+        "like_count": s.get("like_count"),
+        "error": s.get("error"),
+        "warning": s.get("warning"),
+        "started_at": s.get("started_at"),
         "updated_at": datetime.now().isoformat(),
-        "ytdlp_available": session.get("ytdlp_available", False),
-        "ytdlp_error": session.get("ytdlp_error"),
-        "platform": session.get("platform"),
-        "is_external": session.get("is_external", False),
-        "video_id": session.get("video_id"),
-        "use_auth": session.get("use_auth", False)
+        "ytdlp_available": s.get("ytdlp_available", False),
+        "ytdlp_error": s.get("ytdlp_error"),
+        "platform": s.get("platform"),
+        "is_external": s.get("is_external", False),
+        "video_id": s.get("video_id"),
+        "use_auth": s.get("use_auth", False),
     }
 
 
 @router.post("/video/generate")
-async def generate_video(
-    request: VideoGenerateRequest,
-    background_tasks: BackgroundTasks,
-):
+async def generate_video(request: VideoGenerateRequest, background_tasks: BackgroundTasks):
     session_id = request.session_id or str(uuid.uuid4())
-    
     processing_sessions[session_id] = {
-        "session_id": session_id,
-        "status": "initializing",
-        "progress": 0,
-        "detail": "جاري تهيئة التوليد...",
-        "step": "تهيئة",
-        "completed": False,
-        "video_url": None,
-        "title": None,
-        "duration": None,
-        "format": None,
-        "size": None,
-        "size_bytes": None,
-        "dimensions": None,
-        "thumbnail": None,
-        "error": None,
-        "started_at": datetime.now().isoformat(),
-        "prompt": request.prompt,
-        "links": request.links or []
+        "session_id": session_id, "status": "initializing", "progress": 0,
+        "detail": "جاري تهيئة التوليد...", "step": "تهيئة", "completed": False,
+        "video_url": None, "title": None, "duration": None, "format": None,
+        "size": None, "size_bytes": None, "dimensions": None, "thumbnail": None,
+        "error": None, "started_at": datetime.now().isoformat(),
+        "prompt": request.prompt, "links": request.links or [],
     }
-    
-    background_tasks.add_task(
-        generate_video_background,
-        session_id,
-        request.prompt,
-        request.links or []
-    )
-    
-    return {
-        "session_id": session_id,
-        "status": "generating",
-        "message": "جاري توليد الفيديو..."
-    }
+    background_tasks.add_task(generate_video_background, session_id, request.prompt, request.links or [])
+    return {"session_id": session_id, "status": "generating", "message": "جاري توليد الفيديو..."}
 
 
 @router.get("/video/generate/{session_id}/status")
 async def get_generation_status(session_id: str):
     if session_id not in processing_sessions:
         raise HTTPException(status_code=404, detail="Session not found")
-    
-    session = processing_sessions[session_id]
-    
+    s = processing_sessions[session_id]
     return {
         "session_id": session_id,
-        "status": session.get("status", "unknown"),
-        "progress": session.get("progress", 0),
-        "detail": session.get("detail", ""),
-        "step": session.get("step", ""),
-        "completed": session.get("completed", False),
-        "video_url": session.get("video_url"),
-        "title": session.get("title"),
-        "duration": session.get("duration"),
-        "format": session.get("format"),
-        "size": session.get("size"),
-        "size_bytes": session.get("size_bytes"),
-        "dimensions": session.get("dimensions"),
-        "thumbnail": session.get("thumbnail"),
-        "error": session.get("error"),
-        "started_at": session.get("started_at"),
-        "updated_at": datetime.now().isoformat()
+        "status": s.get("status", "unknown"),
+        "progress": s.get("progress", 0),
+        "detail": s.get("detail", ""),
+        "step": s.get("step", ""),
+        "completed": s.get("completed", False),
+        "video_url": s.get("video_url"),
+        "title": s.get("title"),
+        "duration": s.get("duration"),
+        "format": s.get("format"),
+        "size": s.get("size"),
+        "size_bytes": s.get("size_bytes"),
+        "dimensions": s.get("dimensions"),
+        "thumbnail": s.get("thumbnail"),
+        "error": s.get("error"),
+        "started_at": s.get("started_at"),
+        "updated_at": datetime.now().isoformat(),
     }
 
 
 @router.get("/video/health")
 async def video_health_check():
     youtube_service = YouTubeService()
-    is_youtube_auth = youtube_service.is_authenticated()
-    
     return {
         "status": "ok",
         "message": "Video processing service is running",
         "active_sessions": len(processing_sessions),
         "ytdlp_available": is_ytdlp_available(),
         "youtube_api_available": True,
-        "youtube_authenticated": is_youtube_auth,
-        "timestamp": datetime.now().isoformat()
+        "youtube_authenticated": youtube_service.is_authenticated(),
+        "timestamp": datetime.now().isoformat(),
     }
 
 
 # ============================================
-# وظائف الخلفية
+# Background tasks
 # ============================================
 
 async def process_video_background(session_id: str, url: str, use_auth: bool = False):
     try:
         processing_sessions[session_id].update({
-            "status": "analyzing",
-            "progress": 10,
-            "detail": "جاري تحليل الرابط...",
-            "step": "تحليل الرابط"
+            "status": "analyzing", "progress": 10,
+            "detail": "جاري تحليل الرابط...", "step": "تحليل الرابط",
         })
         await asyncio.sleep(1)
-        
+
         processing_sessions[session_id].update({
-            "status": "extracting",
-            "progress": 25,
-            "detail": "جاري استخراج معلومات الفيديو باستخدام YouTube API...",
-            "step": "استخراج المعلومات"
+            "status": "extracting", "progress": 25,
+            "detail": "استخراج المعلومات...", "step": "استخراج المعلومات",
         })
-        
         video_info = await extract_youtube_video_info(url, use_auth)
-        
+
         processing_sessions[session_id].update({
             "title": video_info.get("title", "فيديو مستورد"),
             "duration": video_info.get("duration", 60),
@@ -1188,71 +936,60 @@ async def process_video_background(session_id: str, url: str, use_auth: bool = F
             "warning": video_info.get("warning"),
             "is_external": video_info.get("is_external", True),
             "video_id": video_info.get("video_id"),
-            "use_auth": use_auth
-        })
-        
-        await asyncio.sleep(1.5)
-        
-        processing_sessions[session_id].update({
-            "status": "verifying",
-            "progress": 45,
-            "detail": "جاري التحقق من الفيديو...",
-            "step": "التحقق من الفيديو"
-        })
-        await asyncio.sleep(1)
-        
-        processing_sessions[session_id].update({
-            "status": "processing",
-            "progress": 60,
-            "detail": "جاري معالجة الفيديو...",
-            "step": "معالجة الفيديو"
+            "use_auth": use_auth,
         })
         await asyncio.sleep(1.5)
-        
+
         processing_sessions[session_id].update({
-            "status": "analyzing_content",
-            "progress": 80,
-            "detail": "جاري تحليل محتوى الفيديو...",
-            "step": "تحليل المحتوى"
+            "status": "verifying", "progress": 45,
+            "detail": "جاري التحقق من الفيديو...", "step": "التحقق من الفيديو",
         })
         await asyncio.sleep(1)
-        
+
         processing_sessions[session_id].update({
-            "status": "finalizing",
-            "progress": 92,
-            "detail": "جاري تجهيز الفيديو للمعاينة...",
-            "step": "تجهيز الفيديو"
+            "status": "processing", "progress": 60,
+            "detail": "جاري معالجة الفيديو...", "step": "معالجة الفيديو",
+        })
+        await asyncio.sleep(1.5)
+
+        processing_sessions[session_id].update({
+            "status": "analyzing_content", "progress": 80,
+            "detail": "جاري تحليل محتوى الفيديو...", "step": "تحليل المحتوى",
         })
         await asyncio.sleep(1)
-        
+
+        processing_sessions[session_id].update({
+            "status": "finalizing", "progress": 92,
+            "detail": "جاري تجهيز الفيديو للمعاينة...", "step": "تجهيز الفيديو",
+        })
+        await asyncio.sleep(1)
+
         platform = video_info.get("platform", "generic")
         is_external = video_info.get("is_external", True)
         video_url = url
-        
+
         if is_external or platform in ["youtube", "tiktok", "facebook", "instagram"]:
             video_url = "https://sample-videos.com/video321/mp4/240/big_buck_bunny_240p_1mb.mp4"
             if not processing_sessions[session_id].get("warning"):
-                processing_sessions[session_id]["warning"] = f"تم استخدام فيديو تجريبي للعرض (بديل لـ {platform})"
-            processing_sessions[session_id]["detail"] = f"✅ تم معالجة الفيديو من {platform} (فيديو تجريبي للعرض)"
-            
+                processing_sessions[session_id]["warning"] = f"تم استخدام فيديو تجريبي (بديل لـ {platform})"
+            processing_sessions[session_id]["detail"] = f"✅ تم معالجة الفيديو من {platform}"
+
             if platform == "youtube" and video_info.get("video_id"):
                 try:
                     video_id = video_info["video_id"]
                     downloaded_path = download_video(video_id, '720p')
                     if downloaded_path:
                         video_url = downloaded_path
-                        processing_sessions[session_id]["detail"] = "✅ تم تحميل الفيديو من يوتيوب بنجاح!"
+                        processing_sessions[session_id]["detail"] = "✅ تم تحميل الفيديو بنجاح!"
                         processing_sessions[session_id]["warning"] = None
                 except Exception as e:
                     print(f"⚠️ فشل تحميل الفيديو: {e}")
         else:
             processing_sessions[session_id]["detail"] = "✅ تم معالجة الفيديو بنجاح!"
-        
+
         processing_sessions[session_id].update({
-            "status": "completed",
-            "progress": 100,
-            "step": "اكتمل",
-            "completed": True,
+            "status": "completed", "progress": 100,
+            "step": "اكتمل", "completed": True,
             "video_url": video_url,
             "title": video_info.get("title", "فيديو معالج"),
             "duration": video_info.get("duration", 60),
@@ -1269,21 +1006,17 @@ async def process_video_background(session_id: str, url: str, use_auth: bool = F
             "ytdlp_error": video_info.get("ytdlp_error"),
             "warning": video_info.get("warning"),
             "is_external": is_external,
-            "video_id": video_info.get("video_id")
+            "video_id": video_info.get("video_id"),
         })
-        
+
     except Exception as e:
         import traceback
         error_detail = traceback.format_exc()
         print(f"❌ خطأ في المعالجة: {error_detail}")
-        
         processing_sessions[session_id].update({
-            "status": "failed",
-            "progress": 0,
-            "detail": f"فشل المعالجة: {str(e)}",
-            "step": "فشل",
-            "completed": True,
-            "error": str(e)
+            "status": "failed", "progress": 0,
+            "detail": f"فشل المعالجة: {str(e)}", "step": "فشل",
+            "completed": True, "error": str(e),
         })
 
 
@@ -1296,55 +1029,40 @@ async def generate_video_background(session_id: str, prompt: str, links: List[st
             (50, "processing_media", "معالجة الصوت والصورة...", "معالجة الوسائط"),
             (70, "compiling", "تجميع الفيديو...", "تجميع الفيديو"),
             (85, "optimizing", "تحسين الجودة...", "تحسين الجودة"),
-            (95, "finalizing", "تجهيز الفيديو...", "تجهيز الفيديو")
+            (95, "finalizing", "تجهيز الفيديو...", "تجهيز الفيديو"),
         ]
-        
         for progress, status, detail, step in steps:
             if session_id in processing_sessions:
                 processing_sessions[session_id].update({
-                    "status": status,
-                    "progress": progress,
-                    "detail": detail,
-                    "step": step
+                    "status": status, "progress": progress,
+                    "detail": detail, "step": step,
                 })
             await asyncio.sleep(1.5)
-        
+
         video_info = {
             "title": prompt[:50] + ("..." if len(prompt) > 50 else ""),
-            "duration": 180,
-            "format": "mp4",
-            "size": "68.2 MB",
-            "size_bytes": 68.2 * 1024 * 1024,
-            "dimensions": "1920x1080",
-            "generated": True
+            "duration": 180, "format": "mp4",
+            "size": "68.2 MB", "size_bytes": 68.2 * 1024 * 1024,
+            "dimensions": "1920x1080", "generated": True,
         }
-        
         video_url = "https://sample-videos.com/video321/mp4/240/big_buck_bunny_240p_1mb.mp4"
-        
+
         if session_id in processing_sessions:
             processing_sessions[session_id].update({
-                "status": "completed",
-                "progress": 100,
-                "detail": "اكتمل التوليد! ✅",
-                "step": "اكتمل",
-                "completed": True,
-                "video_url": video_url,
-                "title": video_info["title"],
-                "duration": video_info["duration"],
-                "format": video_info["format"],
-                "size": video_info["size"],
+                "status": "completed", "progress": 100,
+                "detail": "اكتمل التوليد! ✅", "step": "اكتمل",
+                "completed": True, "video_url": video_url,
+                "title": video_info["title"], "duration": video_info["duration"],
+                "format": video_info["format"], "size": video_info["size"],
                 "size_bytes": video_info["size_bytes"],
                 "dimensions": video_info["dimensions"],
-                "generated": True
+                "generated": True,
             })
-        
+
     except Exception as e:
         if session_id in processing_sessions:
             processing_sessions[session_id].update({
-                "status": "failed",
-                "progress": 0,
-                "detail": f"فشل التوليد: {str(e)}",
-                "step": "فشل",
-                "completed": True,
-                "error": str(e)
+                "status": "failed", "progress": 0,
+                "detail": f"فشل التوليد: {str(e)}", "step": "فشل",
+                "completed": True, "error": str(e),
             })
