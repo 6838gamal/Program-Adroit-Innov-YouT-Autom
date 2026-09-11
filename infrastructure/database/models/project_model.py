@@ -19,6 +19,10 @@ class ProjectModel(Base):
     logo_asset_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     brand_colors: Mapped[dict] = mapped_column(JSON, default=dict)
     settings: Mapped[dict] = mapped_column(JSON, default=dict)
+
+    # ✅ عمود جديد: يخزّن video_url, thumbnail, clips, layers, ...
+    data: Mapped[dict] = mapped_column(JSON, default=dict)
+
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
