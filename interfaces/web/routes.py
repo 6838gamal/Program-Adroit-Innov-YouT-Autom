@@ -99,10 +99,10 @@ async def _resolve_video_url(project) -> str | None:
     محاولة استخراج رابط الفيديو العام من المشروع.
     يحاول بالترتيب:
       1. project.video_url إن كان رابطاً كاملاً
-      2. project.storage_path عبر SupabaseStorageAdapter
-      3. project.output_path عبر SupabaseStorageAdapter
-      4. project.result_url / output_url إن وُجدت
-      5. project.data.video_url كـ fallback
+      2. project.data.video_url كـ fallback
+      3. project.storage_path عبر SupabaseStorageAdapter
+      4. project.output_path عبر SupabaseStorageAdapter
+      5. project.result_url / output_url إن وُجدت
     """
     # 1) video_url مباشر (من property أو من data)
     video_url = getattr(project, "video_url", None)
@@ -154,9 +154,7 @@ async def _resolve_video_url(project) -> str | None:
 
 
 async def _resolve_thumbnail_url(project) -> str | None:
-    """
-    استخراج رابط الصورة المصغرة من المشروع.
-    """
+    """استخراج رابط الصورة المصغرة من المشروع."""
     thumb_url = getattr(project, "thumbnail_url", None)
     if not thumb_url:
         data = getattr(project, "data", None)
@@ -687,7 +685,6 @@ async def logs_page(request: Request):
         {"level": "INFO",    "source": "main",    "timestamp": now - timedelta(seconds=1),  "message": "Platform ready at http://0.0.0.0:5000"},
     ]
 
-    # Add Supabase status
     if settings.supabase_configured:
         log_entries.append({
             "level": "INFO",
@@ -720,7 +717,6 @@ async def health_page(request: Request, session: AsyncSession = Depends(get_db))
     import sys
     import shutil
 
-    # Test DB
     db_ok = True
     db_detail = "متصل"
     try:
@@ -729,13 +725,8 @@ async def health_page(request: Request, session: AsyncSession = Depends(get_db))
         db_ok = False
         db_detail = str(e)[:60]
 
-    # Check FFmpeg
     ffmpeg_ok = shutil.which("ffmpeg") is not None
-
-    # Check media dirs
     media_ok = settings.MEDIA_DIR.exists()
-
-    # Check Supabase
     supabase_ok = settings.supabase_configured
     supabase_detail = "متصل" if supabase_ok else "غير مهيأ"
 
@@ -882,7 +873,6 @@ async def get_supabase_status():
                 "message": "Supabase is not configured. Set SUPABASE_URL, SUPABASE_PUBLIC_KEY, SUPABASE_SECRET_KEY"
             }
 
-        # Test connection
         storage = SupabaseStorageAdapter()
         await storage.list_files(prefix="", limit=1)
 
@@ -897,3 +887,171 @@ async def get_supabase_status():
             "status": "error",
             "message": f"Supabase connection error: {str(e)}"
         }
+
+
+# ============================================================
+# 🔍 DEBUG ENDPOINTS (temporary — للتشخيص فقط)
+# ============================================================
+
+@router.get("/api/debug/project/{project_id}")
+async def debug_project(project_id: str, session: AsyncSession = Depends(get_db)):
+    """
+    Endpoint تشخيصي مؤقت — يعرض بنية clips في DB.
+
+    استخدمه لمعرفة سبب عدم ظهور الوسائط في الفيديو النهائي.
+
+    مثال:
+        GET /api/debug/project/fe2d7c15-a8ff-46c7-96a8-a7b7b43104c1
+    """
+    try:
+        project_uuid = uuid.UUID(project_id)
+    except ValueError:
+        return JSONResponse(
+            {"error": f"Invalid project_id: {project_id}"},
+            status_code=400,
+        )
+
+    repo = SQLProjectRepository(session)
+    project = await repo.get(project_uuid)
+    if not project:
+        return JSONResponse(
+            {"error": "Project not found"},
+            status_code=404,
+        )
+
+    data = getattr(project, "data", None) or {}
+    if not isinstance(data, dict):
+        data = {}
+
+    clips = data.get("clips", []) or []
+    media_files = data.get("media_files", []) or []
+
+    # ── تشخيص كل clip ────────────────────────────────────────
+    clips_info = []
+    for i, c in enumerate(clips):
+        if not isinstance(c, dict):
+            clips_info.append({"index": i, "error": "not a dict"})
+            continue
+
+        content = c.get("content") or c.get("url") or ""
+        metadata = c.get("metadata") or {}
+
+        # ابحث عن URL في عدة أماكن
+        url_candidates = {
+            "content": c.get("content"),
+            "url": c.get("url"),
+            "metadata.url": metadata.get("url") if isinstance(metadata, dict) else None,
+            "metadata.file": metadata.get("file") if isinstance(metadata, dict) else None,
+        }
+
+        clips_info.append({
+            "index": i,
+            "type": c.get("type"),
+            "title": c.get("title"),
+            "duration": c.get("duration"),
+            "layer": c.get("layer"),
+            "start": c.get("start"),
+            "content_preview": (str(content)[:200] if content else None),
+            "content_is_http": str(content).startswith("http") if content else False,
+            "content_is_blob": str(content).startswith("blob:") if content else False,
+            "content_is_empty": not bool(content),
+            "metadata": metadata,
+            "url_candidates": {
+                k: (str(v)[:120] if v else None)
+                for k, v in url_candidates.items()
+            },
+        })
+
+    # ── تشخيص الصورة المصغرة والفيديو ────────────────────────
+    video_url_direct = getattr(project, "video_url", None)
+    thumbnail_url_direct = getattr(project, "thumbnail_url", None)
+
+    data_video_url = data.get("video_url")
+    data_thumb_url = data.get("thumbnail")
+
+    return {
+        "project_id": project_id,
+        "title": project.title,
+        "status": (
+            project.status.value
+            if hasattr(project.status, "value")
+            else str(project.status)
+        ),
+
+        # روابط المخرجات
+        "outputs": {
+            "video_url_property": video_url_direct,
+            "video_url_in_data": data_video_url,
+            "thumbnail_url_property": thumbnail_url_direct,
+            "thumbnail_url_in_data": data_thumb_url,
+        },
+
+        # data keys
+        "data_keys": list(data.keys()),
+
+        # counts
+        "clips_count": len(clips),
+        "media_files_count": len(media_files),
+
+        # تفاصيل clips
+        "clips": clips_info,
+
+        # عينة من media_files
+        "media_files_sample": [
+            {
+                "name": mf.get("name") if isinstance(mf, dict) else str(mf),
+                "type": mf.get("type") if isinstance(mf, dict) else None,
+                "size": mf.get("size") if isinstance(mf, dict) else None,
+                "url": (str(mf.get("url"))[:120] if isinstance(mf, dict) and mf.get("url") else None),
+            }
+            for mf in media_files[:10]
+        ],
+    }
+
+
+@router.get("/api/debug/render-jobs/{project_id}")
+async def debug_render_jobs(project_id: str, session: AsyncSession = Depends(get_db)):
+    """
+    تشخيص مهام الرندر لمشروع معيّن.
+
+    يعرض حالة كل مهمة وأي خطأ.
+
+    مثال:
+        GET /api/debug/render-jobs/fe2d7c15-a8ff-46c7-96a8-a7b7b43104c1
+    """
+    try:
+        project_uuid = uuid.UUID(project_id)
+    except ValueError:
+        return JSONResponse(
+            {"error": f"Invalid project_id: {project_id}"},
+            status_code=400,
+        )
+
+    job_repo = SQLRenderJobRepository(session)
+    jobs = await job_repo.list_for_project(project_uuid)
+
+    return {
+        "project_id": project_id,
+        "jobs_count": len(jobs),
+        "jobs": [
+            {
+                "id": str(j.id),
+                "status": (
+                    j.status.value if hasattr(j.status, "value") else str(j.status)
+                ),
+                "progress": getattr(j, "progress", None),
+                "current_stage": getattr(j, "current_stage", None),
+                "error_message": getattr(j, "error_message", None),
+                "created_at": (
+                    j.created_at.isoformat()
+                    if getattr(j, "created_at", None) else None
+                ),
+                "completed_at": (
+                    j.completed_at.isoformat()
+                    if getattr(j, "completed_at", None) else None
+                ),
+                "output_path": getattr(j, "output_path", None),
+            }
+            for j in jobs
+        ],
+    }
