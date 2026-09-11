@@ -140,14 +140,11 @@ class ProductionService:
         render_settings: Optional[dict] = None,
         project_data: Optional[Dict[str, Any]] = None,
     ) -> RenderJob:
-        """
-        Start a render job for a project.
-        """
+        """Start a render job for a project."""
         _diag(f"🔥 start_render called: project_id={project_id}")
         _diag(f"🔥 render_settings={render_settings}")
         _diag(f"🔥 project_data keys={list(project_data.keys()) if project_data else None}")
 
-        # Get project from database
         try:
             project = await self._projects.get(project_id)
         except Exception as e:
@@ -158,7 +155,6 @@ class ProductionService:
         if not project:
             raise ProjectNotFoundError(f"Project {project_id} not found")
 
-        # If client sent project data, update the project first
         if project_data:
             try:
                 await self.save_project_data(
@@ -192,16 +188,12 @@ class ProductionService:
                     except Exception as e:
                         _diag_err(f"⚠️ Could not reset project status: {e}", e)
 
-        # ====== Inspect RenderJob signature (once) ======
         _diag(f"🔥 RenderJob.__init__ signature: {inspect.signature(RenderJob.__init__)}")
 
-        # ====== Create RenderJob correctly ======
         renderer = (render_settings or {}).get("renderer", "ffmpeg")
-
         job = self._create_render_job(project_id, renderer, render_settings or {})
         _diag(f"🔥 job created id={job.id} renderer={renderer}")
 
-        # ====== Start production ======
         if hasattr(project, "start_production"):
             try:
                 project.start_production()
@@ -213,7 +205,6 @@ class ProductionService:
                     except Exception:
                         pass
 
-        # Save job and project
         try:
             await self._jobs.save(job)
             await self._projects.save(project)
@@ -222,7 +213,6 @@ class ProductionService:
             _diag_err(f"💥 Failed to save job/project: {e}", e)
             raise
 
-        # Publish event
         try:
             await self._bus.publish(
                 ProductionStarted(project_id=project_id, render_job_id=job.id)
@@ -230,20 +220,17 @@ class ProductionService:
         except Exception as e:
             _diag_err(f"⚠️ Failed to publish ProductionStarted: {e}", e)
 
-        # Build project_data dict for the background task
         try:
             background_data = project.to_dict() if hasattr(project, "to_dict") else {"id": str(project_id)}
         except Exception as e:
             _diag_err(f"⚠️ project.to_dict() failed: {e}", e)
             background_data = {"id": str(project_id)}
 
-        # Ensure 'id' is present (critical for _run_render)
         if "id" not in background_data:
             background_data["id"] = str(project_id)
 
         _diag(f"🔥 background_data keys={list(background_data.keys())}")
 
-        # Start background render task
         try:
             task = asyncio.create_task(
                 self._run_render(job.id, background_data),
@@ -266,10 +253,7 @@ class ProductionService:
         renderer: str,
         settings_dict: dict,
     ) -> RenderJob:
-        """
-        Create a RenderJob using whatever signature it actually has.
-        """
-        # Strategy 1: full kwargs
+        """Create a RenderJob using whatever signature it actually has."""
         try:
             return RenderJob(
                 project_id=project_id,
@@ -279,7 +263,6 @@ class ProductionService:
         except TypeError as e:
             _diag(f"⚠️ RenderJob(project_id, renderer, settings) failed: {e}")
 
-        # Strategy 2: project_id only, then set attributes
         try:
             job = RenderJob(project_id=project_id)
             try:
@@ -294,7 +277,6 @@ class ProductionService:
         except TypeError as e:
             _diag(f"⚠️ RenderJob(project_id=...) failed: {e}")
 
-        # Strategy 3: keyword-only via factory method
         for factory_name in ("create", "new", "for_project"):
             factory = getattr(RenderJob, factory_name, None)
             if callable(factory):
@@ -312,7 +294,6 @@ class ProductionService:
                 except Exception as e:
                     _diag(f"⚠️ RenderJob.{factory_name}(...) failed: {e}")
 
-        # Strategy 4: positional
         try:
             job = RenderJob(project_id)
             try:
@@ -371,7 +352,6 @@ class ProductionService:
                 await job_repo.save(job)
                 await session.commit()
 
-            # ====== Extract project_id once ======
             project_id_str = project_data.get("id")
             if not project_id_str:
                 project_id_str = str(job.project_id) if job else str(job_id)
@@ -383,7 +363,6 @@ class ProductionService:
                 _diag_err(f"💥 Invalid project_id '{project_id_str}': {e}", e)
                 raise
 
-            # ── Renderer ─────────────────────────────────────────────────────
             try:
                 renderer = self._registry.get_renderer()
                 _diag(f"🔥 renderer obtained: {renderer}")
@@ -395,7 +374,6 @@ class ProductionService:
             temp_dir.mkdir(parents=True, exist_ok=True)
             _diag(f"🔥 temp_dir={temp_dir}")
 
-            # Get render settings from the job
             job_settings = getattr(job, "settings", None) or {}
             fps = job_settings.get("fps", 30)
             width = job_settings.get("width", 1920)
@@ -412,7 +390,7 @@ class ProductionService:
 
             await save_progress(5.0, "تحليل النص وتقسيمه إلى مشاهد")
 
-            # ── Build scenes from project script ─────────────────────────────
+            # ── Build scenes from clips OR script ────────────────────────────
             script = project_data.get("script", "") or ""
             title = project_data.get("title", "") or ""
             brand_colors = project_data.get("brand_colors", {}) or {}
@@ -426,13 +404,27 @@ class ProductionService:
             clips = project_data_data.get("clips", []) or []
 
             if clips:
-                raw_scenes = self._build_scenes_from_clips(clips)
-                _diag(f"📽️ Using {len(raw_scenes)} scenes from client clips")
+                # ✅ scenes objects كاملة مع media_url
+                scene_objects = self._build_scenes_from_clips(clips)
+                _diag(f"📽️ Using {len(scene_objects)} scenes from client clips")
             else:
-                raw_scenes = _split_script_to_scenes(script, title)
-                _diag(f"📝 Using {len(raw_scenes)} scenes from script")
+                # fallback: نصوص فقط من السكريبت
+                script_texts = _split_script_to_scenes(script, title)
+                scene_objects = [
+                    {
+                        "text": t,
+                        "type": "text",
+                        "media_url": None,
+                        "title": f"مشهد {i + 1}",
+                        "duration": max(3.0, len(t.split()) / 2.5),
+                        "start": 0.0,
+                        "layer": 0,
+                    }
+                    for i, t in enumerate(script_texts)
+                ]
+                _diag(f"📝 Using {len(scene_objects)} scenes from script")
 
-            await save_progress(10.0, f"توليد {len(raw_scenes)} مشهد")
+            await save_progress(10.0, f"توليد {len(scene_objects)} مشهد")
 
             # ── Resolve active HF models (if any) ────────────────────────────
             try:
@@ -453,41 +445,66 @@ class ProductionService:
             voice_config = VoiceConfig(language="ar", speed=1.0, pitch=1.0)
 
             scenes_data: list[dict] = []
-            total = len(raw_scenes)
+            total = len(scene_objects)
 
-            for i, scene_text in enumerate(raw_scenes):
+            for i, scene_obj in enumerate(scene_objects):
                 pct = 10.0 + (i / max(total, 1)) * 50.0
                 await save_progress(pct, f"معالجة المشهد {i + 1}/{total}")
 
-                # TTS audio
-                audio_path = temp_dir / f"audio_{i:04d}.mp3"
-                try:
-                    voice_result = await voice_plugin.generate(
-                        text=scene_text,
-                        config=voice_config,
-                        output_path=audio_path,
-                    )
-                    actual_audio = voice_result.audio_path
-                    duration = voice_result.duration
-                except Exception as e:
-                    _diag_err(f"⚠️ TTS failed for scene {i}: {e}", e)
-                    actual_audio = None
-                    words = len(scene_text.split())
-                    duration = max(3.0, (words / 150) * 60)
+                scene_text = scene_obj["text"]
+                scene_type = scene_obj["type"]
+                scene_media_url = scene_obj.get("media_url")
+                scene_title = scene_obj.get("title") or f"مشهد {i + 1}"
+                scene_duration = float(scene_obj.get("duration", 3.0))
 
-                # Scene image
+                # ── TTS (فقط إن كان هناك نص) ─────────────────────────────
+                audio_path = temp_dir / f"audio_{i:04d}.mp3"
+                actual_audio = None
+                duration = scene_duration
+
+                if scene_text and scene_type in ("text", "image", "video"):
+                    try:
+                        voice_result = await voice_plugin.generate(
+                            text=scene_text,
+                            config=voice_config,
+                            output_path=audio_path,
+                        )
+                        actual_audio = voice_result.audio_path
+                        if voice_result.duration and voice_result.duration > 0.5:
+                            duration = voice_result.duration
+                    except Exception as e:
+                        _diag_err(f"⚠️ TTS failed for scene {i}: {e}", e)
+
+                # ── الوسائط الحقيقية أو توليد صورة ──────────────────────
                 image_path = temp_dir / f"scene_{i:04d}.jpg"
-                try:
-                    await image_generator.generate_scene_image(
-                        text=scene_text,
-                        output_path=image_path,
-                        scene_index=i,
-                        title=title,
-                        brand_color=brand_color,
-                    )
-                except Exception as e:
-                    _diag_err(f"⚠️ Image gen failed for scene {i}: {e}", e)
-                    image_path = None
+                used_real_media = False
+
+                if scene_media_url and scene_type in ("image", "video"):
+                    # احفظ بامتداد صحيح
+                    ext = ".mp4" if scene_type == "video" else ".jpg"
+                    media_path = temp_dir / f"scene_{i:04d}{ext}"
+
+                    ok = await _download_media_to_file(scene_media_url, media_path)
+                    if ok:
+                        image_path = media_path
+                        used_real_media = True
+                        _diag(f"✅ Scene {i}: using real {scene_type} from Supabase")
+                    else:
+                        _diag_err(f"⚠️ Scene {i}: media download failed, falling back")
+
+                if not used_real_media:
+                    # fallback: ولّد صورة من النص
+                    try:
+                        await image_generator.generate_scene_image(
+                            text=scene_text or scene_title,
+                            output_path=image_path,
+                            scene_index=i,
+                            title=title,
+                            brand_color=brand_color,
+                        )
+                    except Exception as e:
+                        _diag_err(f"⚠️ Image gen failed for scene {i}: {e}", e)
+                        image_path = None
 
                 scenes_data.append({
                     "text": scene_text,
@@ -495,6 +512,8 @@ class ProductionService:
                     "audio_path": str(actual_audio) if actual_audio else "",
                     "duration": duration,
                     "transition": "fade",
+                    "type": scene_type,           # ← مهم للـ renderer
+                    "media_url": scene_media_url,
                 })
 
             await save_progress(62.0, "تركيب الفيديو النهائي")
@@ -524,7 +543,6 @@ class ProductionService:
             thumbnail_url: Optional[str] = None
             thumb_storage_path: Optional[str] = None
 
-            # ── 1) Upload the rendered video ─────────────────────────────────
             try:
                 video_local = Path(result.output_path)
                 if video_local.exists() and video_local.stat().st_size > 0:
@@ -549,7 +567,6 @@ class ProductionService:
             except Exception as e:
                 _diag_err(f"❌ Video upload failed: {e}", e)
 
-            # ── 2) Generate + upload thumbnail ───────────────────────────────
             thumb_path = settings.THUMBNAILS_DIR / f"{job_id}.jpg"
             thumb_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -580,7 +597,7 @@ class ProductionService:
 
             await save_progress(100.0, "اكتمل")
 
-            # ── 3) Persist to DB ─────────────────────────────────────────────
+            # ── Persist to DB ────────────────────────────────────────────────
             async with factory() as session:
                 job_repo = SQLRenderJobRepository(session)
                 proj_repo = SQLProjectRepository(session)
@@ -597,7 +614,6 @@ class ProductionService:
                     except Exception as e:
                         _diag_err(f"⚠️ project.mark_rendered failed: {e}", e)
 
-                    # ✅ احفظ video_url و thumbnail_url مباشرة على المشروع
                     try:
                         if video_url:
                             try:
@@ -619,7 +635,6 @@ class ProductionService:
                             except Exception:
                                 pass
 
-                        # ✅ أيضاً احفظ في data (fallback)
                         try:
                             data = getattr(project, "data", None) or {}
                             if not isinstance(data, dict):
@@ -721,29 +736,79 @@ class ProductionService:
             _active_renders.pop(str(job_id), None)
             _diag(f"🔥 _run_render END job_id={job_id}")
 
-    # ── Scene builder from clips ─────────────────────────────────────────────
-    def _build_scenes_from_clips(self, clips: List[Dict[str, Any]]) -> List[str]:
-        """Convert client clips to scene text list."""
-        scenes: list[str] = []
-        for clip in clips:
-            clip_type = clip.get("type", "")
+    # ── Scene builder from clips (NEW: preserves media URLs) ────────────────
+    def _build_scenes_from_clips(
+        self,
+        clips: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """
+        Convert client clips to scene objects that PRESERVE the real media URL.
+
+        Returns a list of dicts:
+            {
+                "text": str,               # النص لـ TTS (قد يكون فارغاً)
+                "type": "image"|"video"|"text"|"audio",
+                "media_url": str|None,     # Supabase public URL
+                "title": str,
+                "duration": float,
+                "start": float,
+                "layer": int,
+            }
+        """
+        scenes: list[dict] = []
+
+        # رتّب حسب الطبقة ثم البداية
+        try:
+            sorted_clips = sorted(
+                clips,
+                key=lambda c: (
+                    int(c.get("layer", 0) or 0),
+                    float(c.get("start", 0.0) or 0.0),
+                ),
+            )
+        except Exception:
+            sorted_clips = list(clips)
+
+        for clip in sorted_clips:
+            clip_type = (clip.get("type") or "text").lower()
+
+            # ── احصل على رابط الوسائط الحقيقي ────────────────────────
+            media_url = None
+            if clip_type in ("image", "video"):
+                candidate = (
+                    clip.get("content")
+                    or clip.get("url")
+                    or (clip.get("metadata") or {}).get("url")
+                )
+                if isinstance(candidate, str) and candidate.startswith("http"):
+                    media_url = candidate
+
+            # ── النص لـ TTS ──────────────────────────────────────────
             if clip_type == "text":
-                content = clip.get("content", "")
-                if content:
-                    scenes.append(content)
-                else:
-                    scenes.append(clip.get("title", "نص"))
-            elif clip_type == "image":
-                scenes.append(f"[صورة] {clip.get('title', 'صورة')}")
-            elif clip_type == "video":
-                scenes.append(f"[فيديو] {clip.get('title', 'فيديو')}")
-            elif clip_type == "audio":
-                scenes.append(f"[صوت] {clip.get('title', 'صوت')}")
+                text = (clip.get("content") or clip.get("title") or "").strip()
             else:
-                scenes.append(clip.get("title", "مقطع"))
+                text = (clip.get("title") or "").strip()
+
+            scenes.append({
+                "text": text,
+                "type": clip_type,
+                "media_url": media_url,
+                "title": clip.get("title") or f"مقطع {len(scenes) + 1}",
+                "duration": float(clip.get("duration", 3.0) or 3.0),
+                "start": float(clip.get("start", 0.0) or 0.0),
+                "layer": int(clip.get("layer", 0) or 0),
+            })
 
         if not scenes:
-            scenes = ["مشهد بدون نص"]
+            scenes = [{
+                "text": "مشهد بدون نص",
+                "type": "text",
+                "media_url": None,
+                "title": "مشهد",
+                "duration": 3.0,
+                "start": 0.0,
+                "layer": 0,
+            }]
 
         return scenes
 
@@ -783,9 +848,7 @@ class ProductionService:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _split_script_to_scenes(script: str, title: str = "") -> list[str]:
-    """
-    Split project script into scenes.
-    """
+    """Split project script into scenes."""
     if not script or not script.strip():
         return [title or "مشهد بدون نص"]
 
@@ -816,7 +879,38 @@ def _split_script_to_scenes(script: str, title: str = "") -> list[str]:
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-# Supabase upload helpers (NEW)
+# Media download helper (NEW)
+# ═════════════════════════════════════════════════════════════════════════════
+
+async def _download_media_to_file(url: str, output_path: Path) -> bool:
+    """
+    حمّل ملف وسائط (صورة أو فيديو) من URL إلى مسار محلي.
+
+    Returns:
+        True إذا نجح التحميل.
+    """
+    import httpx
+
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    try:
+        async with httpx.AsyncClient(timeout=120.0, follow_redirects=True) as client:
+            resp = await client.get(url)
+            resp.raise_for_status()
+            output_path.write_bytes(resp.content)
+            _diag(
+                f"✅ Downloaded media: {url} → {output_path} "
+                f"({len(resp.content)} bytes)"
+            )
+            return True
+    except Exception as e:
+        _diag_err(f"❌ Failed to download media: {url} → {e}", e)
+        return False
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Supabase upload helpers
 # ═════════════════════════════════════════════════════════════════════════════
 
 async def _upload_to_supabase(
@@ -825,13 +919,9 @@ async def _upload_to_supabase(
     remote_path: str,
     content_type: str = "application/octet-stream",
 ) -> None:
-    """
-    Upload a local file to Supabase Storage using whatever API the adapter exposes.
-    Tries multiple strategies to be compatible with different adapter versions.
-    """
+    """Upload a local file to Supabase Storage using whatever API the adapter exposes."""
     local_path = Path(local_path)
 
-    # Strategy 1: adapter.upload_file(local_path=str, remote_path=str, content_type=str)
     if hasattr(storage, "upload_file"):
         try:
             result = storage.upload_file(
@@ -847,7 +937,6 @@ async def _upload_to_supabase(
         except Exception as e:
             _diag_err(f"upload_file(str,str,str) failed: {e}", e)
 
-    # Strategy 2: adapter.upload_file(local_path, remote_path)
     if hasattr(storage, "upload_file"):
         try:
             result = storage.upload_file(str(local_path), remote_path)
@@ -857,7 +946,6 @@ async def _upload_to_supabase(
         except Exception as e:
             _diag_err(f"upload_file(str,str) failed: {e}", e)
 
-    # Strategy 3: adapter.upload(path, file_bytes, content_type)
     if hasattr(storage, "upload"):
         with open(local_path, "rb") as f:
             data = f.read()
@@ -877,7 +965,6 @@ async def _upload_to_supabase(
         except Exception as e:
             _diag_err(f"upload(path,data,ct) failed: {e}", e)
 
-    # Strategy 4: raw supabase client
     try:
         from infrastructure.storage.supabase_storage import get_supabase_client
         client = get_supabase_client()
@@ -903,11 +990,7 @@ async def _upload_to_supabase(
 
 
 async def _build_public_url(storage, remote_path: str) -> Optional[str]:
-    """
-    Build the public URL for a file in Supabase Storage.
-    Tries the adapter first, then falls back to manual construction.
-    """
-    # Strategy 1: adapter.get_public_url
+    """Build the public URL for a file in Supabase Storage."""
     if hasattr(storage, "get_public_url"):
         try:
             result = storage.get_public_url(remote_path)
@@ -918,7 +1001,6 @@ async def _build_public_url(storage, remote_path: str) -> Optional[str]:
         except Exception as e:
             _diag_err(f"adapter.get_public_url failed: {e}", e)
 
-    # Strategy 2: manual construction from settings
     if settings.SUPABASE_URL:
         base = settings.SUPABASE_URL.rstrip("/")
         bucket = settings.SUPABASE_BUCKET
