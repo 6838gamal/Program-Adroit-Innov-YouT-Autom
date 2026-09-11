@@ -82,7 +82,8 @@ async def youtube_oauth_callback(
     redirect_uri = _get_redirect_uri(request)
 
     try:
-        credentials = plugin.exchange_code(code, redirect_uri)
+        # ✅ مرّر state لاسترجاع code_verifier
+        credentials = plugin.exchange_code(code, redirect_uri, state=state)
     except Exception as e:
         logger.error("OAuth token exchange failed: %s", e)
         return HTMLResponse(_error_page("فشل استبدال الرمز", str(e)), status_code=400)
