@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import select, update, delete, func
+from sqlalchemy import select, update, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.domain.project.project import Project
@@ -26,6 +26,8 @@ class SQLProjectRepository:
             existing.logo_asset_id = str(project.logo_asset_id) if project.logo_asset_id else None
             existing.brand_colors = project.brand_colors.to_dict()
             existing.settings = project.settings
+            # ✅ احفظ data
+            existing.data = getattr(project, "data", None) or {}
             existing.updated_at = project.updated_at
         else:
             self._session.add(ProjectModel(
@@ -39,6 +41,8 @@ class SQLProjectRepository:
                 logo_asset_id=str(project.logo_asset_id) if project.logo_asset_id else None,
                 brand_colors=project.brand_colors.to_dict(),
                 settings=project.settings,
+                # ✅ احفظ data
+                data=getattr(project, "data", None) or {},
                 created_at=project.created_at,
                 updated_at=project.updated_at,
             ))
@@ -81,6 +85,7 @@ class SQLProjectRepository:
         )
 
     def _to_domain(self, row: ProjectModel) -> Project:
+        """Convert ORM row → Domain Project (including data blob)."""
         p = Project.__new__(Project)
         p.id = uuid.UUID(row.id)
         p.title = row.title
@@ -92,6 +97,13 @@ class SQLProjectRepository:
         p.logo_asset_id = uuid.UUID(row.logo_asset_id) if row.logo_asset_id else None
         p.brand_colors = BrandColors.from_dict(row.brand_colors or {})
         p.settings = row.settings or {}
+
+        # ✅ استعادة data blob (يحوي video_url, thumbnail, clips, ...)
+        data = getattr(row, "data", None)
+        if not isinstance(data, dict):
+            data = {}
+        p.data = data
+
         p.created_at = row.created_at
         p.updated_at = row.updated_at
         return p
