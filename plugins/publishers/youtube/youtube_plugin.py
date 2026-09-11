@@ -1,9 +1,14 @@
 """
 YouTube Publisher Plugin — Real OAuth2 + YouTube Data API v3 upload.
 """
+import os
+
+# ✅ MUST be set BEFORE importing google_auth_oauthlib
+os.environ.setdefault("OAUTHLIB_RELAX_TOKEN_SCOPE", "1")
+os.environ.setdefault("OAUTHLIB_INSECURE_TRANSPORT", "1")
+
 import asyncio
 import logging
-import os
 from datetime import datetime
 from typing import Callable, Awaitable, Optional
 
@@ -15,7 +20,16 @@ from shared.ports.publisher_port import (
 logger = logging.getLogger(__name__)
 
 # ── OAuth2 scopes needed ──────────────────────────────────────────────────────
+# Google adds openid/email/profile automatically when using include_granted_scopes.
+# We include them here so the scope comparison in google-auth-oauthlib passes.
 SCOPES = [
+    # Basic OpenID Connect scopes (Google adds these automatically)
+    "openid",
+    "email",
+    "profile",
+    "https://www.googleapis.com/auth/userinfo.profile",
+    "https://www.googleapis.com/auth/userinfo.email",
+    # YouTube scopes
     "https://www.googleapis.com/auth/youtube.upload",
     "https://www.googleapis.com/auth/youtube",
 ]
@@ -237,7 +251,6 @@ class YouTubePublisherPlugin(PublisherPort):
             from googleapiclient.discovery import build
             from googleapiclient.http import MediaFileUpload
             from googleapiclient.errors import HttpError
-            import httplib2
 
             creds_obj = self._build_credentials(credentials)
 
