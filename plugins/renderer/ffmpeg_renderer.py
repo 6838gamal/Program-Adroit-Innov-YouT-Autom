@@ -1,4 +1,3 @@
-
 import asyncio
 import logging
 import subprocess
@@ -6,8 +5,6 @@ import traceback
 import uuid
 from pathlib import Path
 from typing import Awaitable, Callable, Optional
-
-from shared.ports.renderer import RendererPort
 
 
 logger = logging.getLogger(__name__)
@@ -25,7 +22,7 @@ def _diag_err(msg: str) -> None:
     logger.error(msg)
 
 
-class FFmpegRendererPlugin(RendererPort):
+class FFmpegRendererPlugin:
     """
     FFmpeg-based video renderer.
 
@@ -955,4 +952,3 @@ class FFmpegRendererPlugin(RendererPort):
             return repr(value)
 
         return value
-
