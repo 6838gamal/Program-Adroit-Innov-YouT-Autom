@@ -20,7 +20,7 @@ from shared.domain_events import (
     RenderCompleted, RenderFailed,
 )
 from shared.exceptions import ProjectNotFoundError, RenderJobNotFoundError
-from shared.ports.renderer_port import RenderSettings
+from shared.ports.renderer_port import RenderSettings, ThumbnailConfig
 from config.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -404,12 +404,14 @@ class ProductionService:
             fps = job_settings.get("fps", 30)
             width = job_settings.get("width", 1920)
             height = job_settings.get("height", 1080)
-            _diag(f"🔥 job_settings fps={fps} width={width} height={height}")
+            quality = job_settings.get("quality", "medium")
+            _diag(f"🔥 job_settings fps={fps} width={width} height={height} quality={quality}")
 
             rs = RenderSettings(
                 fps=fps,
                 resolution_width=width,
                 resolution_height=height,
+                quality=quality,
             )
 
             await save_progress(5.0, "تحليل النص وتقسيمه إلى مشاهد")
@@ -510,11 +512,16 @@ class ProductionService:
             _diag(f"🔥 renderer.render done output={result.output_path}")
 
             # ── Thumbnail ────────────────────────────────────────────────────
+            # Generate a thumbnail from the first frame of the rendered video,
+            # then upload it to Supabase Storage so the projects page can
+            # display it as a preview image.
             output_dir = settings.EXPORTS_DIR / str(job_id)
             output_dir.mkdir(parents=True, exist_ok=True)
-            thumb_path = settings.THUMBNAILS_DIR / f"{job_id}.jpg"
 
-            from shared.ports.renderer_port import ThumbnailConfig
+            thumb_path = settings.THUMBNAILS_DIR / f"{job_id}.jpg"
+            thumb_path.parent.mkdir(parents=True, exist_ok=True)
+
+            thumbnail_url: Optional[str] = None
             try:
                 await renderer.generate_thumbnail(
                     result.output_path,
@@ -522,6 +529,15 @@ class ProductionService:
                     thumb_path,
                 )
                 _diag(f"🔥 thumbnail generated: {thumb_path}")
+
+                # Upload to Supabase Storage
+                thumbnail_url = await _upload_thumbnail_to_supabase(
+                    thumb_path, str(job_id)
+                )
+                if thumbnail_url:
+                    _diag(f"🔥 thumbnail uploaded: {thumbnail_url}")
+                else:
+                    _diag("⚠️ thumbnail upload skipped (no URL)")
             except Exception as e:
                 _diag_err(f"⚠️ Thumbnail generation failed: {e}", e)
 
@@ -540,6 +556,35 @@ class ProductionService:
                         project.mark_rendered()
                     except Exception as e:
                         _diag_err(f"⚠️ project.mark_rendered failed: {e}", e)
+
+                    # Persist thumbnail URL + rendered video path into the
+                    # project's data so the projects page can show a preview.
+                    try:
+                        project_dict = (
+                            project.to_dict()
+                            if hasattr(project, "to_dict")
+                            else {}
+                        )
+                        data = project_dict.get("data", {}) or {}
+
+                        if thumbnail_url:
+                            data["thumbnail"] = thumbnail_url
+                            data["thumbnail_path"] = str(thumb_path)
+
+                        if hasattr(result, "output_path"):
+                            data["video_path"] = str(result.output_path)
+
+                        data["rendered_at"] = datetime.utcnow().isoformat()
+
+                        if hasattr(project, "update_data"):
+                            project.update_data(data)
+                        else:
+                            project.data = data
+
+                        _diag(f"🔥 project data updated with thumbnail: {bool(thumbnail_url)}")
+                    except Exception as e:
+                        _diag_err(f"⚠️ Failed to persist thumbnail in project: {e}", e)
+
                     await proj_repo.save(project)
                 await session.commit()
 
@@ -707,6 +752,67 @@ def _split_script_to_scenes(script: str, title: str = "") -> list[str]:
         scenes.append(" ".join(current))
 
     return scenes or [script.strip()]
+
+
+async def _upload_thumbnail_to_supabase(
+    thumb_path: Path,
+    job_id: str,
+) -> Optional[str]:
+    """
+    Upload the generated thumbnail to Supabase Storage and return
+    its public URL. Returns None if upload fails.
+
+    The bucket is expected to be 'videos' with public read access.
+    Object path: thumbnails/<job_id>.jpg
+    """
+    if not thumb_path.exists() or thumb_path.stat().st_size <= 0:
+        _diag_err(f"⚠️ Thumbnail file missing or empty: {thumb_path}")
+        return None
+
+    try:
+        from infrastructure.storage.supabase_storage import get_supabase_client
+    except Exception as e:
+        _diag_err(f"⚠️ Could not import supabase client: {e}", e)
+        return None
+
+    try:
+        client = get_supabase_client()
+        if client is None:
+            _diag_err("⚠️ Supabase client is None; skipping thumbnail upload")
+            return None
+
+        bucket = "videos"
+        object_path = f"thumbnails/{job_id}.jpg"
+
+        with open(thumb_path, "rb") as f:
+            data = f.read()
+
+        _diag(
+            f"🖼️ Uploading thumbnail to Supabase: "
+            f"bucket={bucket} path={object_path} size={len(data)} bytes"
+        )
+
+        # Try the modern signature first (with file_options / upsert).
+        try:
+            client.storage.from_(bucket).upload(
+                path=object_path,
+                file=data,
+                file_options={
+                    "content-type": "image/jpeg",
+                    "upsert": "true",
+                },
+            )
+        except TypeError:
+            # Older supabase-py signature: upload(path, file)
+            client.storage.from_(bucket).upload(object_path, data)
+
+        public_url = client.storage.from_(bucket).get_public_url(object_path)
+        _diag(f"✅ Thumbnail uploaded to Supabase: {public_url}")
+        return public_url
+
+    except Exception as e:
+        _diag_err(f"⚠️ Failed to upload thumbnail to Supabase: {e}", e)
+        return None
 
 
 async def _resolve_voice_plugin(registry):
