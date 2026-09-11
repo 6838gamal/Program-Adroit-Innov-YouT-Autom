@@ -81,7 +81,7 @@ class YouTubeAuthRequest(BaseModel):
 
 class ProjectSaveRequest(BaseModel):
     project_id: str
-    user_id: Optional[str] = None  # ✅ السماح بـ null
+    user_id: Optional[str] = None
     data: Dict[str, Any]
 
 
@@ -94,9 +94,6 @@ class ProjectShareRequest(BaseModel):
 # ============================================
 
 def is_ytdlp_available() -> bool:
-    """
-    التحقق من وجود yt-dlp في النظام (كخيار احتياطي)
-    """
     return shutil.which("yt-dlp") is not None
 
 
@@ -105,9 +102,6 @@ def is_ytdlp_available() -> bool:
 # ============================================
 
 async def extract_youtube_video_info(url: str, use_auth: bool = False) -> Dict[str, Any]:
-    """
-    استخراج معلومات الفيديو باستخدام YouTube Data API + pytube
-    """
     service = YouTubeService()
     video_id = service.extract_video_id(url)
     
@@ -116,7 +110,6 @@ async def extract_youtube_video_info(url: str, use_auth: bool = False) -> Dict[s
         return extract_video_info_manual(url)
     
     try:
-        # 1. الحصول على المعلومات من YouTube Data API
         print(f"📡 جلب معلومات الفيديو من YouTube Data API: {video_id}")
         info = service.get_video_info(video_id, use_auth=use_auth)
         
@@ -124,7 +117,6 @@ async def extract_youtube_video_info(url: str, use_auth: bool = False) -> Dict[s
             print(f"✅ تم الحصول على المعلومات من API")
         else:
             print(f"⚠️ فشل API، محاولة استخدام pytube...")
-            # 2. محاولة استخدام pytube كبديل
             download_info = get_download_info(video_id)
             if download_info and not download_info.get('error'):
                 return {
@@ -150,10 +142,8 @@ async def extract_youtube_video_info(url: str, use_auth: bool = False) -> Dict[s
                 print(f"⚠️ فشل pytube أيضاً، استخدام الطريقة اليدوية")
                 return extract_video_info_manual(url)
         
-        # 3. دمج مع معلومات التحميل من pytube
         download_info = get_download_info(video_id)
         
-        # 4. بناء النتيجة النهائية
         result = {
             'video_id': video_id,
             'title': info.get('title', 'فيديو يوتيوب'),
@@ -185,7 +175,6 @@ async def extract_youtube_video_info(url: str, use_auth: bool = False) -> Dict[s
             'use_auth': use_auth
         }
         
-        # حساب حجم الملف التقريبي
         if result['duration']:
             estimated_size_mb = max(result['duration'] * 2.5, 10)
             result['size_bytes'] = int(estimated_size_mb * 1024 * 1024)
@@ -205,9 +194,6 @@ def extract_video_info_manual(
     video_unavailable: bool = False,
     age_restricted: bool = False
 ) -> Dict[str, Any]:
-    """
-    استخراج معلومات الفيديو يدوياً (كحل أخير)
-    """
     parsed_url = urlparse(url)
     domain = parsed_url.netloc.lower()
     
@@ -230,7 +216,6 @@ def extract_video_info_manual(
         "video_id": None
     }
     
-    # تحديد المنصة من الرابط
     if "youtube.com" in domain or "youtu.be" in domain:
         info["platform"] = "youtube"
         info["is_external"] = True
@@ -334,9 +319,6 @@ def extract_video_info_manual(
 
 
 def extract_youtube_id(url: str) -> Optional[str]:
-    """
-    استخراج معرف الفيديو من رابط يوتيوب
-    """
     patterns = [
         r'(?:youtube\.com\/watch\?v=)([\w-]+)',
         r'(?:youtu\.be\/)([\w-]+)',
@@ -356,9 +338,6 @@ def extract_youtube_id(url: str) -> Optional[str]:
 
 
 def detect_video_format(url: str) -> str:
-    """
-    اكتشاف صيغة الفيديو من الرابط
-    """
     extensions = {
         '.mp4': 'mp4',
         '.webm': 'webm',
@@ -376,9 +355,6 @@ def detect_video_format(url: str) -> str:
 
 
 def format_file_size(bytes_size: int) -> str:
-    """
-    تنسيق حجم الملف
-    """
     if bytes_size < 1024:
         return f"{bytes_size} B"
     elif bytes_size < 1024 * 1024:
@@ -480,19 +456,16 @@ async def publish_project(
     project_id: UUID,
     service: ProjectService = Depends(get_project_service),
 ):
+    """
+    نشر المشروع (تحويل حالته إلى published).
+
+    ✅ يستخدم service.publish() الذي يستدعي project.mark_published()
+    """
     try:
-        project = await service.get(project_id)
-        if not project:
-            raise HTTPException(status_code=404, detail="Project not found")
-        
-        updated_project = await service.update(
-            project_id=project_id,
-            status="published"
-        )
-        
+        updated_project = await service.publish(project_id)
         return {
             "message": "Project published successfully",
-            "project": ProjectResponse(**updated_project.to_dict())
+            "project": ProjectResponse(**updated_project.to_dict()),
         }
     except ProjectNotFoundError:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -551,19 +524,19 @@ async def render_project(
     project_id: UUID,
     service: ProjectService = Depends(get_project_service),
 ):
+    """
+    بدء الرندر (تحويل الحالة إلى in_production).
+
+    ✅ يستخدم service.update(status=...) بعد إضافة الدعم.
+    """
     try:
-        project = await service.get(project_id)
-        if not project:
-            raise HTTPException(status_code=404, detail="Project not found")
-        
         updated_project = await service.update(
             project_id=project_id,
-            status="in_production"
+            status="in_production",
         )
-        
         return {
             "message": "Render started successfully",
-            "project": ProjectResponse(**updated_project.to_dict())
+            "project": ProjectResponse(**updated_project.to_dict()),
         }
     except ProjectNotFoundError:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -584,18 +557,14 @@ async def save_project_data(payload: ProjectSaveRequest):
         from infrastructure.database.supabase_client import get_supabase_admin
         
         supabase = get_supabase_admin()
-        
-        # ✅ التأكد من أن user_id ليس فارغاً
         user_id = payload.user_id if payload.user_id else None
         
-        # التحقق من وجود المشروع
         existing = supabase.table('project_data') \
             .select('project_id') \
             .eq('project_id', payload.project_id) \
             .execute()
         
         if existing.data:
-            # تحديث المشروع الموجود
             result = supabase.table('project_data') \
                 .update({
                     'data': payload.data,
@@ -605,7 +574,6 @@ async def save_project_data(payload: ProjectSaveRequest):
                 .execute()
             message = "Project updated successfully"
         else:
-            # إنشاء مشروع جديد
             result = supabase.table('project_data') \
                 .insert({
                     'project_id': payload.project_id,
@@ -634,9 +602,6 @@ async def get_project_data(
     project_id: str,
     user_id: str = Query(None)
 ):
-    """
-    جلب بيانات المشروع من Supabase
-    """
     try:
         from infrastructure.database.supabase_client import get_supabase_admin
         
@@ -668,9 +633,6 @@ async def get_project_data(
 
 @router.get("/{project_id}/blob")
 async def get_project_blob(project_id: str):
-    """
-    جلب blob للمشروع
-    """
     try:
         from infrastructure.database.supabase_client import get_supabase_admin
         
@@ -704,15 +666,11 @@ async def get_project_blob(project_id: str):
 
 @router.post("/{project_id}/share")
 async def share_project(project_id: str, payload: ProjectShareRequest):
-    """
-    مشاركة المشروع مع مستخدم آخر
-    """
     try:
         from infrastructure.database.supabase_client import get_supabase_admin
         
         supabase = get_supabase_admin()
         
-        # جلب المشروع
         result = supabase.table('project_data') \
             .select('shared_with') \
             .eq('project_id', project_id) \
@@ -726,7 +684,6 @@ async def share_project(project_id: str, payload: ProjectShareRequest):
         if payload.email not in shared_with:
             shared_with.append(payload.email)
         
-        # تحديث المشروع
         supabase.table('project_data') \
             .update({'shared_with': shared_with}) \
             .eq('project_id', project_id) \
@@ -750,9 +707,6 @@ async def get_shared_project(
     project_id: str, 
     user_email: str = Query(..., description="البريد الإلكتروني للمستخدم")
 ):
-    """
-    جلب مشروع مشترك
-    """
     try:
         from infrastructure.database.supabase_client import get_supabase_admin
         
@@ -785,9 +739,6 @@ async def delete_project_data(
     project_id: str, 
     user_id: str = Query(..., description="معرف المستخدم")
 ):
-    """
-    حذف بيانات المشروع من Supabase
-    """
     try:
         from infrastructure.database.supabase_client import get_supabase_admin
         
@@ -816,9 +767,6 @@ async def delete_project_data(
 
 @router.get("/{project_id}/check")
 async def check_project_exists(project_id: str):
-    """
-    التحقق من وجود مشروع في Supabase
-    """
     try:
         from infrastructure.database.supabase_client import get_supabase_admin
         
@@ -843,9 +791,6 @@ async def check_project_exists(project_id: str):
 
 @router.get("/user/{user_id}/projects")
 async def get_user_projects(user_id: str):
-    """
-    جلب جميع مشاريع المستخدم
-    """
     try:
         from infrastructure.database.supabase_client import get_supabase_admin
         
@@ -877,11 +822,7 @@ async def process_video(
     request: VideoProcessRequest,
     background_tasks: BackgroundTasks,
 ):
-    """
-    معالجة رابط فيديو من الإنترنت باستخدام YouTube Data API + pytube
-    """
     session_id = request.session_id or str(uuid.uuid4())
-    
     ytdlp_available = is_ytdlp_available()
     
     processing_sessions[session_id] = {
@@ -926,9 +867,6 @@ async def process_video(
 
 @router.get("/video/process/{session_id}/status")
 async def get_processing_status(session_id: str):
-    """
-    الحصول على حالة معالجة الفيديو مع التقدم والمعلومات
-    """
     if session_id not in processing_sessions:
         raise HTTPException(status_code=404, detail="Session not found")
     
@@ -971,9 +909,6 @@ async def generate_video(
     request: VideoGenerateRequest,
     background_tasks: BackgroundTasks,
 ):
-    """
-    توليد فيديو من برومبت مع تحديث التقدم
-    """
     session_id = request.session_id or str(uuid.uuid4())
     
     processing_sessions[session_id] = {
@@ -1013,9 +948,6 @@ async def generate_video(
 
 @router.get("/video/generate/{session_id}/status")
 async def get_generation_status(session_id: str):
-    """
-    الحصول على حالة توليد الفيديو مع التقدم والمعلومات
-    """
     if session_id not in processing_sessions:
         raise HTTPException(status_code=404, detail="Session not found")
     
@@ -1044,9 +976,6 @@ async def get_generation_status(session_id: str):
 
 @router.get("/video/health")
 async def video_health_check():
-    """
-    التحقق من صحة خدمة الفيديو
-    """
     youtube_service = YouTubeService()
     is_youtube_auth = youtube_service.is_authenticated()
     
@@ -1066,11 +995,7 @@ async def video_health_check():
 # ============================================
 
 async def process_video_background(session_id: str, url: str, use_auth: bool = False):
-    """
-    معالجة الفيديو في الخلفية مع تحديث التقدم
-    """
     try:
-        # خطوة 1: تحليل الرابط
         processing_sessions[session_id].update({
             "status": "analyzing",
             "progress": 10,
@@ -1079,7 +1004,6 @@ async def process_video_background(session_id: str, url: str, use_auth: bool = F
         })
         await asyncio.sleep(1)
         
-        # خطوة 2: استخراج معلومات الفيديو
         processing_sessions[session_id].update({
             "status": "extracting",
             "progress": 25,
@@ -1111,7 +1035,6 @@ async def process_video_background(session_id: str, url: str, use_auth: bool = F
         
         await asyncio.sleep(1.5)
         
-        # خطوة 3: التحقق من الفيديو
         processing_sessions[session_id].update({
             "status": "verifying",
             "progress": 45,
@@ -1120,7 +1043,6 @@ async def process_video_background(session_id: str, url: str, use_auth: bool = F
         })
         await asyncio.sleep(1)
         
-        # خطوة 4: معالجة الفيديو
         processing_sessions[session_id].update({
             "status": "processing",
             "progress": 60,
@@ -1129,7 +1051,6 @@ async def process_video_background(session_id: str, url: str, use_auth: bool = F
         })
         await asyncio.sleep(1.5)
         
-        # خطوة 5: تحليل المحتوى
         processing_sessions[session_id].update({
             "status": "analyzing_content",
             "progress": 80,
@@ -1138,7 +1059,6 @@ async def process_video_background(session_id: str, url: str, use_auth: bool = F
         })
         await asyncio.sleep(1)
         
-        # خطوة 6: تجهيز الفيديو
         processing_sessions[session_id].update({
             "status": "finalizing",
             "progress": 92,
@@ -1210,9 +1130,6 @@ async def process_video_background(session_id: str, url: str, use_auth: bool = F
 
 
 async def generate_video_background(session_id: str, prompt: str, links: List[str]):
-    """
-    توليد فيديو في الخلفية مع تحديث التقدم
-    """
     try:
         steps = [
             (5, "analyzing_prompt", "تحليل الطلب...", "تحليل الطلب"),
