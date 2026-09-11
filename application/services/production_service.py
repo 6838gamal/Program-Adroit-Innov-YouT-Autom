@@ -53,7 +53,6 @@ def _task_done_callback(task: asyncio.Task) -> None:
     """Log any exception raised by a background render task."""
     job_hint = "unknown"
     try:
-        # Best-effort: find which job this task belongs to
         for jid, t in list(_active_renders.items()):
             if t is task:
                 job_hint = jid
@@ -110,6 +109,8 @@ class ProductionService:
             project_data = project.to_dict() if hasattr(project, "to_dict") else {}
 
             existing_data = project_data.get("data", {}) or {}
+            if not isinstance(existing_data, dict):
+                existing_data = {}
             existing_data.update({
                 "clips": clips,
                 "layers": layers,
@@ -141,11 +142,6 @@ class ProductionService:
     ) -> RenderJob:
         """
         Start a render job for a project.
-
-        Args:
-            project_id: ID of the project to render.
-            render_settings: Render settings (fps, width, height, quality).
-            project_data: Optional project data from client (clips, layers, etc.).
         """
         _diag(f"🔥 start_render called: project_id={project_id}")
         _diag(f"🔥 render_settings={render_settings}")
@@ -180,7 +176,8 @@ class ProductionService:
         # ====== Reset project status if already in production ======
         if hasattr(project, "status"):
             current_status = project.status
-            if current_status == "in_production":
+            status_value = getattr(current_status, "value", current_status)
+            if status_value == "in_production":
                 logger.info(
                     "🔄 Project %s is already in production. Resetting status.",
                     project_id,
@@ -271,7 +268,6 @@ class ProductionService:
     ) -> RenderJob:
         """
         Create a RenderJob using whatever signature it actually has.
-        Tries several strategies to be resilient to domain-model variations.
         """
         # Strategy 1: full kwargs
         try:
@@ -417,12 +413,16 @@ class ProductionService:
             await save_progress(5.0, "تحليل النص وتقسيمه إلى مشاهد")
 
             # ── Build scenes from project script ─────────────────────────────
-            script = project_data.get("script", "")
-            title = project_data.get("title", "")
+            script = project_data.get("script", "") or ""
+            title = project_data.get("title", "") or ""
             brand_colors = project_data.get("brand_colors", {}) or {}
-            brand_color = brand_colors.get("primary") if brand_colors else None
+            brand_color = None
+            if isinstance(brand_colors, dict):
+                brand_color = brand_colors.get("primary")
 
             project_data_data = project_data.get("data", {}) or {}
+            if not isinstance(project_data_data, dict):
+                project_data_data = {}
             clips = project_data_data.get("clips", []) or []
 
             if clips:
@@ -511,17 +511,48 @@ class ProductionService:
             )
             _diag(f"🔥 renderer.render done output={result.output_path}")
 
-            # ── Thumbnail ────────────────────────────────────────────────────
-            # Generate a thumbnail from the first frame of the rendered video,
-            # then upload it to Supabase Storage so the projects page can
-            # display it as a preview image.
-            output_dir = settings.EXPORTS_DIR / str(job_id)
-            output_dir.mkdir(parents=True, exist_ok=True)
+            # ══════════════════════════════════════════════════════════════════
+            # ── Upload video + thumbnail to Supabase ─────────────────────────
+            # ══════════════════════════════════════════════════════════════════
+            from infrastructure.storage.supabase_storage_adapter import (
+                SupabaseStorageAdapter,
+            )
 
+            storage = SupabaseStorageAdapter()
+            video_url: Optional[str] = None
+            video_storage_path: Optional[str] = None
+            thumbnail_url: Optional[str] = None
+            thumb_storage_path: Optional[str] = None
+
+            # ── 1) Upload the rendered video ─────────────────────────────────
+            try:
+                video_local = Path(result.output_path)
+                if video_local.exists() and video_local.stat().st_size > 0:
+                    video_storage_path = f"renders/{job_id}/{video_local.name}"
+
+                    _diag(
+                        f"📤 Uploading video: {video_local} "
+                        f"({video_local.stat().st_size} bytes) → {video_storage_path}"
+                    )
+
+                    await _upload_to_supabase(
+                        storage=storage,
+                        local_path=video_local,
+                        remote_path=video_storage_path,
+                        content_type="video/mp4",
+                    )
+
+                    video_url = await _build_public_url(storage, video_storage_path)
+                    _diag(f"✅ Video uploaded: {video_url}")
+                else:
+                    _diag_err(f"⚠️ Rendered video missing or empty: {video_local}")
+            except Exception as e:
+                _diag_err(f"❌ Video upload failed: {e}", e)
+
+            # ── 2) Generate + upload thumbnail ───────────────────────────────
             thumb_path = settings.THUMBNAILS_DIR / f"{job_id}.jpg"
             thumb_path.parent.mkdir(parents=True, exist_ok=True)
 
-            thumbnail_url: Optional[str] = None
             try:
                 await renderer.generate_thumbnail(
                     result.output_path,
@@ -530,63 +561,96 @@ class ProductionService:
                 )
                 _diag(f"🔥 thumbnail generated: {thumb_path}")
 
-                # Upload to Supabase Storage
-                thumbnail_url = await _upload_thumbnail_to_supabase(
-                    thumb_path, str(job_id)
-                )
-                if thumbnail_url:
-                    _diag(f"🔥 thumbnail uploaded: {thumbnail_url}")
+                if thumb_path.exists() and thumb_path.stat().st_size > 0:
+                    thumb_storage_path = f"thumbnails/{job_id}.jpg"
+
+                    await _upload_to_supabase(
+                        storage=storage,
+                        local_path=thumb_path,
+                        remote_path=thumb_storage_path,
+                        content_type="image/jpeg",
+                    )
+
+                    thumbnail_url = await _build_public_url(storage, thumb_storage_path)
+                    _diag(f"✅ Thumbnail uploaded: {thumbnail_url}")
                 else:
-                    _diag("⚠️ thumbnail upload skipped (no URL)")
+                    _diag_err(f"⚠️ Thumbnail missing or empty: {thumb_path}")
             except Exception as e:
-                _diag_err(f"⚠️ Thumbnail generation failed: {e}", e)
+                _diag_err(f"⚠️ Thumbnail pipeline failed: {e}", e)
 
             await save_progress(100.0, "اكتمل")
 
+            # ── 3) Persist to DB ─────────────────────────────────────────────
             async with factory() as session:
                 job_repo = SQLRenderJobRepository(session)
                 proj_repo = SQLProjectRepository(session)
                 job = await job_repo.get(job_id)
                 project = await proj_repo.get(project_id_obj)
+
                 if job:
                     job.complete(str(result.output_path))
                     await job_repo.save(job)
+
                 if project:
                     try:
                         project.mark_rendered()
                     except Exception as e:
                         _diag_err(f"⚠️ project.mark_rendered failed: {e}", e)
 
-                    # Persist thumbnail URL + rendered video path into the
-                    # project's data so the projects page can show a preview.
+                    # ✅ احفظ video_url و thumbnail_url مباشرة على المشروع
                     try:
-                        project_dict = (
-                            project.to_dict()
-                            if hasattr(project, "to_dict")
-                            else {}
-                        )
-                        data = project_dict.get("data", {}) or {}
+                        if video_url:
+                            try:
+                                project.video_url = video_url
+                            except Exception:
+                                pass
+                            try:
+                                project.storage_path = video_storage_path
+                            except Exception:
+                                pass
+                            try:
+                                project.output_path = str(result.output_path)
+                            except Exception:
+                                pass
 
                         if thumbnail_url:
-                            data["thumbnail"] = thumbnail_url
-                            data["thumbnail_path"] = str(thumb_path)
+                            try:
+                                project.thumbnail_url = thumbnail_url
+                            except Exception:
+                                pass
 
-                        if hasattr(result, "output_path"):
-                            data["video_path"] = str(result.output_path)
+                        # ✅ أيضاً احفظ في data (fallback)
+                        try:
+                            data = getattr(project, "data", None) or {}
+                            if not isinstance(data, dict):
+                                data = {}
+                            if video_url:
+                                data["video_url"] = video_url
+                                data["video_path"] = video_storage_path
+                            if thumbnail_url:
+                                data["thumbnail"] = thumbnail_url
+                                data["thumbnail_path"] = thumb_storage_path
+                            data["rendered_at"] = datetime.utcnow().isoformat()
+                            data["output_local_path"] = str(result.output_path)
 
-                        data["rendered_at"] = datetime.utcnow().isoformat()
+                            if hasattr(project, "update_data"):
+                                project.update_data(data)
+                            else:
+                                project.data = data
+                        except Exception as e:
+                            _diag_err(f"⚠️ Could not update project.data: {e}", e)
 
-                        if hasattr(project, "update_data"):
-                            project.update_data(data)
-                        else:
-                            project.data = data
-
-                        _diag(f"🔥 project data updated with thumbnail: {bool(thumbnail_url)}")
+                        _diag(
+                            f"💾 Persisted — video_url={bool(video_url)} "
+                            f"thumbnail_url={bool(thumbnail_url)}"
+                        )
                     except Exception as e:
-                        _diag_err(f"⚠️ Failed to persist thumbnail in project: {e}", e)
+                        _diag_err(f"⚠️ Failed to persist URLs in project: {e}", e)
 
                     await proj_repo.save(project)
+
                 await session.commit()
+                _diag("💾 DB committed")
 
             try:
                 await self._bus.publish(RenderCompleted(
@@ -601,7 +665,6 @@ class ProductionService:
 
         except asyncio.CancelledError:
             _diag(f"🛑 _run_render cancelled: job={job_id}")
-            # Mark job as cancelled in DB
             if factory is not None:
                 try:
                     async with factory() as session:
@@ -704,13 +767,15 @@ class ProductionService:
             _diag(f"🛑 Cancelled render task: {job_id}")
 
         job = await self._jobs.get(job_id)
-        if job and hasattr(job, "status") and job.status in ["pending", "processing"]:
-            try:
-                job.cancel()
-                await self._jobs.save(job)
-                _diag(f"🛑 Marked job as cancelled in DB: {job_id}")
-            except Exception as e:
-                _diag_err(f"⚠️ Could not mark job as cancelled: {e}", e)
+        if job and hasattr(job, "status"):
+            status_value = getattr(job.status, "value", job.status)
+            if status_value in ("pending", "processing"):
+                try:
+                    job.cancel()
+                    await self._jobs.save(job)
+                    _diag(f"🛑 Marked job as cancelled in DB: {job_id}")
+                except Exception as e:
+                    _diag_err(f"⚠️ Could not mark job as cancelled: {e}", e)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -720,10 +785,6 @@ class ProductionService:
 def _split_script_to_scenes(script: str, title: str = "") -> list[str]:
     """
     Split project script into scenes.
-    Strategy:
-    1. Split by double newline (explicit paragraphs).
-    2. If only one paragraph, split by sentence-ending punctuation.
-    3. If script is empty, create a single title card.
     """
     if not script or not script.strip():
         return [title or "مشهد بدون نص"]
@@ -754,66 +815,121 @@ def _split_script_to_scenes(script: str, title: str = "") -> list[str]:
     return scenes or [script.strip()]
 
 
-async def _upload_thumbnail_to_supabase(
-    thumb_path: Path,
-    job_id: str,
-) -> Optional[str]:
-    """
-    Upload the generated thumbnail to Supabase Storage and return
-    its public URL. Returns None if upload fails.
+# ═════════════════════════════════════════════════════════════════════════════
+# Supabase upload helpers (NEW)
+# ═════════════════════════════════════════════════════════════════════════════
 
-    The bucket is expected to be 'videos' with public read access.
-    Object path: thumbnails/<job_id>.jpg
+async def _upload_to_supabase(
+    storage,
+    local_path: Path,
+    remote_path: str,
+    content_type: str = "application/octet-stream",
+) -> None:
     """
-    if not thumb_path.exists() or thumb_path.stat().st_size <= 0:
-        _diag_err(f"⚠️ Thumbnail file missing or empty: {thumb_path}")
-        return None
+    Upload a local file to Supabase Storage using whatever API the adapter exposes.
+    Tries multiple strategies to be compatible with different adapter versions.
+    """
+    local_path = Path(local_path)
 
+    # Strategy 1: adapter.upload_file(local_path=str, remote_path=str, content_type=str)
+    if hasattr(storage, "upload_file"):
+        try:
+            result = storage.upload_file(
+                local_path=str(local_path),
+                remote_path=remote_path,
+                content_type=content_type,
+            )
+            if inspect.isawaitable(result):
+                await result
+            return
+        except TypeError:
+            pass
+        except Exception as e:
+            _diag_err(f"upload_file(str,str,str) failed: {e}", e)
+
+    # Strategy 2: adapter.upload_file(local_path, remote_path)
+    if hasattr(storage, "upload_file"):
+        try:
+            result = storage.upload_file(str(local_path), remote_path)
+            if inspect.isawaitable(result):
+                await result
+            return
+        except Exception as e:
+            _diag_err(f"upload_file(str,str) failed: {e}", e)
+
+    # Strategy 3: adapter.upload(path, file_bytes, content_type)
+    if hasattr(storage, "upload"):
+        with open(local_path, "rb") as f:
+            data = f.read()
+        try:
+            result = storage.upload(remote_path, data, content_type)
+            if inspect.isawaitable(result):
+                await result
+            return
+        except TypeError:
+            try:
+                result = storage.upload(remote_path, data)
+                if inspect.isawaitable(result):
+                    await result
+                return
+            except Exception as e:
+                _diag_err(f"upload(path,data) failed: {e}", e)
+        except Exception as e:
+            _diag_err(f"upload(path,data,ct) failed: {e}", e)
+
+    # Strategy 4: raw supabase client
     try:
         from infrastructure.storage.supabase_storage import get_supabase_client
-    except Exception as e:
-        _diag_err(f"⚠️ Could not import supabase client: {e}", e)
-        return None
-
-    try:
         client = get_supabase_client()
         if client is None:
-            _diag_err("⚠️ Supabase client is None; skipping thumbnail upload")
-            return None
+            raise RuntimeError("No Supabase client available")
 
-        bucket = "videos"
-        object_path = f"thumbnails/{job_id}.jpg"
-
-        with open(thumb_path, "rb") as f:
+        bucket = settings.SUPABASE_BUCKET
+        with open(local_path, "rb") as f:
             data = f.read()
 
-        _diag(
-            f"🖼️ Uploading thumbnail to Supabase: "
-            f"bucket={bucket} path={object_path} size={len(data)} bytes"
-        )
-
-        # Try the modern signature first (with file_options / upsert).
         try:
             client.storage.from_(bucket).upload(
-                path=object_path,
+                path=remote_path,
                 file=data,
-                file_options={
-                    "content-type": "image/jpeg",
-                    "upsert": "true",
-                },
+                file_options={"content-type": content_type, "upsert": "true"},
             )
         except TypeError:
-            # Older supabase-py signature: upload(path, file)
-            client.storage.from_(bucket).upload(object_path, data)
-
-        public_url = client.storage.from_(bucket).get_public_url(object_path)
-        _diag(f"✅ Thumbnail uploaded to Supabase: {public_url}")
-        return public_url
-
+            client.storage.from_(bucket).upload(remote_path, data)
+        return
     except Exception as e:
-        _diag_err(f"⚠️ Failed to upload thumbnail to Supabase: {e}", e)
-        return None
+        _diag_err(f"raw supabase upload failed: {e}", e)
+        raise
 
+
+async def _build_public_url(storage, remote_path: str) -> Optional[str]:
+    """
+    Build the public URL for a file in Supabase Storage.
+    Tries the adapter first, then falls back to manual construction.
+    """
+    # Strategy 1: adapter.get_public_url
+    if hasattr(storage, "get_public_url"):
+        try:
+            result = storage.get_public_url(remote_path)
+            if inspect.isawaitable(result):
+                result = await result
+            if result:
+                return result
+        except Exception as e:
+            _diag_err(f"adapter.get_public_url failed: {e}", e)
+
+    # Strategy 2: manual construction from settings
+    if settings.SUPABASE_URL:
+        base = settings.SUPABASE_URL.rstrip("/")
+        bucket = settings.SUPABASE_BUCKET
+        return f"{base}/storage/v1/object/public/{bucket}/{remote_path.lstrip('/')}"
+
+    return None
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Model resolution helpers
+# ═════════════════════════════════════════════════════════════════════════════
 
 async def _resolve_voice_plugin(registry):
     """Return active HF TTS plugin if configured, else fallback to edge_tts."""
