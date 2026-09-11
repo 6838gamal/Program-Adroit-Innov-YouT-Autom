@@ -38,6 +38,53 @@ def get_supabase_config() -> dict:
     }
 
 
+async def _resolve_video_url(project) -> str | None:
+    """
+    محاولة استخراج رابط الفيديو العام من المشروع.
+    يحاول بالترتيب:
+      1. project.video_url إن كان رابطاً كاملاً
+      2. project.storage_path عبر SupabaseStorageAdapter
+      3. project.output_path عبر SupabaseStorageAdapter
+      4. project.result_url / output_url إن وُجدت
+    """
+    # 1) video_url مباشر
+    video_url = getattr(project, "video_url", None)
+    if video_url and isinstance(video_url, str) and video_url.startswith("http"):
+        return video_url
+
+    # 2) storage_path
+    storage_path = getattr(project, "storage_path", None)
+    if not storage_path:
+        # 3) output_path
+        storage_path = getattr(project, "output_path", None)
+
+    # 4) result_url / output_url مباشر
+    if not storage_path:
+        alt = getattr(project, "result_url", None) or getattr(project, "output_url", None)
+        if alt and isinstance(alt, str) and alt.startswith("http"):
+            return alt
+
+    if not storage_path:
+        return video_url  # قد يكون None
+
+    # محاولة بناء الرابط العام
+    try:
+        storage = SupabaseStorageAdapter()
+        if hasattr(storage, "get_public_url"):
+            public = await storage.get_public_url(storage_path)  # type: ignore
+            if public:
+                return public
+        # fallback: بناؤه يدوياً
+        if settings.supabase_configured:
+            bucket = settings.SUPABASE_BUCKET
+            base = settings.SUPABASE_URL.rstrip("/")
+            return f"{base}/storage/v1/object/public/{bucket}/{storage_path.lstrip('/')}"
+    except Exception as e:
+        logger.warning(f"Failed to build video_url from storage_path: {e}")
+
+    return video_url
+
+
 # ============================================================
 # DASHBOARD
 # ============================================================
@@ -161,9 +208,15 @@ async def project_detail(
     project = await repo.get(uuid.UUID(project_id))
     if not project:
         return HTMLResponse("Project not found", status_code=404)
+
     render_jobs = await job_repo.list_for_project(project.id)
+
+    # ✅ حلّ رابط الفيديو (من video_url أو storage_path)
+    video_url = await _resolve_video_url(project)
+
     return templates.TemplateResponse(request, "projects/detail.html", {
         "project": project,
+        "video_url": video_url,
         "render_jobs": render_jobs,
         "active_page": "projects",
         "supabase": get_supabase_config(),
@@ -180,7 +233,7 @@ async def assets_page(request: Request, session: AsyncSession = Depends(get_db))
     repo = SQLAssetRepository(session)
     assets = await repo.list_all(limit=50)
     total = await repo.count()
-    
+
     # Get assets from Supabase storage
     supabase_files = []
     try:
@@ -189,7 +242,7 @@ async def assets_page(request: Request, session: AsyncSession = Depends(get_db))
             supabase_files = await storage.list_files()
     except Exception as e:
         logger.warning(f"Failed to list Supabase files: {e}")
-    
+
     return templates.TemplateResponse(request, "assets/library.html", {
         "assets": assets,
         "total": total,
@@ -743,11 +796,11 @@ async def get_supabase_status():
                 "status": "not_configured",
                 "message": "Supabase is not configured. Set SUPABASE_URL, SUPABASE_PUBLIC_KEY, SUPABASE_SECRET_KEY"
             }
-        
+
         # Test connection
         storage = SupabaseStorageAdapter()
         await storage.list_files(prefix="", limit=1)
-        
+
         return {
             "status": "connected",
             "message": "Supabase is connected and working",
