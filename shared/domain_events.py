@@ -33,6 +33,23 @@ class ProjectDeleted(DomainEvent):
     project_id: uuid.UUID = field(default_factory=uuid.uuid4)
 
 
+@dataclass
+class ProjectPublished(DomainEvent):
+    """Event: project was published to a platform."""
+    project_id: uuid.UUID = field(default_factory=uuid.uuid4)
+    platform: str = ""
+    platform_url: str = ""
+
+
+@dataclass
+class ProjectRendered(DomainEvent):
+    """Event: project finished rendering."""
+    project_id: uuid.UUID = field(default_factory=uuid.uuid4)
+    render_job_id: uuid.UUID = field(default_factory=uuid.uuid4)
+    video_url: str = ""
+    thumbnail_url: str = ""
+
+
 # ── Production Events ─────────────────────────────────────────────────────────
 
 @dataclass
