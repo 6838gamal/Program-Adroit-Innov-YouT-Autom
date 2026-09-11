@@ -789,6 +789,20 @@
         font-weight: bold;
     }
 
+    .media-item.uploading {
+        opacity: 0.6;
+        pointer-events: none;
+    }
+
+    .media-item.uploading::after {
+        content: '⏳';
+        position: absolute;
+        top: -5px;
+        right: -5px;
+        font-size: 12px;
+        animation: spin 1s linear infinite;
+    }
+
     .media-gallery-label {
         color: var(--text-muted);
         font-size: 9px;
@@ -1252,10 +1266,45 @@ const TYPE_ICONS = {
 };
 
 // ============================================================
-//  SUPABASE INTEGRATION - ONLY SUPABASE, NO localStorage
+//  SUPABASE UPLOAD — رفع الوسائط فوراً
 // ============================================================
 
-// ====== حفظ المشروع على Supabase ======
+async function uploadFileToSupabase(file, projectId) {
+    /**
+     * رفع ملف إلى Supabase Storage عبر endpoint الخلفية.
+     * يُرجع URL العام أو null عند الفشل.
+     */
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("project_id", projectId);
+
+    try {
+        const resp = await fetch("/api/v1/storage/upload-media", {
+            method: "POST",
+            body: formData,
+        });
+
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => ({}));
+            throw new Error(err.error || `HTTP ${resp.status}`);
+        }
+
+        const data = await resp.json();
+        if (!data.url) {
+            throw new Error("لا يوجد رابط في الاستجابة");
+        }
+        return data.url;
+
+    } catch (e) {
+        console.error("❌ Upload failed:", e);
+        return null;
+    }
+}
+
+// ============================================================
+//  SUPABASE SAVE / LOAD
+// ============================================================
+
 async function saveProjectToSupabase(projectId, data) {
     try {
         const response = await fetch(`/api/v1/projects/save`, {
@@ -1274,7 +1323,10 @@ async function saveProjectToSupabase(projectId, data) {
                         start: c.start,
                         duration: c.duration,
                         title: c.title,
-                        content: c.content && c.content.startsWith('blob:') ? null : c.content,
+                        // ✅ احفظ URL فقط إذا كان http(s)
+                        content: (c.content && c.content.startsWith('http'))
+                            ? c.content
+                            : null,
                         color: c.color,
                         icon: c.icon,
                         metadata: c.metadata || {}
@@ -1282,24 +1334,26 @@ async function saveProjectToSupabase(projectId, data) {
                     layers: data.layers,
                     total_duration: data.totalDuration,
                     cell_width: data.cellWidth,
+                    // ✅ احفظ URLs في media_files أيضاً
                     media_files: data.mediaFiles.map(f => ({
                         name: f.name,
                         size: f.size,
-                        type: f.type
+                        type: f.type,
+                        url: f.url || null,
                     }))
                 }
             })
         });
-        
+
         if (!response.ok) {
             const error = await response.json();
             throw new Error(error.detail || 'فشل الحفظ');
         }
-        
+
         const result = await response.json();
         updateSyncStatus('synced');
         return result;
-        
+
     } catch(e) {
         console.error('❌ فشل الحفظ على Supabase:', e);
         updateSyncStatus('error');
@@ -1308,23 +1362,22 @@ async function saveProjectToSupabase(projectId, data) {
     }
 }
 
-// ====== تحميل المشروع من Supabase ======
 async function loadProjectFromSupabase(projectId) {
     try {
         const response = await fetch(`/api/v1/projects/${projectId}?user_id=${currentUserId}`);
-        
+
         if (response.status === 404) {
             return null;
         }
-        
+
         if (!response.ok) {
             const error = await response.json();
             throw new Error(error.detail || 'فشل التحميل');
         }
-        
+
         const result = await response.json();
         const saved = result.data;
-        
+
         if (saved && saved.data) {
             return {
                 clips: saved.data.clips || [],
@@ -1334,34 +1387,32 @@ async function loadProjectFromSupabase(projectId) {
                 mediaFiles: saved.data.media_files || []
             };
         }
-        
+
         return null;
-        
+
     } catch(e) {
         console.error('❌ فشل التحميل:', e);
         throw e;
     }
 }
 
-// ====== تحميل مشروع مشترك ======
 async function loadSharedProject(projectId) {
     try {
         const response = await fetch(`/api/v1/projects/${projectId}/shared?user_email=${encodeURIComponent(currentUserEmail)}`);
-        
+
         if (!response.ok) {
             throw new Error('لا تملك صلاحية الوصول');
         }
-        
+
         const result = await response.json();
         return result.data;
-        
+
     } catch(e) {
         showToast('❌ ' + e.message, 'error');
         return null;
     }
 }
 
-// ====== مشاركة المشروع ======
 async function shareProjectWithUser(projectId, email) {
     try {
         const response = await fetch(`/api/v1/projects/${projectId}/share`, {
@@ -1371,27 +1422,26 @@ async function shareProjectWithUser(projectId, email) {
             },
             body: JSON.stringify({ email: email })
         });
-        
+
         if (!response.ok) {
             const error = await response.json();
             throw new Error(error.detail || 'فشل المشاركة');
         }
-        
+
         const result = await response.json();
         showToast('✅ ' + result.message, 'success');
         return true;
-        
+
     } catch(e) {
         showToast('❌ ' + e.message, 'error');
         return false;
     }
 }
 
-// ====== تحديث حالة المزامنة ======
 function updateSyncStatus(status) {
     const el = document.getElementById('syncStatus');
     if (!el) return;
-    
+
     el.className = 'sync-status';
     if (status === 'synced') {
         el.classList.add('synced');
@@ -1405,13 +1455,12 @@ function updateSyncStatus(status) {
     }
 }
 
-// ====== وظيفة المزامنة ======
 async function syncProject() {
     if (isSyncing) return;
     isSyncing = true;
     updateSyncStatus('syncing');
     showToast('🔄 جاري المزامنة...', 'info');
-    
+
     try {
         const data = {
             clips: projectData.clips,
@@ -1420,18 +1469,17 @@ async function syncProject() {
             cellWidth: projectData.cellWidth,
             mediaFiles: projectData.mediaFiles
         };
-        
+
         await saveProjectToSupabase(projectId, data);
         showToast('✅ تمت المزامنة بنجاح', 'success');
     } catch(e) {
         showToast('❌ فشل المزامنة: ' + e.message, 'error');
         updateSyncStatus('error');
     }
-    
+
     isSyncing = false;
 }
 
-// ====== فتح مودال المشاركة ======
 function openShareModal() {
     document.getElementById('shareModal').classList.remove('hidden');
     document.getElementById('shareEmail').value = '';
@@ -1448,7 +1496,7 @@ async function shareProject() {
         showToast('⚠️ بريد إلكتروني غير صحيح', 'warning');
         return;
     }
-    
+
     const success = await shareProjectWithUser(projectId, email);
     if (success) {
         closeShareModal();
@@ -1460,27 +1508,27 @@ async function shareProject() {
 // ============================================================
 function renderPreview(time) {
     if (!isCanvasReady || !ctx) return;
-    
+
     const w = canvas.width;
     const h = canvas.height;
-    
+
     ctx.fillStyle = '#000000';
     ctx.fillRect(0, 0, w, h);
-    
+
     const activeClips = projectData.clips.filter(c => {
         const layer = projectData.layers[c.layer];
-        return layer && layer.visible && 
-               time >= c.start && 
+        return layer && layer.visible &&
+               time >= c.start &&
                time < c.start + c.duration;
     });
-    
+
     activeClips.sort((a, b) => a.layer - b.layer);
-    
+
     if (activeClips.length > 0) {
         activeClips.forEach((clip) => {
             const x = w / 2;
             const y = h / 2;
-            
+
             if (clip.type === 'image' && clip.content) {
                 drawImageOnly(ctx, clip.content, x, y, w, h);
             } else if (clip.type === 'video' && clip.content) {
@@ -1491,15 +1539,15 @@ function renderPreview(time) {
                 drawTextOnly(ctx, clip.content, x, y, w, h);
             }
         });
-        
+
         const mainClip = activeClips[0];
         currentClipAtTime = mainClip;
         document.getElementById('playbackInfo').style.display = 'block';
         document.getElementById('playbackTime').textContent = formatTime(time);
         document.getElementById('statusCurrentClip').textContent = '▶️';
-        
+
         syncAudio(time);
-        
+
     } else {
         ctx.fillStyle = 'rgba(255,255,255,0.03)';
         ctx.font = '48px sans-serif';
@@ -1509,16 +1557,16 @@ function renderPreview(time) {
         ctx.font = '14px sans-serif';
         ctx.fillStyle = 'rgba(255,255,255,0.08)';
         ctx.fillText('أضف محتوى إلى التايم لاين', w/2, h/2 + 50);
-        
+
         document.getElementById('playbackInfo').style.display = 'none';
         document.getElementById('statusCurrentClip').textContent = '⏸️';
         currentClipAtTime = null;
-        
+
         if (audioPlayer && !audioPlayer.paused) {
             audioPlayer.pause();
         }
     }
-    
+
     ctx.fillStyle = 'rgba(0,0,0,0.5)';
     ctx.fillRect(10, 10, 130, 24);
     ctx.fillStyle = 'rgba(255,255,255,0.3)';
@@ -1526,7 +1574,7 @@ function renderPreview(time) {
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
     ctx.fillText(`${formatTime(time)} / ${formatTime(projectData.totalDuration)}`, 16, 23);
-    
+
     document.getElementById('currentTimeDisplay').textContent = formatTime(time);
     document.getElementById('totalTimeDisplay').textContent = formatTime(projectData.totalDuration);
     const slider = document.getElementById('seekSlider');
@@ -1551,7 +1599,7 @@ function drawImageOnly(ctx, src, x, y, w, h) {
         img.src = src;
         return;
     }
-    
+
     const img = imageCache[src];
     if (img === 'error' || !img) {
         ctx.fillStyle = 'rgba(255,255,255,0.05)';
@@ -1561,11 +1609,11 @@ function drawImageOnly(ctx, src, x, y, w, h) {
         ctx.fillText('⚠️', x, y);
         return;
     }
-    
+
     const ratio = Math.min(w / img.width, h / img.height);
     const drawW = img.width * ratio;
     const drawH = img.height * ratio;
-    
+
     ctx.save();
     ctx.shadowColor = 'rgba(0,0,0,0.3)';
     ctx.shadowBlur = 10;
@@ -1575,7 +1623,7 @@ function drawImageOnly(ctx, src, x, y, w, h) {
 
 function drawVideoFrame(ctx, clip, x, y, w, h, time) {
     const src = clip.content;
-    
+
     if (!videoElements[src]) {
         const video = document.createElement('video');
         video.src = src;
@@ -1585,40 +1633,40 @@ function drawVideoFrame(ctx, clip, x, y, w, h, time) {
         videoElements[src] = video;
         video.load();
     }
-    
+
     const video = videoElements[src];
     const localTime = Math.max(0, time - clip.start);
-    
+
     if (video.readyState >= 2) {
         try {
             const targetTime = Math.min(localTime, clip.duration);
             if (Math.abs(video.currentTime - targetTime) > 0.05) {
                 video.currentTime = targetTime;
             }
-            
+
             const ratio = Math.min(w / video.videoWidth, h / video.videoHeight);
             const drawW = video.videoWidth * ratio;
             const drawH = video.videoHeight * ratio;
-            
+
             ctx.save();
             ctx.shadowColor = 'rgba(0,0,0,0.3)';
             ctx.shadowBlur = 10;
             ctx.drawImage(video, x - drawW/2, y - drawH/2, drawW, drawH);
             ctx.restore();
-            
+
             if (isPlaying && video.paused) {
                 video.play().catch(() => {});
             } else if (!isPlaying && !video.paused) {
                 video.pause();
             }
-            
+
             video.muted = isMuted;
             video.playbackRate = playbackSpeed;
-            
+
             return;
         } catch(e) {}
     }
-    
+
     ctx.fillStyle = 'rgba(0,0,0,0.7)';
     ctx.fillRect(x - w/4, y - h/4, w/2, h/2);
     ctx.fillStyle = 'rgba(255,255,255,0.1)';
@@ -1635,7 +1683,7 @@ function drawAudioIndicator(ctx, x, y) {
     const size = 20;
     const time = Date.now() / 1000;
     const pulse = 0.5 + 0.5 * Math.sin(time * 4);
-    
+
     ctx.fillStyle = `rgba(5,150,105,${0.05 + 0.1 * pulse})`;
     ctx.strokeStyle = `rgba(5,150,105,${0.1 + 0.1 * pulse})`;
     ctx.lineWidth = 1;
@@ -1643,7 +1691,7 @@ function drawAudioIndicator(ctx, x, y) {
     ctx.arc(x, y, size + 4 * pulse, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
-    
+
     ctx.fillStyle = `rgba(5,150,105,${0.2 + 0.3 * pulse})`;
     ctx.font = '16px sans-serif';
     ctx.textAlign = 'center';
@@ -1653,20 +1701,20 @@ function drawAudioIndicator(ctx, x, y) {
 
 function drawTextOnly(ctx, text, x, y, w, h) {
     ctx.save();
-    
+
     const fontSize = Math.min(42, w / 12);
     ctx.font = `bold ${fontSize}px sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    
+
     ctx.shadowColor = 'rgba(0,0,0,0.9)';
     ctx.shadowBlur = 20;
     ctx.fillStyle = 'rgba(255,255,255,0.95)';
-    
+
     const words = text.split(' ');
     let lines = [];
     let currentLine = '';
-    
+
     for (let word of words) {
         const testLine = currentLine + (currentLine ? ' ' : '') + word;
         const metrics = ctx.measureText(testLine);
@@ -1678,11 +1726,11 @@ function drawTextOnly(ctx, text, x, y, w, h) {
         }
     }
     if (currentLine) lines.push(currentLine);
-    
+
     const lineHeight = fontSize * 1.3;
     const totalHeight = lines.length * lineHeight;
     const startY = y - totalHeight / 2 + lineHeight / 2;
-    
+
     if (lines.length > 1) {
         ctx.shadowBlur = 0;
         ctx.fillStyle = 'rgba(0,0,0,0.3)';
@@ -1694,11 +1742,11 @@ function drawTextOnly(ctx, text, x, y, w, h) {
         ctx.shadowBlur = 20;
         ctx.shadowColor = 'rgba(0,0,0,0.9)';
     }
-    
+
     lines.forEach((line, i) => {
         ctx.fillText(line, x, startY + i * lineHeight);
     });
-    
+
     ctx.restore();
 }
 
@@ -1712,21 +1760,21 @@ let audioNodes = [];
 function syncAudio(time) {
     const activeAudios = projectData.clips.filter(c => {
         const layer = projectData.layers[c.layer];
-        return layer && layer.visible && 
+        return layer && layer.visible &&
                c.type === 'audio' &&
-               time >= c.start && 
+               time >= c.start &&
                time < c.start + c.duration;
     });
-    
+
     if (activeAudios.length > 0) {
         if (!audioContext) {
             audioContext = new (window.AudioContext || window.webkitAudioContext)();
         }
-        
+
         activeAudios.forEach(audioClip => {
             const src = audioClip.content;
             if (!src || src === 'blob') return;
-            
+
             if (!audioBuffers[src]) {
                 fetch(src)
                     .then(res => res.arrayBuffer())
@@ -1738,10 +1786,10 @@ function syncAudio(time) {
                     .catch(() => {});
                 return;
             }
-            
+
             playAudioBuffer(src, audioBuffers[src], audioClip, time);
         });
-        
+
         audioNodes = audioNodes.filter(node => {
             if (node.isPlaying && node.clipId) {
                 const clip = projectData.clips.find(c => c.id === node.clipId);
@@ -1754,7 +1802,7 @@ function syncAudio(time) {
             }
             return false;
         });
-        
+
     } else {
         audioNodes.forEach(node => {
             if (node.source) {
@@ -1771,7 +1819,7 @@ function syncAudio(time) {
 function playAudioBuffer(src, buffer, clip, time) {
     const localTime = time - clip.start;
     if (localTime < 0 || localTime > clip.duration) return;
-    
+
     const existingNode = audioNodes.find(n => n.clipId === clip.id && n.isPlaying);
     if (existingNode) {
         if (Math.abs(existingNode.startTime - localTime) > 0.1) {
@@ -1781,21 +1829,21 @@ function playAudioBuffer(src, buffer, clip, time) {
             return;
         }
     }
-    
+
     if (!audioContext) return;
-    
+
     try {
         const source = audioContext.createBufferSource();
         source.buffer = buffer;
-        
+
         const gain = audioContext.createGain();
         gain.gain.value = isMuted ? 0 : 0.8;
-        
+
         source.connect(gain);
         gain.connect(audioContext.destination);
-        
+
         source.start(0, localTime);
-        
+
         audioNodes.push({
             clipId: clip.id,
             source: source,
@@ -1803,14 +1851,14 @@ function playAudioBuffer(src, buffer, clip, time) {
             startTime: localTime,
             isPlaying: true
         });
-        
+
         source.onended = () => {
             const idx = audioNodes.findIndex(n => n.clipId === clip.id);
             if (idx !== -1) {
                 audioNodes[idx].isPlaying = false;
             }
         };
-        
+
     } catch(e) {}
 }
 
@@ -1820,10 +1868,10 @@ function playAudioBuffer(src, buffer, clip, time) {
 function renderMediaGallery() {
     const gallery = document.getElementById('mediaGallery');
     const empty = document.getElementById('mediaGalleryEmpty');
-    
+
     const items = gallery.querySelectorAll('.media-item');
     items.forEach(item => item.remove());
-    
+
     if (projectData.mediaFiles.length === 0) {
         if (!empty) {
             const newEmpty = document.createElement('span');
@@ -1836,17 +1884,17 @@ function renderMediaGallery() {
         }
         return;
     }
-    
+
     if (empty) empty.style.display = 'none';
-    
+
     projectData.mediaFiles.forEach((file, index) => {
         const item = document.createElement('div');
         item.className = 'media-item';
         item.dataset.index = index;
-        
+
         const isVideo = file.type && file.type.startsWith('video/');
         const isImage = file.type && file.type.startsWith('image/');
-        
+
         let thumbContent = '';
         if (isImage && file.url) {
             thumbContent = `<img src="${file.url}" alt="${file.name}" loading="lazy">`;
@@ -1855,22 +1903,22 @@ function renderMediaGallery() {
         } else {
             thumbContent = '📄';
         }
-        
-        const clipExists = projectData.clips.some(c => 
+
+        const clipExists = projectData.clips.some(c =>
             c.metadata && c.metadata.file === file.name
         );
-        
+
         item.innerHTML = `
             <div class="media-thumb">${thumbContent}</div>
             <span class="media-name">${file.name.slice(0, 15)}</span>
             ${clipExists ? '<span class="media-badge">✓</span>' : ''}
             <button class="media-remove" onclick="event.stopPropagation();removeMediaFile(${index})" title="حذف">✕</button>
         `;
-        
+
         item.onclick = () => {
             addMediaToTimeline(index);
         };
-        
+
         gallery.appendChild(item);
     });
 }
@@ -1878,14 +1926,14 @@ function renderMediaGallery() {
 function addMediaToTimeline(index) {
     const file = projectData.mediaFiles[index];
     if (!file) return;
-    
+
     let startTime = getLayerEndTime(selectedLayerIndex);
     const type = file.type.split('/')[0];
     const duration = type === 'image' ? 3 : (type === 'video' ? 3 : 2);
-    
+
     const mediaFile = projectData.mediaFiles.find(f => f.name === file.name);
     const contentUrl = mediaFile ? mediaFile.url : null;
-    
+
     const clip = {
         id: clipIdCounter++,
         type: type === 'video' ? 'video' : (type === 'audio' ? 'audio' : 'image'),
@@ -1896,14 +1944,14 @@ function addMediaToTimeline(index) {
         content: contentUrl,
         color: COLORS[type] || '#666',
         icon: TYPE_ICONS[type] || '📄',
-        metadata: { 
-            file: file.name, 
-            size: file.size, 
+        metadata: {
+            file: file.name,
+            size: file.size,
             index: index,
             type: file.type
         }
     };
-    
+
     projectData.clips.push(clip);
     updateTotalDuration();
     renderTimeline();
@@ -1916,7 +1964,7 @@ function addMediaToTimeline(index) {
 function getLayerEndTime(layerIndex) {
     const layerClips = projectData.clips.filter(c => c.layer === layerIndex);
     if (layerClips.length === 0) return 0;
-    const lastClip = layerClips.reduce((max, c) => 
+    const lastClip = layerClips.reduce((max, c) =>
         c.start + c.duration > max.start + max.duration ? c : max
     );
     return lastClip.start + lastClip.duration;
@@ -1927,7 +1975,7 @@ function updateTotalDuration() {
         projectData.totalDuration = 10;
         return;
     }
-    const maxEnd = projectData.clips.reduce((max, c) => 
+    const maxEnd = projectData.clips.reduce((max, c) =>
         Math.max(max, c.start + c.duration), 0
     );
     projectData.totalDuration = Math.max(maxEnd + 2, 10);
@@ -1944,16 +1992,34 @@ function removeMediaFile(index) {
     saveProjectData();
 }
 
-function addMediaFile(file) {
-    const url = URL.createObjectURL(file);
-    projectData.mediaFiles.push({
+// ============================================================
+//  ADD MEDIA FILE — مع رفع فوري إلى Supabase
+// ============================================================
+async function addMediaFile(file) {
+    const fileSizeMB = (file.size / 1024 / 1024).toFixed(2);
+    showToast(`⏳ جاري رفع ${file.name} (${fileSizeMB} MB)...`, 'info');
+
+    // 1) ارفع إلى Supabase
+    const supabaseUrl = await uploadFileToSupabase(file, projectId);
+
+    if (!supabaseUrl) {
+        showToast(`❌ فشل رفع ${file.name}`, 'error');
+        return null;
+    }
+
+    // 2) أضف mediaFile مع URL دائم
+    const mediaFile = {
         name: file.name,
         size: file.size,
         type: file.type,
-        url: url,
-        file: file
-    });
+        url: supabaseUrl,     // ✅ Supabase URL (دائم)
+    };
+
+    projectData.mediaFiles.push(mediaFile);
     renderMediaGallery();
+
+    showToast(`✅ تم رفع ${file.name}`, 'success');
+    return mediaFile;
 }
 
 // ============================================================
@@ -1962,14 +2028,14 @@ function addMediaFile(file) {
 function renderLayers() {
     const container = document.getElementById('layersList');
     container.innerHTML = '';
-    
+
     projectData.layers.forEach((layer, index) => {
         const div = document.createElement('div');
         div.className = `layer-item${index === selectedLayerIndex ? ' active' : ''}`;
         div.dataset.index = index;
-        
+
         const clipCount = projectData.clips.filter(c => c.layer === index).length;
-        
+
         div.innerHTML = `
             <span class="layer-drag-handle">⠿</span>
             <span class="layer-vis ${layer.visible ? '' : 'hidden'}" onclick="event.stopPropagation();toggleLayerVisibility(${index})">
@@ -1982,14 +2048,14 @@ function renderLayers() {
                 <button class="danger" onclick="event.stopPropagation();deleteLayer(${index})">🗑️</button>
             </div>
         `;
-        
+
         div.onclick = () => {
             selectLayer(index);
         };
-        
+
         container.appendChild(div);
     });
-    
+
     document.getElementById('layerCount').textContent = projectData.layers.length;
     document.getElementById('statusLayers').textContent = projectData.layers.length;
 }
@@ -2009,17 +2075,17 @@ function deleteLayer(index) {
         showToast('⚠️ لا يمكن حذف الطبقة الأخيرة', 'warning');
         return;
     }
-    
+
     if (!confirm(`حذف الطبقة "${projectData.layers[index].name}"؟`)) return;
-    
+
     projectData.clips = projectData.clips.filter(c => c.layer !== index);
     projectData.clips.forEach(c => {
         if (c.layer > index) c.layer--;
     });
-    
+
     projectData.layers.splice(index, 1);
     if (selectedLayerIndex >= projectData.layers.length) selectedLayerIndex = projectData.layers.length - 1;
-    
+
     updateTotalDuration();
     renderLayers();
     renderTimeline();
@@ -2057,15 +2123,15 @@ function moveLayer(direction) {
     const index = selectedLayerIndex;
     const newIndex = direction === 'up' ? index - 1 : index + 1;
     if (newIndex < 0 || newIndex >= projectData.layers.length) return;
-    
-    [projectData.layers[index], projectData.layers[newIndex]] = 
+
+    [projectData.layers[index], projectData.layers[newIndex]] =
     [projectData.layers[newIndex], projectData.layers[index]];
-    
+
     projectData.clips.forEach(c => {
         if (c.layer === index) c.layer = newIndex;
         else if (c.layer === newIndex) c.layer = index;
     });
-    
+
     selectedLayerIndex = newIndex;
     renderLayers();
     renderTimeline();
@@ -2095,11 +2161,11 @@ function renderTimeline() {
     container.innerHTML = '';
     projectData.layers.forEach((layer, layerIdx) => {
         if (!layer.visible) return;
-        
+
         const row = document.createElement('div');
         row.className = 'track-row';
         row.dataset.layer = layerIdx;
-        
+
         const label = document.createElement('div');
         label.className = 'track-label';
         label.innerHTML = `
@@ -2116,18 +2182,18 @@ function renderTimeline() {
 
         const layerClips = projectData.clips.filter(c => c.layer === layerIdx);
         layerClips.sort((a, b) => a.start - b.start);
-        
+
         layerClips.forEach((clip) => {
             const left = clip.start * pxPerSec;
             const width = Math.max(clip.duration * pxPerSec - 2, 20);
-            
+
             const block = document.createElement('div');
             block.className = `clip-block clip-type-${clip.type}${selectedClipId === clip.id ? ' selected' : ''}`;
             block.style.cssText = `left:${left}px;width:${width}px;`;
             block.dataset.clipId = clip.id;
-            
+
             const durationStr = formatTime(clip.duration);
-            
+
             let thumbContent = '';
             if (clip.type === 'image' && clip.content) {
                 thumbContent = `<img src="${clip.content}" alt="${clip.title}" loading="lazy">`;
@@ -2136,24 +2202,24 @@ function renderTimeline() {
             } else {
                 thumbContent = clip.icon || '📄';
             }
-            
+
             block.innerHTML = `
                 <div class="clip-thumb">${thumbContent}</div>
                 <span class="clip-label">${clip.title || 'مقطع'}</span>
                 <span class="clip-duration">${durationStr}</span>
                 <button class="clip-delete-btn" onclick="event.stopPropagation();deleteClip(${clip.id})">✕</button>
             `;
-            
+
             block.onclick = (e) => {
                 e.stopPropagation();
                 selectClip(clip.id);
                 seekTo(clip.start);
             };
-            
+
             block.ondblclick = () => {
                 editClipProperties(clip.id);
             };
-            
+
             const resizeHandle = document.createElement('div');
             resizeHandle.style.cssText = 'position:absolute;right:-4px;top:0;width:8px;height:100%;cursor:ew-resize;z-index:5;';
             resizeHandle.onmousedown = (e) => {
@@ -2161,7 +2227,7 @@ function renderTimeline() {
                 startResizeClip(e, clip.id, 'right');
             };
             block.appendChild(resizeHandle);
-            
+
             const resizeHandleLeft = document.createElement('div');
             resizeHandleLeft.style.cssText = 'position:absolute;left:-4px;top:0;width:8px;height:100%;cursor:ew-resize;z-index:5;';
             resizeHandleLeft.onmousedown = (e) => {
@@ -2169,7 +2235,7 @@ function renderTimeline() {
                 startResizeClip(e, clip.id, 'left');
             };
             block.appendChild(resizeHandleLeft);
-            
+
             block.draggable = true;
             block.ondragstart = (e) => {
                 e.dataTransfer.setData('text/plain', JSON.stringify({
@@ -2214,7 +2280,7 @@ let resizeClipData = null;
 function startResizeClip(e, clipId, side) {
     const clip = projectData.clips.find(c => c.id === clipId);
     if (!clip) return;
-    
+
     resizeClipData = {
         clipId: clipId,
         side: side,
@@ -2223,7 +2289,7 @@ function startResizeClip(e, clipId, side) {
         originalDuration: clip.duration,
         pxPerSec: projectData.cellWidth / 2
     };
-    
+
     document.addEventListener('mousemove', onResizeMove);
     document.addEventListener('mouseup', onResizeEnd);
     e.preventDefault();
@@ -2231,12 +2297,12 @@ function startResizeClip(e, clipId, side) {
 
 function onResizeMove(e) {
     if (!resizeClipData) return;
-    
+
     const clip = projectData.clips.find(c => c.id === resizeClipData.clipId);
     if (!clip) return;
-    
+
     const dx = (e.clientX - resizeClipData.startX) / resizeClipData.pxPerSec;
-    
+
     if (resizeClipData.side === 'right') {
         const newDuration = Math.max(0.3, resizeClipData.originalDuration + dx);
         clip.duration = newDuration;
@@ -2246,7 +2312,7 @@ function onResizeMove(e) {
         clip.start = newStart;
         clip.duration = newDuration;
     }
-    
+
     updateTotalDuration();
     renderTimeline();
 }
@@ -2293,7 +2359,7 @@ function addClip(type) {
     if (type === 'image' || type === 'video' || type === 'audio') {
         const input = document.createElement('input');
         input.type = 'file';
-        input.accept = type === 'image' ? 'image/*' : 
+        input.accept = type === 'image' ? 'image/*' :
                        type === 'video' ? 'video/*' : 'audio/*';
         input.multiple = true;
         input.onchange = (e) => {
@@ -2304,7 +2370,7 @@ function addClip(type) {
         input.click();
         return;
     }
-    
+
     if (type === 'text') {
         const text = prompt('نص المقطع:');
         if (!text) return;
@@ -2337,13 +2403,13 @@ function splitClip() {
     }
     const clip = projectData.clips.find(c => c.id === selectedClipId);
     if (!clip) return;
-    
+
     const splitTime = currentTime - clip.start;
     if (splitTime <= 0.1 || splitTime >= clip.duration - 0.1) {
         showToast('⚠️ اختر نقطة داخل المقطع', 'warning');
         return;
     }
-    
+
     const newClip = {
         ...clip,
         id: clipIdCounter++,
@@ -2353,7 +2419,7 @@ function splitClip() {
     };
     clip.duration = splitTime;
     clip.title = `${clip.title} (1)`;
-    
+
     projectData.clips.push(newClip);
     updateTotalDuration();
     renderTimeline();
@@ -2367,9 +2433,9 @@ function duplicateClip() {
     }
     const clip = projectData.clips.find(c => c.id === selectedClipId);
     if (!clip) return;
-    
+
     let startTime = clip.start + clip.duration + 0.5;
-    
+
     const newClip = {
         ...clip,
         id: clipIdCounter++,
@@ -2404,12 +2470,12 @@ function moveClip(id, newLayer, newStart) {
 function editClipProperties(id) {
     const clip = projectData.clips.find(c => c.id === id);
     if (!clip) return;
-    
+
     document.getElementById('clipPropTitle').value = clip.title || '';
     document.getElementById('clipPropStart').value = clip.start;
     document.getElementById('clipPropDuration').value = clip.duration;
     document.getElementById('clipPropType').value = clip.type;
-    
+
     const layerSelect = document.getElementById('clipPropLayer');
     layerSelect.innerHTML = '';
     projectData.layers.forEach((layer, i) => {
@@ -2419,7 +2485,7 @@ function editClipProperties(id) {
         if (i === clip.layer) opt.selected = true;
         layerSelect.appendChild(opt);
     });
-    
+
     document.getElementById('clipPropertiesModal').classList.remove('hidden');
     document.getElementById('clipPropertiesModal').dataset.clipId = id;
 }
@@ -2432,7 +2498,7 @@ function saveClipProperties() {
     const id = parseInt(document.getElementById('clipPropertiesModal').dataset.clipId);
     const clip = projectData.clips.find(c => c.id === id);
     if (!clip) return;
-    
+
     clip.title = document.getElementById('clipPropTitle').value || 'مقطع';
     clip.start = parseFloat(document.getElementById('clipPropStart').value) || 0;
     clip.duration = Math.max(0.3, parseFloat(document.getElementById('clipPropDuration').value) || 1);
@@ -2440,7 +2506,7 @@ function saveClipProperties() {
     clip.type = document.getElementById('clipPropType').value;
     clip.icon = TYPE_ICONS[clip.type] || '📄';
     clip.color = COLORS[clip.type] || '#666';
-    
+
     updateTotalDuration();
     closeClipProperties();
     renderTimeline();
@@ -2466,20 +2532,20 @@ function startPlay() {
     isPlaying = true;
     document.getElementById('playBtn').textContent = '⏸';
     document.getElementById('playhead').classList.add('active');
-    
+
     if (audioContext && audioContext.state === 'suspended') {
         audioContext.resume();
     }
-    
+
     if (audioPlayer && audioPlayer.src) {
         audioPlayer.play().catch(() => {});
     }
-    
+
     Object.values(videoElements).forEach(v => {
         if (!v.paused) return;
         v.play().catch(() => {});
     });
-    
+
     playInterval = setInterval(() => {
         currentTime += 0.04 * playbackSpeed;
         if (currentTime >= projectData.totalDuration) {
@@ -2583,13 +2649,13 @@ function seekTo(time) {
         updatePlayhead();
         renderPreview(currentTime);
     }
-    
+
     if (audioPlayer && audioPlayer.src) {
         const activeAudio = projectData.clips.find(c => {
             const layer = projectData.layers[c.layer];
-            return layer && layer.visible && 
+            return layer && layer.visible &&
                    c.type === 'audio' &&
-                   currentTime >= c.start && 
+                   currentTime >= c.start &&
                    currentTime < c.start + c.duration;
         });
         if (activeAudio) {
@@ -2604,11 +2670,11 @@ document.getElementById('seekSlider').addEventListener('input', function() {
 });
 
 // ============================================================
-//  RECORDING
+//  RECORDING — مع رفع تلقائي إلى Supabase
 // ============================================================
 async function toggleRecording() {
     const btn = document.getElementById('recordBtn');
-    
+
     if (isRecording) {
         if (mediaRecorder && mediaRecorder.state !== 'inactive') {
             mediaRecorder.stop();
@@ -2619,36 +2685,51 @@ async function toggleRecording() {
         showToast('⏹️ تم الإيقاف', 'info');
         return;
     }
-    
+
     try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        
+
         mediaRecorder = new MediaRecorder(stream);
         recordedChunks = [];
-        
+
         mediaRecorder.ondataavailable = (event) => {
             if (event.data.size > 0) {
                 recordedChunks.push(event.data);
             }
         };
-        
-        mediaRecorder.onstop = () => {
+
+        mediaRecorder.onstop = async () => {
             if (recordedChunks.length === 0) {
                 stream.getTracks().forEach(track => track.stop());
                 return;
             }
-            
+
             const blob = new Blob(recordedChunks, { type: 'audio/webm' });
-            const url = URL.createObjectURL(blob);
             const duration = Math.min(10, Math.max(1, recordedChunks.length * 0.04));
-            
+
             const fileName = `تسجيل ${new Date().toLocaleTimeString()}.webm`;
             const fileObj = new File([blob], fileName, { type: 'audio/webm' });
-            
-            addMediaFile(fileObj);
-            
+
+            // ✅ ارفع التسجيل إلى Supabase
+            showToast('⏳ جاري رفع التسجيل...', 'info');
+            const supabaseUrl = await uploadFileToSupabase(fileObj, projectId);
+
+            if (!supabaseUrl) {
+                showToast('❌ فشل رفع التسجيل', 'error');
+                stream.getTracks().forEach(track => track.stop());
+                return;
+            }
+
+            // أضف ملف الوسائط
+            projectData.mediaFiles.push({
+                name: fileName,
+                size: blob.size,
+                type: 'audio/webm',
+                url: supabaseUrl,
+            });
+
             let startTime = getLayerEndTime(selectedLayerIndex);
-            
+
             const clip = {
                 id: clipIdCounter++,
                 type: 'audio',
@@ -2656,63 +2737,68 @@ async function toggleRecording() {
                 start: startTime,
                 duration: duration,
                 title: `تسجيل ${new Date().toLocaleTimeString()}`,
-                content: url,
+                content: supabaseUrl,   // ← Supabase URL
                 color: COLORS.audio,
                 icon: '🎤',
-                metadata: { 
-                    recorded: true, 
-                    blob: blob, 
-                    duration: duration, 
+                metadata: {
+                    recorded: true,
+                    duration: duration,
                     file: fileName,
                     type: 'audio/webm'
                 }
             };
-            
+
             projectData.clips.push(clip);
             updateTotalDuration();
             renderTimeline();
             renderMediaGallery();
             updateStatus();
             saveProjectData();
-            showToast('✅ تم التسجيل', 'success');
-            
+            showToast('✅ تم التسجيل ورفعه', 'success');
+
             stream.getTracks().forEach(track => track.stop());
         };
-        
+
         mediaRecorder.start(1000);
         isRecording = true;
         btn.textContent = '⏹️';
         btn.classList.add('recording');
         showToast('🔴 جاري التسجيل...', 'info');
-        
+
     } catch (err) {
         showToast('⚠️ تعذر الوصول للميكروفون', 'error');
     }
 }
 
 // ============================================================
-//  FILE HANDLING
+//  FILE HANDLING — مع رفع تلقائي
 // ============================================================
-function handleFiles(files) {
+async function handleFiles(files) {
     const previewContainer = document.getElementById('importPreview');
     previewContainer.innerHTML = '';
-    
-    Array.from(files).forEach(file => {
+
+    const fileArray = Array.from(files);
+
+    // ارفع الملفات واحداً تلو الآخر
+    for (const file of fileArray) {
         const type = file.type.split('/')[0];
         if (['video', 'audio', 'image'].includes(type)) {
-            addMediaFile(file);
-            
             const preview = document.createElement('span');
             preview.className = 'text-xs bg-slate-700 text-slate-300 px-2 py-1 rounded';
-            preview.textContent = `${TYPE_ICONS[type] || '📄'} ${file.name.slice(0, 12)}`;
+            preview.textContent = `⏳ ${file.name.slice(0, 12)}`;
             previewContainer.appendChild(preview);
+
+            // ارفع (await)
+            await addMediaFile(file);
+
+            preview.textContent = `${TYPE_ICONS[type] || '📄'} ${file.name.slice(0, 12)}`;
         }
-    });
-    
+    }
+
     renderMediaGallery();
     updateStatus();
     closeImportModal();
-    showToast(`✅ تم استيراد ${files.length} ملف`, 'success');
+    showToast(`✅ تم استيراد ${fileArray.length} ملف`, 'success');
 }
 
 function openImportModal() {
@@ -2731,37 +2817,37 @@ function closeImportModal() {
 function setupDragDrop() {
     const dropZone = document.getElementById('dropZone');
     const fileInput = document.getElementById('fileInput');
-    
+
     dropZone.addEventListener('dragover', (e) => {
         e.preventDefault();
         dropZone.classList.add('dragover');
     });
-    
+
     dropZone.addEventListener('dragleave', () => {
         dropZone.classList.remove('dragover');
     });
-    
+
     dropZone.addEventListener('drop', (e) => {
         e.preventDefault();
         dropZone.classList.remove('dragover');
         handleFiles(e.dataTransfer.files);
     });
-    
+
     dropZone.addEventListener('click', () => {
         fileInput.click();
     });
-    
+
     fileInput.addEventListener('change', (e) => {
         if (e.target.files.length > 0) {
             handleFiles(e.target.files);
         }
         fileInput.value = '';
     });
-    
+
     document.getElementById('trashZone').addEventListener('dragover', (e) => {
         e.preventDefault();
     });
-    
+
     document.getElementById('trashZone').addEventListener('drop', (e) => {
         e.preventDefault();
         const data = JSON.parse(e.dataTransfer.getData('text/plain'));
@@ -2787,7 +2873,7 @@ function selectTool(tool) {
 function setupKeyboardShortcuts() {
     document.addEventListener('keydown', (e) => {
         if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
-        
+
         switch(e.key) {
             case ' ':
                 e.preventDefault();
@@ -2836,7 +2922,7 @@ document.getElementById('zoom-slider').addEventListener('input', function() {
 // ============================================================
 function saveProjectData() {
     if (!isDataLoaded) return;
-    
+
     const data = {
         clips: projectData.clips,
         layers: projectData.layers,
@@ -2844,7 +2930,7 @@ function saveProjectData() {
         cellWidth: projectData.cellWidth,
         mediaFiles: projectData.mediaFiles
     };
-    
+
     saveProjectToSupabase(projectId, data).catch(() => {
         updateSyncStatus('error');
     });
@@ -2856,34 +2942,34 @@ function saveProjectData() {
 async function loadProjectData() {
     const overlay = document.getElementById('loadingOverlay');
     overlay.classList.remove('hidden');
-    
+
     try {
         const data = await loadProjectFromSupabase(projectId);
-        
+
         if (data) {
             projectData.clips = data.clips || [];
             projectData.layers = data.layers || [{ name: 'طبقة 1', visible: true, locked: false }];
             projectData.totalDuration = data.totalDuration || 10;
             projectData.cellWidth = data.cellWidth || 80;
             projectData.mediaFiles = data.mediaFiles || [];
-            
+
             if (projectData.clips.length > 0) {
                 clipIdCounter = Math.max(...projectData.clips.map(c => c.id)) + 1;
             }
-            
+
             renderLayers();
             renderTimeline();
             updateStatus();
             renderMediaGallery();
             renderPreview(currentTime);
-            
+
             updateSyncStatus('synced');
             isDataLoaded = true;
             overlay.classList.add('hidden');
             showToast('✅ تم تحميل المشروع من Supabase', 'success');
             return;
         }
-        
+
         // إذا كان هناك مشاهد من الخادم (مشروع جديد)
         if (scenes && scenes.length > 0) {
             scenes.forEach((scene, i) => {
@@ -2902,22 +2988,22 @@ async function loadProjectData() {
                 projectData.clips.push(clip);
             });
             projectData.totalDuration = Math.max(...projectData.clips.map(c => c.start + c.duration), 10);
-            
+
             renderLayers();
             renderTimeline();
             updateStatus();
             renderMediaGallery();
             renderPreview(currentTime);
-            
+
             // حفظ المشروع الجديد على Supabase
             await saveProjectData();
-            
+
             isDataLoaded = true;
             overlay.classList.add('hidden');
             showToast('✅ تم إنشاء مشروع جديد', 'success');
             return;
         }
-        
+
         // مشروع فارغ
         projectData.layers = [{ name: 'طبقة 1', visible: true, locked: false }];
         renderLayers();
@@ -2925,16 +3011,16 @@ async function loadProjectData() {
         updateStatus();
         renderMediaGallery();
         renderPreview(currentTime);
-        
+
         isDataLoaded = true;
         overlay.classList.add('hidden');
-        
+
     } catch(e) {
         console.error('❌ فشل تحميل المشروع:', e);
         overlay.classList.add('hidden');
         showToast('❌ تعذر تحميل المشروع: ' + e.message, 'error');
         updateSyncStatus('error');
-        
+
         // عرض واجهة فارغة
         projectData.layers = [{ name: 'طبقة 1', visible: true, locked: false }];
         renderLayers();
@@ -2961,13 +3047,14 @@ function exportProject() {
         })),
         layers: projectData.layers,
         totalDuration: projectData.totalDuration,
-        mediaFiles: projectData.mediaFiles.map(f => ({ 
-            name: f.name, 
-            size: f.size, 
-            type: f.type 
+        mediaFiles: projectData.mediaFiles.map(f => ({
+            name: f.name,
+            size: f.size,
+            type: f.type,
+            url: f.url
         }))
     };
-    
+
     const blob = new Blob([JSON.stringify(data, null, 2)], {type: 'application/json'});
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -2979,20 +3066,20 @@ function exportProject() {
 }
 
 // ============================================================
-//  RENDER - UPDATED: Redirect to /projects/{id} on success
+//  RENDER
 // ============================================================
 function startRender(projectId) {
     const btn = document.getElementById('renderBtn');
     const loading = document.getElementById('renderLoading');
     const status = document.getElementById('renderStatus');
     const progressFill = document.getElementById('renderProgressFill');
-    
+
     btn.disabled = true;
     btn.style.opacity = '0.5';
     loading.classList.add('active');
     status.textContent = 'جاري التجهيز...';
     progressFill.style.width = '0%';
-    
+
     const renderData = {
         project_id: projectId,
         clips: projectData.clips.map(c => ({
@@ -3000,7 +3087,10 @@ function startRender(projectId) {
             start: c.start,
             duration: c.duration,
             layer: c.layer,
-            content: c.content && c.content.startsWith('blob:') ? null : c.content,
+            // ✅ URL فقط إذا كان http
+            content: (c.content && c.content.startsWith('http'))
+                ? c.content
+                : null,
             title: c.title,
             metadata: c.metadata
         })),
@@ -3009,10 +3099,11 @@ function startRender(projectId) {
         mediaFiles: projectData.mediaFiles.map(f => ({
             name: f.name,
             type: f.type,
-            size: f.size
+            size: f.size,
+            url: f.url || null,
         }))
     };
-    
+
     fetch('/api/v1/production/render', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
@@ -3034,7 +3125,6 @@ function startRender(projectId) {
             loading.classList.remove('active');
             btn.disabled = false;
             btn.style.opacity = '1';
-            // ✅ التوجيه إلى صفحة تفاصيل المشروع
             setTimeout(() => {
                 window.location.href = `/projects/${projectId}`;
             }, 1200);
@@ -3051,27 +3141,26 @@ function startRender(projectId) {
 }
 
 // ============================================================
-//  POLL RENDER STATUS - Redirect to /projects/{id} on success
+//  POLL RENDER STATUS
 // ============================================================
 function pollRenderStatus(jobId) {
-    // Clear any existing interval
     if (renderPollInterval) {
         clearInterval(renderPollInterval);
         renderPollInterval = null;
     }
-    
+
     let attempts = 0;
     let consecutiveErrors = 0;
     const maxConsecutiveErrors = 5;
-    
+
     const statusEl = document.getElementById('renderStatus');
     const progressFill = document.getElementById('renderProgressFill');
     const loading = document.getElementById('renderLoading');
     const btn = document.getElementById('renderBtn');
-    
+
     renderPollInterval = setInterval(() => {
         attempts++;
-        
+
         fetch(`/api/v1/production/jobs/${jobId}/status`)
             .then(resp => {
                 if (!resp.ok) {
@@ -3099,32 +3188,28 @@ function pollRenderStatus(jobId) {
             })
             .then(data => {
                 if (!data) return;
-                
-                // Log for debugging
+
                 console.log('📊 Render status:', data);
-                
-                // Update progress
+
                 if (progressFill && data.progress !== undefined) {
                     progressFill.style.width = Math.min(data.progress, 100) + '%';
                 }
-                
-                // Handle different statuses
+
                 if (data.status === 'completed') {
                     clearInterval(renderPollInterval);
                     renderPollInterval = null;
-                    
+
                     if (statusEl) statusEl.textContent = '✅ اكتمل الرندر بنجاح! جاري التحويل...';
                     if (loading) loading.classList.remove('active');
                     if (progressFill) progressFill.style.width = '100%';
-                    
+
                     resetRenderUI();
                     showToast('✅ تم الرندر بنجاح! جاري فتح صفحة المشروع...', 'success');
-                    
-                    // ✅ التوجيه إلى صفحة تفاصيل المشروع
+
                     setTimeout(() => {
                         window.location.href = `/projects/${projectId}`;
                     }, 1200);
-                    
+
                 } else if (data.status === 'failed') {
                     clearInterval(renderPollInterval);
                     renderPollInterval = null;
@@ -3133,7 +3218,7 @@ function pollRenderStatus(jobId) {
                     if (loading) loading.classList.remove('active');
                     resetRenderUI();
                     showToast(`❌ فشل الرندر: ${errorMsg}`, 'error');
-                    
+
                 } else if (data.status === 'processing') {
                     if (statusEl) {
                         let msg = `🔄 جاري الرندر... ${Math.round(data.progress || 0)}%`;
@@ -3142,21 +3227,21 @@ function pollRenderStatus(jobId) {
                         }
                         statusEl.textContent = msg;
                     }
-                    
+
                 } else if (data.status === 'pending') {
                     if (statusEl) statusEl.textContent = '⏳ في انتظار البدء...';
-                    
+
                 } else {
                     if (statusEl) statusEl.textContent = `📊 الحالة: ${data.status}`;
                 }
             })
             .catch(err => {
                 console.error('❌ Error polling status:', err);
-                if (attempts % 6 === 0) {  // كل 30 ثانية
+                if (attempts % 6 === 0) {
                     if (statusEl) statusEl.textContent = '🔄 جاري المحاولة مرة أخرى...';
                 }
             });
-    }, 5000);  // كل 5 ثواني
+    }, 5000);
 }
 
 function resetRenderUI() {
@@ -3176,17 +3261,17 @@ document.addEventListener('DOMContentLoaded', function() {
     canvas = document.getElementById('previewCanvas');
     ctx = canvas.getContext('2d');
     audioPlayer = document.getElementById('audioPlayer');
-    
+
     resizeCanvas();
     window.addEventListener('resize', resizeCanvas);
-    
+
     if (projectData.layers.length === 0) {
         projectData.layers.push({ name: 'طبقة 1', visible: true, locked: false });
     }
-    
+
     setupDragDrop();
     setupKeyboardShortcuts();
-    
+
     loadProjectData();
 });
 
@@ -3219,7 +3304,7 @@ function formatTime(seconds) {
 function showToast(msg, type = 'info') {
     const oldToast = document.querySelector('.toast-message');
     if (oldToast) oldToast.remove();
-    
+
     const toast = document.createElement('div');
     toast.className = `toast-message fixed bottom-20 left-1/2 transform -translate-x-1/2 px-4 py-2 rounded-lg text-white text-sm z-50 transition-all duration-300 max-w-md text-center`;
     const colors = {
@@ -3231,7 +3316,7 @@ function showToast(msg, type = 'info') {
     toast.classList.add(colors[type] || colors.info);
     toast.textContent = msg;
     document.body.appendChild(toast);
-    
+
     setTimeout(() => {
         toast.style.opacity = '0';
         setTimeout(() => toast.remove(), 300);
@@ -3251,17 +3336,17 @@ window.addEventListener('beforeunload', function() {
     if (renderPollInterval) {
         clearInterval(renderPollInterval);
     }
-    
+
     if (audioContext) {
         try { audioContext.close(); } catch(e) {}
     }
-    
+
     projectData.mediaFiles.forEach(f => {
         if (f.url && f.url.startsWith('blob:')) {
             try { URL.revokeObjectURL(f.url); } catch(e) {}
         }
     });
-    
+
     Object.values(videoElements).forEach(v => {
         try {
             v.pause();
@@ -3271,6 +3356,6 @@ window.addEventListener('beforeunload', function() {
     });
 });
 
-console.log('🎬 المحرر جاهز - التخزين على Supabase فقط ✅');
+console.log('🎬 المحرر جاهز - رفع الوسائط إلى Supabase ✅');
 </script>
 {% endblock %}
