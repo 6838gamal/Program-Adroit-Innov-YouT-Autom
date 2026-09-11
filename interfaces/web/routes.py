@@ -2,10 +2,12 @@
 import uuid
 import json
 import logging
+import tempfile
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Optional
 
-from fastapi import APIRouter, Request, Depends, HTTPException
+from fastapi import APIRouter, Request, Depends, HTTPException, UploadFile, File, Form
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -94,7 +96,7 @@ def get_supabase_config() -> dict:
     }
 
 
-async def _resolve_video_url(project) -> str | None:
+async def _resolve_video_url(project) -> Optional[str]:
     """
     محاولة استخراج رابط الفيديو العام من المشروع.
     يحاول بالترتيب:
@@ -153,7 +155,7 @@ async def _resolve_video_url(project) -> str | None:
     return video_url
 
 
-async def _resolve_thumbnail_url(project) -> str | None:
+async def _resolve_thumbnail_url(project) -> Optional[str]:
     """استخراج رابط الصورة المصغرة من المشروع."""
     thumb_url = getattr(project, "thumbnail_url", None)
     if not thumb_url:
@@ -304,6 +306,82 @@ async def project_detail(
         "active_page": "projects",
         "supabase": get_supabase_config(),
     })
+
+
+# ============================================================
+# MEDIA UPLOAD (NEW)
+# ============================================================
+
+@router.post("/api/v1/storage/upload-media")
+async def upload_media(
+    file: UploadFile = File(...),
+    project_id: str = Form(...),
+):
+    """
+    رفع ملف وسائط (صورة/فيديو/صوت) إلى Supabase Storage.
+
+    Returns:
+        {"url": "https://...supabase.co/...", "path": "media/..."}
+    """
+    try:
+        # Imports محلية لتفادي import cycles
+        from application.services.production_service import (
+            _upload_to_supabase,
+            _build_public_url,
+        )
+
+        storage = SupabaseStorageAdapter()
+        content = await file.read()
+
+        if not content:
+            return JSONResponse(
+                {"error": "الملف فارغ"},
+                status_code=400,
+            )
+
+        # اسم فريد
+        suffix = Path(file.filename or "file").suffix.lower() or ".bin"
+        unique = f"{uuid.uuid4().hex}{suffix}"
+        remote_path = f"media/{project_id}/{unique}"
+
+        # احفظ مؤقتاً
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+            tmp.write(content)
+            tmp_path = Path(tmp.name)
+
+        try:
+            content_type = file.content_type or "application/octet-stream"
+
+            logger.info(
+                f"📤 Uploading media: {file.filename} "
+                f"({len(content)} bytes) → {remote_path}"
+            )
+
+            await _upload_to_supabase(
+                storage=storage,
+                local_path=tmp_path,
+                remote_path=remote_path,
+                content_type=content_type,
+            )
+
+            url = await _build_public_url(storage, remote_path)
+
+            if not url:
+                raise RuntimeError("فشل بناء الرابط العام")
+
+            logger.info(f"✅ Media uploaded: {url}")
+
+            return {"url": url, "path": remote_path}
+
+        finally:
+            tmp_path.unlink(missing_ok=True)
+
+    except Exception as e:
+        logger.exception("Failed to upload media")
+        return JSONResponse(
+            {"error": str(e)},
+            status_code=500,
+        )
 
 
 # ============================================================
@@ -898,8 +976,6 @@ async def debug_project(project_id: str, session: AsyncSession = Depends(get_db)
     """
     Endpoint تشخيصي مؤقت — يعرض بنية clips في DB.
 
-    استخدمه لمعرفة سبب عدم ظهور الوسائط في الفيديو النهائي.
-
     مثال:
         GET /api/debug/project/fe2d7c15-a8ff-46c7-96a8-a7b7b43104c1
     """
@@ -936,12 +1012,10 @@ async def debug_project(project_id: str, session: AsyncSession = Depends(get_db)
         content = c.get("content") or c.get("url") or ""
         metadata = c.get("metadata") or {}
 
-        # ابحث عن URL في عدة أماكن
         url_candidates = {
             "content": c.get("content"),
             "url": c.get("url"),
             "metadata.url": metadata.get("url") if isinstance(metadata, dict) else None,
-            "metadata.file": metadata.get("file") if isinstance(metadata, dict) else None,
         }
 
         clips_info.append({
@@ -962,10 +1036,8 @@ async def debug_project(project_id: str, session: AsyncSession = Depends(get_db)
             },
         })
 
-    # ── تشخيص الصورة المصغرة والفيديو ────────────────────────
     video_url_direct = getattr(project, "video_url", None)
     thumbnail_url_direct = getattr(project, "thumbnail_url", None)
-
     data_video_url = data.get("video_url")
     data_thumb_url = data.get("thumbnail")
 
@@ -977,26 +1049,16 @@ async def debug_project(project_id: str, session: AsyncSession = Depends(get_db)
             if hasattr(project.status, "value")
             else str(project.status)
         ),
-
-        # روابط المخرجات
         "outputs": {
             "video_url_property": video_url_direct,
             "video_url_in_data": data_video_url,
             "thumbnail_url_property": thumbnail_url_direct,
             "thumbnail_url_in_data": data_thumb_url,
         },
-
-        # data keys
         "data_keys": list(data.keys()),
-
-        # counts
         "clips_count": len(clips),
         "media_files_count": len(media_files),
-
-        # تفاصيل clips
         "clips": clips_info,
-
-        # عينة من media_files
         "media_files_sample": [
             {
                 "name": mf.get("name") if isinstance(mf, dict) else str(mf),
@@ -1013,8 +1075,6 @@ async def debug_project(project_id: str, session: AsyncSession = Depends(get_db)
 async def debug_render_jobs(project_id: str, session: AsyncSession = Depends(get_db)):
     """
     تشخيص مهام الرندر لمشروع معيّن.
-
-    يعرض حالة كل مهمة وأي خطأ.
 
     مثال:
         GET /api/debug/render-jobs/fe2d7c15-a8ff-46c7-96a8-a7b7b43104c1
