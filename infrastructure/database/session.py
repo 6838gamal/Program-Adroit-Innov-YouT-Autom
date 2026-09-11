@@ -542,17 +542,75 @@ async def table_exists(table_name: str) -> bool:
 
 
 # ============================================================
+# Schema migrations (idempotent)
+# ============================================================
+
+# قائمة migrations (idempotent — آمنة للتشغيل المتكرر).
+# أضف أي تغيير مستقبلي على المخطط هنا.
+#
+# الصيغة: (اسم_وصفي, جملة_SQL)
+#
+# ملاحظة: يجب أن تكون كل جملة آمنة للتشغيل المتكرر باستخدام
+#         IF NOT EXISTS / IF EXISTS.
+_SCHEMA_MIGRATIONS: list[tuple[str, str]] = [
+    # ── 2026-09-11: add `data` column to projects ──────────────────────────
+    (
+        "projects.data",
+        "ALTER TABLE projects "
+        "ADD COLUMN IF NOT EXISTS data JSONB DEFAULT '{}'::jsonb",
+    ),
+    (
+        "projects.data_backfill",
+        "UPDATE projects SET data = '{}'::jsonb WHERE data IS NULL",
+    ),
+    (
+        "projects.status_index",
+        "CREATE INDEX IF NOT EXISTS ix_projects_status "
+        "ON projects (status)",
+    ),
+
+    # ── أضف migrations جديدة هنا ──────────────────────────────────────────
+    # (
+    #     "table.column",
+    #     "ALTER TABLE table ADD COLUMN IF NOT EXISTS column TYPE DEFAULT ...",
+    # ),
+]
+
+
+async def _apply_schema_migrations(connection) -> None:
+    """
+    Apply idempotent schema migrations on an existing connection.
+
+    Uses IF NOT EXISTS / IF EXISTS so it is safe to run on every startup.
+    Never raises — logs warnings on failure so the app can still start.
+    """
+    for name, sql in _SCHEMA_MIGRATIONS:
+        try:
+            await connection.execute(text(sql))
+            logger.info("✅ Migration applied: %s", name)
+        except Exception as exc:
+            logger.warning(
+                "⚠️ Migration skipped/failed (%s): %s",
+                name,
+                exc,
+            )
+
+
+# ============================================================
 # Development / fallback table creation
 # ============================================================
 
 async def create_all_tables() -> bool:
     """
-    Create all SQLAlchemy tables.
+    Create all SQLAlchemy tables AND apply idempotent schema migrations.
 
     IMPORTANT:
-    In production, prefer Alembic migrations.
+    `Base.metadata.create_all` only creates MISSING tables — it does NOT
+    add new columns to existing tables. Therefore we explicitly run
+    ALTER TABLE ... ADD COLUMN IF NOT EXISTS migrations below.
 
     This function is retained for development/startup compatibility.
+    In production, prefer Alembic migrations.
     """
 
     engine = get_engine()
@@ -566,13 +624,16 @@ async def create_all_tables() -> bool:
 
     try:
         async with engine.begin() as connection:
+            # 1) إنشاء الجداول غير الموجودة
             await connection.run_sync(
                 Base.metadata.create_all
             )
+            logger.info(
+                "Database tables created/verified."
+            )
 
-        logger.info(
-            "Database tables created/verified."
-        )
+            # 2) ✅ تطبيق migrations تلقائية (idempotent)
+            await _apply_schema_migrations(connection)
 
         return True
 
