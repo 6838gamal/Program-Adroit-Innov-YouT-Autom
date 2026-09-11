@@ -24,6 +24,62 @@ logger = logging.getLogger(__name__)
 
 
 # ============================================================
+# JINJA2 CUSTOM FILTERS
+# ============================================================
+
+def _format_duration(seconds) -> str:
+    """
+    Format a duration in seconds to a human-readable string.
+
+    Examples:
+        0        -> "0:00"
+        5        -> "0:05"
+        65       -> "1:05"
+        3665     -> "1:01:05"
+        None     -> "—"
+    """
+    if seconds is None:
+        return "—"
+    try:
+        total = int(float(seconds))
+    except (TypeError, ValueError):
+        return "—"
+
+    if total < 0:
+        total = 0
+
+    hours = total // 3600
+    minutes = (total % 3600) // 60
+    secs = total % 60
+
+    if hours > 0:
+        return f"{hours}:{minutes:02d}:{secs:02d}"
+    return f"{minutes}:{secs:02d}"
+
+
+def _format_number(value) -> str:
+    """
+    Format a number with thousands separators.
+
+    Examples:
+        1000      -> "1,000"
+        1234567   -> "1,234,567"
+        None      -> "0"
+    """
+    if value is None:
+        return "0"
+    try:
+        return f"{int(value):,}"
+    except (TypeError, ValueError):
+        return str(value)
+
+
+# Register the filters on the Jinja2 environment
+templates.env.filters["format_duration"] = _format_duration
+templates.env.filters["format_number"] = _format_number
+
+
+# ============================================================
 # HELPERS
 # ============================================================
 
@@ -46,9 +102,15 @@ async def _resolve_video_url(project) -> str | None:
       2. project.storage_path عبر SupabaseStorageAdapter
       3. project.output_path عبر SupabaseStorageAdapter
       4. project.result_url / output_url إن وُجدت
+      5. project.data.video_url كـ fallback
     """
-    # 1) video_url مباشر
+    # 1) video_url مباشر (من property أو من data)
     video_url = getattr(project, "video_url", None)
+    if not video_url:
+        data = getattr(project, "data", None)
+        if isinstance(data, dict):
+            video_url = data.get("video_url")
+
     if video_url and isinstance(video_url, str) and video_url.startswith("http"):
         return video_url
 
@@ -57,6 +119,12 @@ async def _resolve_video_url(project) -> str | None:
     if not storage_path:
         # 3) output_path
         storage_path = getattr(project, "output_path", None)
+
+    # من data أيضاً
+    if not storage_path:
+        data = getattr(project, "data", None)
+        if isinstance(data, dict):
+            storage_path = data.get("video_path") or data.get("storage_path")
 
     # 4) result_url / output_url مباشر
     if not storage_path:
@@ -83,6 +151,21 @@ async def _resolve_video_url(project) -> str | None:
         logger.warning(f"Failed to build video_url from storage_path: {e}")
 
     return video_url
+
+
+async def _resolve_thumbnail_url(project) -> str | None:
+    """
+    استخراج رابط الصورة المصغرة من المشروع.
+    """
+    thumb_url = getattr(project, "thumbnail_url", None)
+    if not thumb_url:
+        data = getattr(project, "data", None)
+        if isinstance(data, dict):
+            thumb_url = data.get("thumbnail")
+
+    if thumb_url and isinstance(thumb_url, str) and thumb_url.startswith("http"):
+        return thumb_url
+    return thumb_url
 
 
 # ============================================================
@@ -211,12 +294,14 @@ async def project_detail(
 
     render_jobs = await job_repo.list_for_project(project.id)
 
-    # ✅ حلّ رابط الفيديو (من video_url أو storage_path)
+    # ✅ حلّ رابط الفيديو والصورة المصغرة
     video_url = await _resolve_video_url(project)
+    thumbnail_url = await _resolve_thumbnail_url(project)
 
     return templates.TemplateResponse(request, "projects/detail.html", {
         "project": project,
         "video_url": video_url,
+        "thumbnail_url": thumbnail_url,
         "render_jobs": render_jobs,
         "active_page": "projects",
         "supabase": get_supabase_config(),
