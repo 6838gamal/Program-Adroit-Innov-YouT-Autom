@@ -42,7 +42,21 @@ class FFmpegRendererPlugin(RendererPort):
 
     Implements the RendererPort contract defined in
     shared.ports.renderer_port.
+
+    Memory notes:
+    - Tuned for Render free tier (512MB RAM).
+    - Clamps resolution to 1280x720 max.
+    - Uses ultrafast/veryfast x264 presets.
+    - Uses -threads 1 to limit memory.
+    - Uses -crf 28 for smaller buffers.
     """
+
+    # Memory safety: never exceed this pixel count per frame.
+    # 1280x720 = 921,600 pixels. 1920x1080 would be 2,073,600.
+    MAX_PIXELS = 1280 * 720
+
+    # Timeout per FFmpeg process (seconds).
+    DEFAULT_TIMEOUT = 300
 
     def __init__(
         self,
@@ -56,7 +70,8 @@ class FFmpegRendererPlugin(RendererPort):
 
         _diag(
             f"🎬 FFmpeg renderer initialized "
-            f"(ffmpeg={self.ffmpeg_binary}, timeout={self.timeout}s)"
+            f"(ffmpeg={self.ffmpeg_binary}, timeout={self.timeout}s, "
+            f"max_pixels={self.MAX_PIXELS})"
         )
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -68,7 +83,7 @@ class FFmpegRendererPlugin(RendererPort):
         return RendererCapabilities(
             supported_formats=["mp4"],
             supports_hardware_acceleration=False,
-            max_resolution=(3840, 2160),
+            max_resolution=(1280, 720),
             name="ffmpeg",
         )
 
@@ -177,6 +192,9 @@ class FFmpegRendererPlugin(RendererPort):
         height = int(settings.resolution_height)
         quality = str(settings.quality)
 
+        # ── Memory safety clamp ──────────────────────────────────────────
+        width, height = self._clamp_resolution(width, height)
+
         _diag(
             f"🎬 Render settings: "
             f"fps={fps}, resolution={width}x{height}, quality={quality}"
@@ -277,11 +295,13 @@ class FFmpegRendererPlugin(RendererPort):
             "-preset",
             self._get_preset(quality),
             "-crf",
-            "22",
+            "28",
+            "-threads",
+            "1",
             "-c:a",
             "aac",
             "-b:a",
-            "192k",
+            "128k",
             "-movflags",
             "+faststart",
             "-pix_fmt",
@@ -480,7 +500,7 @@ class FFmpegRendererPlugin(RendererPort):
         video_filter = ",".join(video_filters)
 
         # ---------------------------------------------------------
-        # Video encoding
+        # Video encoding (memory-tuned)
         # ---------------------------------------------------------
 
         preset = self._get_preset(quality)
@@ -498,7 +518,9 @@ class FFmpegRendererPlugin(RendererPort):
                 "-preset",
                 preset,
                 "-crf",
-                "23",
+                "28",
+                "-threads",
+                "1",
                 "-pix_fmt",
                 "yuv420p",
             ]
@@ -513,7 +535,7 @@ class FFmpegRendererPlugin(RendererPort):
                 "-c:a",
                 "aac",
                 "-b:a",
-                "192k",
+                "128k",
                 "-ar",
                 "44100",
                 "-ac",
@@ -577,6 +599,9 @@ class FFmpegRendererPlugin(RendererPort):
         height = int(settings.resolution_height)
         quality = str(settings.quality)
 
+        # ── Memory safety clamp ──────────────────────────────────────────
+        width, height = self._clamp_resolution(width, height)
+
         asset = timeline_data.get("asset")
 
         if not asset:
@@ -626,11 +651,13 @@ class FFmpegRendererPlugin(RendererPort):
             "-preset",
             preset,
             "-crf",
-            "23",
+            "28",
+            "-threads",
+            "1",
             "-c:a",
             "aac",
             "-b:a",
-            "192k",
+            "128k",
             "-movflags",
             "+faststart",
             str(output_path),
@@ -983,25 +1010,72 @@ class FFmpegRendererPlugin(RendererPort):
     # Helpers
     # ─────────────────────────────────────────────────────────────────────────
 
+    @classmethod
+    def _clamp_resolution(
+        cls,
+        width: int,
+        height: int,
+    ) -> tuple[int, int]:
+        """
+        Clamp resolution to MAX_PIXELS to avoid OOM on
+        memory-constrained hosts (Render free tier = 512MB RAM).
+
+        If the requested resolution exceeds the limit, scale it down
+        proportionally while preserving the aspect ratio, and round
+        to even numbers (required by libx264).
+        """
+
+        requested_pixels = width * height
+
+        if requested_pixels <= cls.MAX_PIXELS:
+            return width, height
+
+        # Scale down proportionally
+        scale = (cls.MAX_PIXELS / requested_pixels) ** 0.5
+
+        new_width = int(width * scale)
+        new_height = int(height * scale)
+
+        # libx264 requires even dimensions
+        new_width = new_width - (new_width % 2)
+        new_height = new_height - (new_height % 2)
+
+        # Safety floor
+        new_width = max(new_width, 320)
+        new_height = max(new_height, 180)
+
+        _diag(
+            f"⚠️ Clamping resolution from "
+            f"{width}x{height} ({requested_pixels} px) to "
+            f"{new_width}x{new_height} "
+            f"({new_width * new_height} px) — memory safety"
+        )
+
+        return new_width, new_height
+
     @staticmethod
     def _get_preset(quality: str) -> str:
         """
         Convert application quality setting to x264 preset.
+
+        Note: On memory-constrained hosts (e.g. Render free tier
+        with 512MB RAM), only ultrafast/veryfast are safe for 720p+.
+        Slower presets cause OOM kills.
         """
 
         quality = str(quality or "medium").lower()
 
         presets = {
             "very_low": "ultrafast",
-            "low": "veryfast",
-            "medium": "fast",
-            "high": "medium",
-            "very_high": "slow",
+            "low": "ultrafast",
+            "medium": "ultrafast",
+            "high": "veryfast",
+            "very_high": "veryfast",
         }
 
         return presets.get(
             quality,
-            "fast",
+            "ultrafast",
         )
 
     @staticmethod
