@@ -1,10 +1,17 @@
 import asyncio
 import logging
-import subprocess
 import traceback
 import uuid
 from pathlib import Path
 from typing import Awaitable, Callable, Optional
+
+from shared.ports.renderer_port import (
+    RendererPort,
+    RenderSettings,
+    RenderResult,
+    ThumbnailConfig,
+    RendererCapabilities,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -22,7 +29,7 @@ def _diag_err(msg: str) -> None:
     logger.error(msg)
 
 
-class FFmpegRendererPlugin:
+class FFmpegRendererPlugin(RendererPort):
     """
     FFmpeg-based video renderer.
 
@@ -32,6 +39,9 @@ class FFmpegRendererPlugin:
     - Render single assets.
     - Generate thumbnails.
     - Execute FFmpeg safely without blocking the event loop.
+
+    Implements the RendererPort contract defined in
+    shared.ports.renderer_port.
     """
 
     def __init__(
@@ -49,13 +59,32 @@ class FFmpegRendererPlugin:
             f"(ffmpeg={self.ffmpeg_binary}, timeout={self.timeout}s)"
         )
 
+    # ─────────────────────────────────────────────────────────────────────────
+    # Capabilities
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def get_capabilities(self) -> RendererCapabilities:
+        """Return the capabilities of this renderer."""
+        return RendererCapabilities(
+            supported_formats=["mp4"],
+            supports_hardware_acceleration=False,
+            max_resolution=(3840, 2160),
+            name="ffmpeg",
+        )
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Main render entrypoint (matches RendererPort contract)
+    # ─────────────────────────────────────────────────────────────────────────
+
     async def render(
         self,
         project_id: uuid.UUID,
         timeline_data: dict,
+        assets: dict,
+        settings: RenderSettings,
         temp_dir: Path,
-        progress_callback: Optional[Callable[[float], Awaitable[None]]] = None,
-    ) -> Path:
+        progress_callback: Callable[[float, str], Awaitable[None]],
+    ) -> RenderResult:
         """
         Render a complete project.
 
@@ -72,38 +101,69 @@ class FFmpegRendererPlugin:
         _diag(f"   project_id={project_id}")
         _diag(f"   temp_dir={temp_dir}")
         _diag(f"   output={output_path}")
+        _diag(
+            f"   settings: fps={settings.fps}, "
+            f"res={settings.resolution_width}x{settings.resolution_height}, "
+            f"quality={settings.quality}"
+        )
+        _diag(f"   assets keys={list(assets.keys()) if assets else None}")
 
         scenes = timeline_data.get("scenes", [])
 
         if scenes:
             _diag(f"🎬 Found {len(scenes)} scenes")
-            return await self._render_scenes(
+            rendered_path = await self._render_scenes(
                 project_id=project_id,
                 scenes=scenes,
                 timeline_data=timeline_data,
+                settings=settings,
+                temp_dir=temp_dir,
+                output_path=output_path,
+                progress_callback=progress_callback,
+            )
+        else:
+            _diag("🎬 No scenes found, using single asset renderer")
+            rendered_path = await self._render_single_asset(
+                project_id=project_id,
+                timeline_data=timeline_data,
+                settings=settings,
                 temp_dir=temp_dir,
                 output_path=output_path,
                 progress_callback=progress_callback,
             )
 
-        _diag("🎬 No scenes found, using single asset renderer")
-
-        return await self._render_single_asset(
-            project_id=project_id,
-            timeline_data=timeline_data,
-            temp_dir=temp_dir,
-            output_path=output_path,
-            progress_callback=progress_callback,
+        size_bytes = (
+            rendered_path.stat().st_size if rendered_path.exists() else 0
         )
+
+        return RenderResult(
+            output_path=rendered_path,
+            duration=0.0,
+            file_size=size_bytes,
+            metadata={
+                "fps": settings.fps,
+                "width": settings.resolution_width,
+                "height": settings.resolution_height,
+                "quality": settings.quality,
+                "renderer": "ffmpeg",
+            },
+        )
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Scene-based rendering
+    # ─────────────────────────────────────────────────────────────────────────
 
     async def _render_scenes(
         self,
         project_id: uuid.UUID,
         scenes: list,
         timeline_data: dict,
+        settings: RenderSettings,
         temp_dir: Path,
         output_path: Path,
-        progress_callback: Optional[Callable[[float], Awaitable[None]]] = None,
+        progress_callback: Optional[
+            Callable[[float, str], Awaitable[None]]
+        ] = None,
     ) -> Path:
         """
         Render every scene into a separate MP4 and concatenate them.
@@ -112,12 +172,10 @@ class FFmpegRendererPlugin:
         This avoids silently producing incomplete videos.
         """
 
-        settings = timeline_data.get("settings", {}) or {}
-
-        fps = int(settings.get("fps", 30))
-        width = int(settings.get("width", 1920))
-        height = int(settings.get("height", 1080))
-        quality = str(settings.get("quality", "medium"))
+        fps = int(settings.fps)
+        width = int(settings.resolution_width)
+        height = int(settings.resolution_height)
+        quality = str(settings.quality)
 
         _diag(
             f"🎬 Render settings: "
@@ -179,10 +237,13 @@ class FFmpegRendererPlugin:
             clip_paths.append(clip_path)
 
             if progress_callback:
-                progress = (index + 1) / total_scenes
+                progress = 0.62 + ((index + 1) / total_scenes) * 0.35
 
                 try:
-                    await progress_callback(progress)
+                    await progress_callback(
+                        progress,
+                        f"رندر المشهد {index + 1}/{total_scenes}",
+                    )
                 except Exception as exc:
                     _diag_err(
                         f"⚠️ Progress callback failed: {exc}"
@@ -256,6 +317,10 @@ class FFmpegRendererPlugin:
 
         return output_path
 
+    # ─────────────────────────────────────────────────────────────────────────
+    # Single scene
+    # ─────────────────────────────────────────────────────────────────────────
+
     async def _render_single_scene(
         self,
         scene: dict,
@@ -267,13 +332,18 @@ class FFmpegRendererPlugin:
     ) -> None:
         """
         Render one scene into an MP4 clip.
+
+        Accepts both key naming conventions:
+        - image_path / image
+        - audio_path / audio
         """
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
         text = str(scene.get("text", "") or "")
-        image_path = scene.get("image")
-        audio_path = scene.get("audio")
+
+        image_path = scene.get("image_path") or scene.get("image")
+        audio_path = scene.get("audio_path") or scene.get("audio")
 
         duration_value = scene.get("duration", 0)
 
@@ -307,29 +377,27 @@ class FFmpegRendererPlugin:
         # Video input
         # ---------------------------------------------------------
 
+        has_image = False
         if image_path:
-            image = Path(image_path)
+            image = Path(str(image_path))
 
-            if not image.exists():
-                raise FileNotFoundError(
-                    f"Scene image does not exist: {image}"
+            if image.exists() and image.stat().st_size > 0:
+                command.extend(
+                    [
+                        "-loop",
+                        "1",
+                        "-i",
+                        str(image),
+                    ]
+                )
+                has_image = True
+            else:
+                _diag_err(
+                    f"⚠️ Scene image missing or empty, "
+                    f"falling back to black background: {image}"
                 )
 
-            if image.stat().st_size <= 0:
-                raise RuntimeError(
-                    f"Scene image is empty: {image}"
-                )
-
-            command.extend(
-                [
-                    "-loop",
-                    "1",
-                    "-i",
-                    str(image),
-                ]
-            )
-
-        else:
+        if not has_image:
             command.extend(
                 [
                     "-f",
@@ -346,28 +414,23 @@ class FFmpegRendererPlugin:
         has_audio = False
 
         if audio_path:
-            audio = Path(audio_path)
+            audio = Path(str(audio_path))
 
-            if not audio.exists():
-                raise FileNotFoundError(
-                    f"Scene audio does not exist: {audio}"
+            if audio.exists() and audio.stat().st_size > 0:
+                command.extend(
+                    [
+                        "-i",
+                        str(audio),
+                    ]
+                )
+                has_audio = True
+            else:
+                _diag_err(
+                    f"⚠️ Scene audio missing or empty, "
+                    f"falling back to silence: {audio}"
                 )
 
-            if audio.stat().st_size <= 0:
-                raise RuntimeError(
-                    f"Scene audio is empty: {audio}"
-                )
-
-            command.extend(
-                [
-                    "-i",
-                    str(audio),
-                ]
-            )
-
-            has_audio = True
-
-        else:
+        if not has_audio:
             # Generate silent audio so every clip has the same
             # audio/video structure.
             command.extend(
@@ -455,28 +518,9 @@ class FFmpegRendererPlugin:
                 "44100",
                 "-ac",
                 "2",
-            ]
-        )
-
-        if has_audio:
-            command.extend(
-                [
-                    "-af",
-                    f"atrim=0:{duration:.3f},"
-                    f"asetpts=PTS-STARTPTS",
-                ]
-            )
-        else:
-            command.extend(
-                [
-                    "-af",
-                    f"atrim=0:{duration:.3f},"
-                    f"asetpts=PTS-STARTPTS",
-                ]
-            )
-
-        command.extend(
-            [
+                "-af",
+                f"atrim=0:{duration:.3f},"
+                f"asetpts=PTS-STARTPTS",
                 "-shortest",
                 "-movflags",
                 "+faststart",
@@ -509,24 +553,29 @@ class FFmpegRendererPlugin:
                 f"{output_path}"
             )
 
+    # ─────────────────────────────────────────────────────────────────────────
+    # Single asset
+    # ─────────────────────────────────────────────────────────────────────────
+
     async def _render_single_asset(
         self,
         project_id: uuid.UUID,
         timeline_data: dict,
+        settings: RenderSettings,
         temp_dir: Path,
         output_path: Path,
-        progress_callback: Optional[Callable[[float], Awaitable[None]]] = None,
+        progress_callback: Optional[
+            Callable[[float, str], Awaitable[None]]
+        ] = None,
     ) -> Path:
         """
         Render a single input asset.
         """
 
-        settings = timeline_data.get("settings", {}) or {}
-
-        fps = int(settings.get("fps", 30))
-        width = int(settings.get("width", 1920))
-        height = int(settings.get("height", 1080))
-        quality = str(settings.get("quality", "medium"))
+        fps = int(settings.fps)
+        width = int(settings.resolution_width)
+        height = int(settings.resolution_height)
+        quality = str(settings.quality)
 
         asset = timeline_data.get("asset")
 
@@ -610,7 +659,10 @@ class FFmpegRendererPlugin:
 
         if progress_callback:
             try:
-                await progress_callback(1.0)
+                await progress_callback(
+                    0.95,
+                    "اكتمل رندر الملف",
+                )
             except Exception as exc:
                 _diag_err(
                     f"⚠️ Progress callback failed: {exc}"
@@ -618,14 +670,21 @@ class FFmpegRendererPlugin:
 
         return output_path
 
+    # ─────────────────────────────────────────────────────────────────────────
+    # Thumbnail (matches RendererPort contract)
+    # ─────────────────────────────────────────────────────────────────────────
+
     async def generate_thumbnail(
         self,
         video_path: Path,
+        config: ThumbnailConfig,
         output_path: Path,
-        timestamp: float = 0.0,
     ) -> Path:
         """
         Generate a thumbnail from a video.
+
+        Signature matches RendererPort.generate_thumbnail:
+            (video_path, config, output_path)
         """
 
         video_path = Path(video_path)
@@ -645,6 +704,12 @@ class FFmpegRendererPlugin:
             parents=True,
             exist_ok=True,
         )
+
+        # Grab frame at timestamp 0 by default.
+        # `config` is accepted for compatibility with the port contract;
+        # advanced thumbnail composition (title, logo, colors) can be
+        # added later without changing this signature.
+        timestamp = 0.0
 
         command = [
             self.ffmpeg_binary,
@@ -689,6 +754,10 @@ class FFmpegRendererPlugin:
         )
 
         return output_path
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # FFmpeg execution
+    # ─────────────────────────────────────────────────────────────────────────
 
     async def _run_ffmpeg(
         self,
@@ -909,6 +978,10 @@ class FFmpegRendererPlugin:
             )
             _diag_err(traceback.format_exc())
             return False
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Helpers
+    # ─────────────────────────────────────────────────────────────────────────
 
     @staticmethod
     def _get_preset(quality: str) -> str:
