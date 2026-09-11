@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from typing import Optional, Any
+from typing import Optional
 from shared.base_entity import BaseEntity
 from shared.value_objects import ProjectStatus, BrandColors
 from shared.exceptions import ProjectAlreadyInProductionError, InvalidProjectStatusError
