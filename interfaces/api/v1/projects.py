@@ -90,6 +90,24 @@ class ProjectShareRequest(BaseModel):
 
 
 # ============================================
+# ✅ نماذج النشر متعدد المنصات (جديد)
+# ============================================
+
+class PublishAccountTarget(BaseModel):
+    account_id: str
+    platform: str
+
+
+class PublishToPlatformsRequest(BaseModel):
+    accounts: List[PublishAccountTarget]
+    title: str
+    description: str = ""
+    tags: List[str] = []
+    privacy: str = "public"
+    scheduled_at: Optional[str] = None
+
+
+# ============================================
 # التحقق من وجود yt-dlp (كخيار احتياطي)
 # ============================================
 
@@ -473,6 +491,151 @@ async def publish_project(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ============================================
+# ✅ نشر متعدد المنصات (جديد)
+# ============================================
+
+@router.post("/{project_id}/publish-to")
+async def publish_project_to_platforms(
+    project_id: UUID,
+    body: PublishToPlatformsRequest,
+    service: ProjectService = Depends(get_project_service),
+    session: AsyncSession = Depends(get_db),
+):
+    """
+    نشر المشروع على منصات متعددة مع تفاصيل كاملة.
+
+    Body:
+    {
+        "accounts": [
+            {"account_id": "uuid", "platform": "youtube"},
+            {"account_id": "uuid", "platform": "tiktok"}
+        ],
+        "title": "...",
+        "description": "...",
+        "tags": ["tag1", "tag2"],
+        "privacy": "public|unlisted|private",
+        "scheduled_at": "2026-09-12T10:00:00Z"  // optional
+    }
+    """
+    try:
+        # 1) تأكد من وجود المشروع
+        project = await service.get(project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+
+        # 2) تأكد أن المشروع عنده فيديو مُنتَج
+        video_url = getattr(project, "video_url", None)
+        if not video_url:
+            data = getattr(project, "data", None) or {}
+            video_url = data.get("video_url")
+
+        if not video_url:
+            raise HTTPException(
+                status_code=400,
+                detail="المشروع ليس له فيديو مُنتَج — قم بالرندر أولاً",
+            )
+
+        # 3) جهّز repos
+        from infrastructure.repositories.sql_publishing_repository import (
+            SQLPublishingJobRepository,
+            SQLAccountRepository,
+        )
+
+        acc_repo = SQLAccountRepository(session)
+        pub_repo = SQLPublishingJobRepository(session)
+
+        scheduled_at_dt = None
+        if body.scheduled_at:
+            try:
+                scheduled_at_dt = datetime.fromisoformat(
+                    body.scheduled_at.replace("Z", "+00:00")
+                )
+            except Exception:
+                pass
+
+        created_jobs = []
+
+        for target in body.accounts:
+            # جلب الحساب
+            try:
+                account_uuid = uuid.UUID(target.account_id)
+                account = await acc_repo.get(account_uuid)
+            except Exception as e:
+                logger.warning(f"Account not found: {target.account_id} — {e}")
+                continue
+
+            if not account:
+                continue
+
+            # إنشاء مهمة نشر
+            try:
+                from core.domain.publishing.publishing_job import PublishingJob
+
+                job = PublishingJob(
+                    project_id=project_id,
+                    account_id=account.id,
+                    platform=target.platform,
+                )
+
+                # حقول إضافية إن كانت مدعومة
+                for attr, val in [
+                    ("title", body.title),
+                    ("description", body.description),
+                    ("tags", body.tags),
+                    ("privacy", body.privacy),
+                    ("scheduled_at", scheduled_at_dt),
+                ]:
+                    try:
+                        setattr(job, attr, val)
+                    except Exception:
+                        pass
+
+                await pub_repo.save(job)
+
+                created_jobs.append({
+                    "id": str(job.id),
+                    "platform": target.platform,
+                    "account_name": getattr(account, "name", "—"),
+                })
+
+            except Exception as e:
+                logger.exception(f"Failed to create job for {target.account_id}")
+                continue
+
+        # 4) حدّث حالة المشروع إلى published
+        if created_jobs:
+            try:
+                await service.publish(project_id)
+            except Exception as e:
+                logger.warning(f"Could not mark project as published: {e}")
+
+        return {
+            "status": "success",
+            "jobs_created": len(created_jobs),
+            "jobs": created_jobs,
+            "message": f"تم إنشاء {len(created_jobs)} مهمة نشر",
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("publish_project_to_platforms failed")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================
+# استيراد logger (يجب أن يكون في أعلى الملف)
+# ============================================
+
+import logging
+logger = logging.getLogger(__name__)
+
+
+# ============================================
+# نقاط النهاية الإضافية
+# ============================================
+
 @router.get("/{project_id}/export")
 async def export_project(
     project_id: UUID,
@@ -526,8 +689,6 @@ async def render_project(
 ):
     """
     بدء الرندر (تحويل الحالة إلى in_production).
-
-    ✅ يستخدم service.update(status=...) بعد إضافة الدعم.
     """
     try:
         updated_project = await service.update(
@@ -550,9 +711,6 @@ async def render_project(
 
 @router.post("/save")
 async def save_project_data(payload: ProjectSaveRequest):
-    """
-    حفظ بيانات المشروع في Supabase باستخدام Service Role Key
-    """
     try:
         from infrastructure.database.supabase_client import get_supabase_admin
         
