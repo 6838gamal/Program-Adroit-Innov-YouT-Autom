@@ -58,6 +58,9 @@ class FFmpegRendererPlugin(RendererPort):
     # Timeout per FFmpeg process (seconds).
     DEFAULT_TIMEOUT = 300
 
+    # Video file extensions recognized as video input.
+    VIDEO_EXTENSIONS = (".mp4", ".mov", ".webm", ".mkv", ".avi", ".m4v", ".mpeg", ".mpg")
+
     def __init__(
         self,
         ffmpeg_binary: str = "ffmpeg",
@@ -353,6 +356,14 @@ class FFmpegRendererPlugin(RendererPort):
         """
         Render one scene into an MP4 clip.
 
+        Supports BOTH images and videos as input.
+
+        Detection strategy (in order):
+          1. scene["type"] == "video"          → video
+          2. scene["type"] == "image"          → image
+          3. File extension in VIDEO_EXTENSIONS → video
+          4. Otherwise                          → image
+
         Accepts both key naming conventions:
         - image_path / image
         - audio_path / audio
@@ -366,7 +377,6 @@ class FFmpegRendererPlugin(RendererPort):
         audio_path = scene.get("audio_path") or scene.get("audio")
 
         duration_value = scene.get("duration", 0)
-
         try:
             duration = float(duration_value)
         except (TypeError, ValueError):
@@ -379,12 +389,26 @@ class FFmpegRendererPlugin(RendererPort):
             scene.get("transition", "fade") or "fade"
         ).lower()
 
+        # ✅ اقرأ نوع الوسائط
+        scene_type = str(scene.get("type", "") or "").lower()
+
+        # ── كشف نوع الوسائط ──────────────────────────────────────
+        is_video = (scene_type == "video")
+
+        if not is_video and scene_type != "image" and image_path:
+            # استنتج من امتداد الملف
+            ext = Path(str(image_path)).suffix.lower()
+            if ext in self.VIDEO_EXTENSIONS:
+                is_video = True
+
         _diag("🎬 Scene info:")
+        _diag(f"   type: {scene_type or '(auto)'}")
         _diag(f"   text length: {len(text)}")
-        _diag(f"   image: {image_path}")
+        _diag(f"   media: {image_path}")
         _diag(f"   audio: {audio_path}")
         _diag(f"   duration: {duration}")
         _diag(f"   transition: {transition}")
+        _diag(f"   is_video: {is_video}")
 
         command: list[str] = [
             self.ffmpeg_binary,
@@ -394,38 +418,45 @@ class FFmpegRendererPlugin(RendererPort):
         ]
 
         # ---------------------------------------------------------
-        # Video input
+        # Video input (image OR video)
         # ---------------------------------------------------------
 
-        has_image = False
-        if image_path:
-            image = Path(str(image_path))
+        has_media = False
 
-            if image.exists() and image.stat().st_size > 0:
-                command.extend(
-                    [
-                        "-loop",
-                        "1",
-                        "-i",
-                        str(image),
-                    ]
-                )
-                has_image = True
+        if image_path:
+            media_file = Path(str(image_path))
+
+            if media_file.exists() and media_file.stat().st_size > 0:
+                if is_video:
+                    # ✅ فيديو: اقرأه كتدفق فيديو عادي.
+                    #    -stream_loop -1 يكرّره حتى الوصول للمدة المطلوبة.
+                    command.extend([
+                        "-stream_loop", "-1",
+                        "-i", str(media_file),
+                    ])
+                    _diag(f"🎬 Using VIDEO input (stream_loop): {media_file}")
+                else:
+                    # ✅ صورة: loop عليها لمدة المشهد.
+                    command.extend([
+                        "-loop", "1",
+                        "-i", str(media_file),
+                    ])
+                    _diag(f"🖼️ Using IMAGE input (loop): {media_file}")
+
+                has_media = True
             else:
                 _diag_err(
-                    f"⚠️ Scene image missing or empty, "
-                    f"falling back to black background: {image}"
+                    f"⚠️ Scene media missing or empty, "
+                    f"falling back to black background: {media_file}"
                 )
 
-        if not has_image:
-            command.extend(
-                [
-                    "-f",
-                    "lavfi",
-                    "-i",
-                    f"color=c=black:s={width}x{height}:r={fps}",
-                ]
-            )
+        if not has_media:
+            # خلفية سوداء كـ fallback
+            command.extend([
+                "-f", "lavfi",
+                "-i", f"color=c=black:s={width}x{height}:r={fps}",
+            ])
+            _diag("⚠️ Falling back to black background (no media)")
 
         # ---------------------------------------------------------
         # Audio input
@@ -437,12 +468,9 @@ class FFmpegRendererPlugin(RendererPort):
             audio = Path(str(audio_path))
 
             if audio.exists() and audio.stat().st_size > 0:
-                command.extend(
-                    [
-                        "-i",
-                        str(audio),
-                    ]
-                )
+                command.extend([
+                    "-i", str(audio),
+                ])
                 has_audio = True
             else:
                 _diag_err(
@@ -451,16 +479,12 @@ class FFmpegRendererPlugin(RendererPort):
                 )
 
         if not has_audio:
-            # Generate silent audio so every clip has the same
-            # audio/video structure.
-            command.extend(
-                [
-                    "-f",
-                    "lavfi",
-                    "-i",
-                    "anullsrc=channel_layout=stereo:sample_rate=44100",
-                ]
-            )
+            # أولّد صوتاً صامتاً ليكون لكل مقطع نفس البنية.
+            command.extend([
+                "-f", "lavfi",
+                "-i",
+                "anullsrc=channel_layout=stereo:sample_rate=44100",
+            ])
 
         # ---------------------------------------------------------
         # Video filters
@@ -478,7 +502,9 @@ class FFmpegRendererPlugin(RendererPort):
             "format=yuv420p",
         ]
 
-        if transition == "fade":
+        # ملاحظة: fade على الفيديو قد يسبب artifacts أو OOM على
+        # Render free tier. نُبقيه فقط للصور.
+        if transition == "fade" and not is_video:
             fade_duration = min(0.5, duration / 2)
 
             if fade_duration > 0:
@@ -505,55 +531,33 @@ class FFmpegRendererPlugin(RendererPort):
 
         preset = self._get_preset(quality)
 
-        command.extend(
-            [
-                "-vf",
-                video_filter,
-                "-r",
-                str(fps),
-                "-t",
-                f"{duration:.3f}",
-                "-c:v",
-                "libx264",
-                "-preset",
-                preset,
-                "-crf",
-                "28",
-                "-threads",
-                "1",
-                "-pix_fmt",
-                "yuv420p",
-            ]
-        )
+        command.extend([
+            "-vf", video_filter,
+            "-r", str(fps),
+            "-t", f"{duration:.3f}",
+            "-c:v", "libx264",
+            "-preset", preset,
+            "-crf", "28",
+            "-threads", "1",
+            "-pix_fmt", "yuv420p",
+        ])
 
         # ---------------------------------------------------------
         # Audio encoding
         # ---------------------------------------------------------
 
-        command.extend(
-            [
-                "-c:a",
-                "aac",
-                "-b:a",
-                "128k",
-                "-ar",
-                "44100",
-                "-ac",
-                "2",
-                "-af",
-                f"atrim=0:{duration:.3f},"
-                f"asetpts=PTS-STARTPTS",
-                "-shortest",
-                "-movflags",
-                "+faststart",
-                str(output_path),
-            ]
-        )
+        command.extend([
+            "-c:a", "aac",
+            "-b:a", "128k",
+            "-ar", "44100",
+            "-ac", "2",
+            "-af", f"atrim=0:{duration:.3f},asetpts=PTS-STARTPTS",
+            "-shortest",
+            "-movflags", "+faststart",
+            str(output_path),
+        ])
 
-        _diag(
-            "🎬 FFmpeg scene command: "
-            + " ".join(command)
-        )
+        _diag("🎬 FFmpeg scene command: " + " ".join(command))
 
         success = await self._run_ffmpeg(command)
 
