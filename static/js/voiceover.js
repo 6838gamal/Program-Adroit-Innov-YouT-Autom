@@ -2,12 +2,11 @@
  * voiceover.js — نظام تسجيل/توليد/اختيار الصوت مع النص المخصص
  * يعتمد على: timeline-core.js (state, API)
  *
- * يدعم 3 أوضاع:
+ * يدعم 4 أوضاع:
  *   1) TTS — صوت جاهز من Web Speech API
  *   2) Record — تسجيل مباشر من الميكروفون مع STT
  *   3) File — اختيار ملف صوتي موجود + استخراج النص (Whisper)
- *
- * + نظام المزامنة والمعالجة والاستعراض الكامل
+ *   4) Voice Cloning — استنساخ صوت المستخدم وتوليد النص بصوته (ElevenLabs)
  */
 
 // ============================================================
@@ -20,13 +19,12 @@ const VoiceoverState = {
     audioChunks: [],
     recognition: null,
     transcript: '',
-    scriptSegments: [],      // [{ text, start, end, speaker }]
+    scriptSegments: [],
     ttsVoices: [],
     selectedVoice: null,
     isRecordingScript: false,
     startTime: 0,
     recTimer: null,
-    // ملفات
     pendingBlob: null,
     pendingUrl: null,
     pendingFileName: null,
@@ -60,7 +58,6 @@ function openVoiceoverStudio(clipId = null) {
 
     VoiceoverState.currentModal = clipId;
 
-    // إعادة تعيين الحقول
     document.getElementById('voiceoverScript').value = '';
     document.getElementById('voiceoverTranscript').innerHTML = '';
     document.getElementById('voiceoverSegments').innerHTML =
@@ -70,20 +67,16 @@ function openVoiceoverStudio(clipId = null) {
     document.getElementById('voiceoverFileInfo').innerHTML = '';
     VoiceoverState.scriptSegments = [];
 
-    // ✅ أخفِ زر المزامنة عند الفتح
     hideSyncButton();
 
-    // أعد تعيين الوضع إلى tts
     const ttsRadio = document.querySelector('input[name="voiceoverMode"][value="tts"]');
     if (ttsRadio) {
         ttsRadio.checked = true;
         ttsRadio.dispatchEvent(new Event('change'));
     }
 
-    // تعبئة قائمة الأصوات
     populateVoiceSelect();
 
-    // إذا كان هناك مقطع موجود، حمّل نصه
     if (clipId && typeof state !== 'undefined' && state.clips) {
         const clip = state.clips.find(c => c.id === clipId);
         if (clip) {
@@ -93,7 +86,6 @@ function openVoiceoverStudio(clipId = null) {
                 VoiceoverState.scriptSegments = clip.scriptSegments;
                 renderSegments();
             }
-            // ✅ إذا كان هناك صوت محفوظ، أظهر زر المزامنة
             if (clip.url && clip.source) {
                 showSyncButton();
             }
@@ -118,7 +110,7 @@ function closeVoiceoverStudio() {
 
 
 // ============================================================
-// ✅ إظهار/إخفاء زر المزامنة
+// إظهار/إخفاء زر المزامنة
 // ============================================================
 function showSyncButton() {
     const el = document.getElementById('openSyncBtnContainer');
@@ -140,7 +132,6 @@ function populateVoiceSelect() {
     select.innerHTML = '<option value="">— اختر صوتاً —</option>';
 
     const voices = loadTTSVoices();
-    // ترتيب: العربي أولاً
     const sorted = [...voices].sort((a, b) => {
         const aAr = a.lang.startsWith('ar') ? 0 : 1;
         const bAr = b.lang.startsWith('ar') ? 0 : 1;
@@ -227,13 +218,11 @@ async function startVoiceoverRecording() {
             stream.getTracks().forEach(t => t.stop());
         };
 
-        // بدء التعرف على الكلام
         startSpeechRecognition();
 
         VoiceoverState.startTime = performance.now();
         VoiceoverState.mediaRecorder.start(100);
 
-        // تحديث الواجهة
         const btn = document.getElementById('voiceoverRecBtn');
         btn.innerHTML = '⏹️ إيقاف';
         btn.classList.add('recording');
@@ -316,7 +305,6 @@ function startSpeechRecognition() {
             }
         }
 
-        // عرض النص المباشر
         const transEl = document.getElementById('voiceoverTranscript');
         if (transEl) {
             const live = VoiceoverState.scriptSegments.map(s => s.text).join(' ');
@@ -355,9 +343,7 @@ async function handleRecordedAudio(blob) {
     VoiceoverState.pendingUrl = url;
     VoiceoverState.source = 'recording';
 
-    // ✅ أظهر زر المزامنة
     showSyncButton();
-
     showToast('✅ تم التسجيل، يمكنك المزامنة والمعالجة الآن', 'success');
 }
 
@@ -407,7 +393,6 @@ function formatTime(s) {
 // ============================================================
 // 🎵 خيار اختيار ملف صوتي موجود
 // ============================================================
-
 function pickAudioFile() {
     const input = document.getElementById('voiceoverFileInput');
     if (input) input.click();
@@ -438,7 +423,6 @@ async function loadAudioFile(file) {
     VoiceoverState.pendingFileName = file.name;
     VoiceoverState.source = 'file';
 
-    // اقرأ المدة
     const audio = new Audio(url);
     await new Promise((resolve) => {
         audio.addEventListener('loadedmetadata', resolve, { once: true });
@@ -468,9 +452,7 @@ async function loadAudioFile(file) {
         </div>
     `;
 
-    // ✅ أظهر زر المزامنة
     showSyncButton();
-
     showToast('✅ تم تحميل الملف. يمكنك المزامنة والمعالجة الآن', 'success');
 }
 
@@ -519,8 +501,6 @@ function clearAudioFile() {
     document.getElementById('voiceoverPreview').innerHTML = '';
     const input = document.getElementById('voiceoverFileInput');
     if (input) input.value = '';
-
-    // ✅ أخفِ زر المزامنة
     hideSyncButton();
 }
 
@@ -528,7 +508,6 @@ function clearAudioFile() {
 // ============================================================
 // 🎬 استخراج النص من ملف صوتي
 // ============================================================
-
 async function extractTranscriptFromFile() {
     if (!VoiceoverState.pendingBlob) {
         return showToast('⚠️ اختر ملفاً صوتياً أولاً', 'warning');
@@ -836,17 +815,18 @@ async function addVoiceoverClip(clipData) {
         tts: clipData.tts || null,
         source: clipData.source || 'tts',
         fileName: clipData.fileName || null,
+        voice_id: clipData.voice_id || null,
+        processed: clipData.processed || false,
+        processingOptions: clipData.processingOptions || null,
     };
 
     state.clips.push(clip);
 
-    // أعد الرسم
     if (typeof renderTimeline === 'function') renderTimeline();
     if (typeof renderLayers === 'function') renderLayers();
     if (typeof updateStatusBar === 'function') updateStatusBar();
     if (typeof drawPreview === 'function') drawPreview();
 
-    // حفظ في السحابة
     if (typeof saveProject === 'function') {
         try { await saveProject(); } catch (e) { console.warn(e); }
     }
@@ -857,7 +837,6 @@ async function addVoiceoverClip(clipData) {
 // ============================================================
 // أدوات مساعدة
 // ============================================================
-
 function autoSegmentScript(script, wordsPerSecond = 2.5) {
     const sentences = script.split(/[.!?؟।\n]+/).filter(s => s.trim());
     let t = 0;
@@ -926,7 +905,7 @@ function showScriptOverlay(text, title) {
 
 
 // ============================================================
-// 🎯 نظام المزامنة والمعالجة والاستعراض
+// 🎙️ VOICE CLONING — ElevenLabs
 // ============================================================
 const SyncProcessState = {
     rawAudioBlob: null,
@@ -943,6 +922,11 @@ const SyncProcessState = {
     },
     isProcessing: false,
     isAligned: false,
+    // Voice Cloning
+    clonedVoiceId: null,
+    clonedVoiceName: null,
+    clonedRemoteUrl: null,
+    clonedDuration: 0,
 };
 
 
@@ -963,6 +947,7 @@ function openSyncProcessModal() {
     resetSyncProcessUI();
     renderRawAudioPreview();
     renderSegmentsForSync();
+    updateClonedVoiceStatus();
 
     modal.classList.remove('hidden');
 }
@@ -1000,7 +985,10 @@ function resetSyncProcessUI() {
     if (btnProcess) btnProcess.disabled = false;
 
     const btnAlign = document.getElementById('btnAlignScript');
-    if (btnAlign) btnAlign.disabled = false;
+    if (btnAlign) {
+        btnAlign.disabled = false;
+        btnAlign.innerHTML = '🎙️ توليد النص بصوتي';
+    }
 }
 
 
@@ -1015,7 +1003,7 @@ function renderRawAudioPreview() {
         <audio controls src="${SyncProcessState.rawAudioUrl}"
                style="width:100%;height:36px;" id="syncRawPlayer"></audio>
         <div class="sync-audio-meta">
-            <span>📼 الأصلي</span>
+            <span>📼 صوتك المرجعي</span>
             <span id="syncRawDuration">—</span>
             <span id="syncRawSize">—</span>
         </div>
@@ -1113,11 +1101,46 @@ function autoSegmentFromScript() {
 
 
 // ============================================================
-// 4️⃣ المزامنة التلقائية
+// 4️⃣ تحديث حالة الصوت المُستنسخ
+// ============================================================
+function updateClonedVoiceStatus() {
+    const statusEl = document.getElementById('clonedVoiceStatus');
+    if (!statusEl) return;
+
+    if (SyncProcessState.clonedVoiceId) {
+        statusEl.style.display = 'block';
+        statusEl.innerHTML = `
+            <div style="background:rgba(52,211,153,0.1);border:1px solid rgba(52,211,153,0.3);
+                        border-radius:8px;padding:10px;display:flex;align-items:center;gap:10px;">
+                <span style="font-size:20px;">✅</span>
+                <div style="flex:1;">
+                    <div style="color:#34d399;font-size:12px;font-weight:600;">
+                        صوتك مُستنسخ وجاهز
+                    </div>
+                    <div style="color:#94a3b8;font-size:10px;margin-top:2px;">
+                        ${SyncProcessState.clonedVoiceName || SyncProcessState.clonedVoiceId}
+                    </div>
+                </div>
+                <button onclick="resetClonedVoice()"
+                        style="background:rgba(239,68,68,0.2);border:1px solid rgba(239,68,68,0.4);
+                               color:#f87171;padding:4px 10px;border-radius:6px;cursor:pointer;font-size:11px;">
+                    🔄 تغيير
+                </button>
+            </div>
+        `;
+    } else {
+        statusEl.style.display = 'none';
+        statusEl.innerHTML = '';
+    }
+}
+
+
+// ============================================================
+// 5️⃣ 🎙️ Voice Cloning — توليد النص بصوتك
 // ============================================================
 async function alignScriptWithAudio() {
     if (!SyncProcessState.rawAudioBlob) {
-        return showToast('⚠️ لا يوجد صوت', 'warning');
+        return showToast('⚠️ لا يوجد صوت مرجعي', 'warning');
     }
 
     const script = document.getElementById('voiceoverScript').value.trim();
@@ -1125,67 +1148,210 @@ async function alignScriptWithAudio() {
         return showToast('⚠️ اكتب النص أولاً', 'warning');
     }
 
+    if (script.length > 5000) {
+        return showToast('⚠️ النص طويل جداً (الحد 5000 حرف)', 'warning');
+    }
+
     const btn = document.getElementById('btnAlignScript');
     const statusEl = document.getElementById('syncAlignStatus');
 
-    btn.disabled = true;
-    btn.innerHTML = '⏳ جاري المزامنة...';
-    statusEl.innerHTML = '<span style="color:#fbbf24;">🔄 رفع الصوت للمعالجة...</span>';
+    // ── المرحلة 1: هل الصوت مُستنسخ مسبقاً؟ ─────────
+    let voiceId = SyncProcessState.clonedVoiceId;
+
+    if (!voiceId) {
+        // استنسخ الصوت من التسجيل
+        const proceed = confirm(
+            '🎙️ سيتم استنساخ صوتك من التسجيل الحالي.\n\n' +
+            '⚠️ تأكد أن التسجيل:\n' +
+            '• مدته 30 ثانية على الأقل\n' +
+            '• جودته واضحة بدون ضوضاء\n' +
+            '• صوتك فقط\n\n' +
+            'متابعة؟'
+        );
+
+        if (!proceed) return;
+
+        btn.disabled = true;
+        btn.innerHTML = '⏳ جاري استنساخ صوتك...';
+        statusEl.innerHTML = `
+            <div style="color:#fbbf24;">
+                🎙️ جاري تحليل صوتك وإنشاء نسخة ذكية...
+                <br><small>يستغرق 20-60 ثانية (المرة الأولى فقط)</small>
+            </div>
+        `;
+
+        try {
+            const formData = new FormData();
+            formData.append('file', SyncProcessState.rawAudioBlob, 'my_voice.webm');
+            formData.append('name', `Voice_${Date.now()}`);
+            formData.append('project_id', state.projectId || '');
+            formData.append('description', 'Cloned via Voiceover Studio');
+
+            const res = await fetch('/api/voice/clone', {
+                method: 'POST',
+                body: formData,
+            });
+
+            const data = await res.json();
+
+            if (!data.success) {
+                throw new Error(data.error || 'فشل الاستنساخ');
+            }
+
+            voiceId = data.voice_id;
+            SyncProcessState.clonedVoiceId = voiceId;
+            SyncProcessState.clonedVoiceName = data.name;
+
+            updateClonedVoiceStatus();
+
+            statusEl.innerHTML = `
+                <div style="color:#34d399;">
+                    ✅ تم استنساخ صوتك بنجاح!
+                    <br>🎙️ اسم الصوت: ${data.name}
+                    <br>🔄 جاري توليد النص بصوتك...
+                </div>
+            `;
+
+        } catch (err) {
+            console.error(err);
+            statusEl.innerHTML = `
+                <div style="color:#ef4444;">
+                    ❌ فشل استنساخ الصوت: ${err.message}
+                    <br><small>تأكد من وجود مفتاح ELEVENLABS_API_KEY على الخادم</small>
+                </div>
+            `;
+            btn.disabled = false;
+            btn.innerHTML = '🎙️ توليد النص بصوتي';
+            showToast('❌ فشل الاستنساخ: ' + err.message, 'error');
+            return;
+        }
+    }
+
+    // ── المرحلة 2: توليد الصوت من النص ─────────────
+    btn.innerHTML = '⏳ جاري التوليد...';
+    statusEl.innerHTML = `
+        <div style="color:#fbbf24;">
+            🎙️ جاري توليد النص بصوتك...
+        </div>
+    `;
 
     try {
-        const formData = new FormData();
-        formData.append('file', SyncProcessState.rawAudioBlob, 'audio.webm');
-        formData.append('script', script);
-        formData.append('language', 'ar');
+        const speedEl = document.getElementById('cloneSpeed');
+        const stabilityEl = document.getElementById('cloneStability');
+        const similarityEl = document.getElementById('cloneSimilarity');
 
-        const res = await fetch('/api/media/align-script', {
+        const speed = parseFloat(speedEl?.value || 1.0);
+        const stability = parseFloat(stabilityEl?.value || 0.5);
+        const similarity_boost = parseFloat(similarityEl?.value || 0.75);
+
+        const formData = new FormData();
+        formData.append('voice_id', voiceId);
+        formData.append('script', script);
+        formData.append('project_id', state.projectId || '');
+        formData.append('stability', String(stability));
+        formData.append('similarity_boost', String(similarity_boost));
+        formData.append('style', '0.0');
+        formData.append('speed', String(speed));
+        formData.append('model_id', 'eleven_multilingual_v2');
+
+        const res = await fetch('/api/voice/generate', {
             method: 'POST',
             body: formData,
         });
 
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = await res.json();
-
-        if (!data.success) throw new Error(data.error || 'فشل المزامنة');
-
-        if (data.segments && data.segments.length) {
-            VoiceoverState.scriptSegments = data.segments.map((s) => ({
-                text: s.text || '',
-                start: parseFloat(s.start || 0),
-                end: parseFloat(s.end || 0),
-                speaker: 'المتحدث',
-                confidence: s.confidence || null,
-            }));
-
-            SyncProcessState.alignedSegments = [...VoiceoverState.scriptSegments];
-            SyncProcessState.isAligned = true;
-
-            renderSegmentsForSync();
-
-            statusEl.innerHTML = `
-                <span style="color:#34d399;">
-                    ✅ تمت المزامنة الدقيقة (${data.segments.length} مقطع)
-                    ${data.method ? `— ${data.method}` : ''}
-                </span>
-            `;
-            showToast('🎯 تمت مزامنة النص مع الصوت بنجاح', 'success');
-        } else {
-            throw new Error('لم تُرجع الخدمة أي مقاطع');
+        if (!res.ok) {
+            const errText = await res.text();
+            throw new Error(`HTTP ${res.status}: ${errText.substring(0, 200)}`);
         }
+
+        const remoteUrl = res.headers.get('X-Cloned-URL');
+        const duration = parseFloat(res.headers.get('X-Duration') || '0');
+
+        const blob = await res.blob();
+        const localUrl = URL.createObjectURL(blob);
+
+        SyncProcessState.processedBlob = blob;
+        SyncProcessState.processedUrl = localUrl;
+        SyncProcessState.clonedRemoteUrl = remoteUrl;
+        SyncProcessState.clonedDuration = duration;
+
+        // زامن المقاطع
+        if (!VoiceoverState.scriptSegments.length) {
+            VoiceoverState.scriptSegments = autoSegmentScript(script);
+        }
+
+        const totalChars = VoiceoverState.scriptSegments.reduce(
+            (sum, s) => sum + s.text.length, 0
+        );
+        let cursor = 0;
+        VoiceoverState.scriptSegments.forEach((seg) => {
+            const ratio = totalChars > 0 ? seg.text.length / totalChars : 0;
+            const dur = duration * ratio;
+            seg.start = round2(cursor);
+            seg.end = round2(Math.min(cursor + dur, duration));
+            cursor = seg.end;
+        });
+        if (VoiceoverState.scriptSegments.length > 0) {
+            VoiceoverState.scriptSegments[
+                VoiceoverState.scriptSegments.length - 1
+            ].end = round2(duration);
+        }
+
+        SyncProcessState.isAligned = true;
+
+        renderClonedAudio(localUrl, duration, script, voiceId);
+
+        statusEl.innerHTML = `
+            <div style="color:#34d399;">
+                ✅ تم توليد الصوت بنجاح!
+                <br>🎙️ بصوتك أنت (${SyncProcessState.clonedVoiceName || voiceId})
+                <br>⏱️ المدة: ${duration.toFixed(1)} ثانية
+                <br>📝 عدد الأحرف: ${script.length}
+            </div>
+        `;
+
+        showToast('🎙️ تم توليد النص بصوتك!', 'success');
 
     } catch (err) {
         console.error(err);
-        statusEl.innerHTML = `<span style="color:#ef4444;">❌ فشل المزامنة: ${err.message}</span>`;
-        showToast('❌ فشل المزامنة: ' + err.message, 'error');
+        statusEl.innerHTML = `
+            <div style="color:#ef4444;">
+                ❌ فشل التوليد: ${err.message}
+            </div>
+        `;
+        showToast('❌ فشل التوليد: ' + err.message, 'error');
     } finally {
         btn.disabled = false;
-        btn.innerHTML = '🎯 مزامنة تلقائية';
+        btn.innerHTML = '🎙️ توليد النص بصوتي';
     }
 }
 
 
 // ============================================================
-// 5️⃣ المزامنة اليدوية
+// 6️⃣ إعادة استنساخ صوت جديد
+// ============================================================
+function resetClonedVoice() {
+    SyncProcessState.clonedVoiceId = null;
+    SyncProcessState.clonedVoiceName = null;
+    SyncProcessState.processedBlob = null;
+    SyncProcessState.processedUrl = null;
+
+    updateClonedVoiceStatus();
+
+    const statusEl = document.getElementById('syncAlignStatus');
+    if (statusEl) {
+        statusEl.innerHTML = `
+            <div style="color:#60a5fa;">
+                💡 يمكنك الآن استنساخ صوت جديد من التسجيل الحالي
+            </div>
+        `;
+    }
+    showToast('🔄 تم مسح الصوت السابق', 'info');
+}
+
+
+// ============================================================
+// 7️⃣ المزامنة اليدوية
 // ============================================================
 async function alignScriptManually() {
     if (!SyncProcessState.rawAudioBlob) {
@@ -1234,7 +1400,7 @@ async function alignScriptManually() {
 
 
 // ============================================================
-// 6️⃣ معالجة الصوت
+// 8️⃣ معالجة الصوت
 // ============================================================
 async function processAudio() {
     if (!SyncProcessState.rawAudioBlob) {
@@ -1316,8 +1482,52 @@ function updateSyncProgress(percent, text) {
 
 
 // ============================================================
-// 7️⃣ استعراض الصوت المعالج
+// 9️⃣ عرض الصوت المُستنسخ/المعالج
 // ============================================================
+function renderClonedAudio(localUrl, duration, script, voiceId) {
+    const section = document.getElementById('syncProcessedSection');
+    if (!section) return;
+
+    section.style.display = 'block';
+
+    const audioEl = document.getElementById('syncProcessedAudio');
+    audioEl.innerHTML = `
+        <audio controls src="${localUrl}"
+               style="width:100%;height:36px;" id="syncProcessedPlayer"></audio>
+        <div class="sync-audio-meta">
+            <span>🎙️ مُستنسخ بصوتك</span>
+            <span>⏱️ ${formatTime(duration)}</span>
+            <span class="sync-badge-green">✨ AI Generated</span>
+        </div>
+    `;
+
+    const player = document.getElementById('syncProcessedPlayer');
+
+    player.addEventListener('timeupdate', () => {
+        const t = player.currentTime;
+        highlightSegmentAtTime(t, 'processed');
+    });
+
+    renderAlignedSegmentsPreview();
+
+    // عرض معلومات
+    const comparisonEl = document.getElementById('syncComparisonSection');
+    if (comparisonEl) {
+        comparisonEl.style.display = 'block';
+        comparisonEl.innerHTML = `
+            <div class="sync-comparison-grid" style="grid-template-columns: 1fr;">
+                <div class="sync-comparison-item highlight">
+                    <div class="sync-comparison-label">🎯 النتيجة</div>
+                    <div class="sync-comparison-value">النص المكتوب بصوتك</div>
+                    <div style="font-size:10px;color:#94a3b8;margin-top:4px;">
+                        ${script.length} حرف • ${duration.toFixed(1)} ثانية
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+}
+
 function renderProcessedAudio() {
     const section = document.getElementById('syncProcessedSection');
     if (!section) return;
@@ -1386,7 +1596,7 @@ function renderComparison(rawSize, procSize) {
 
 
 // ============================================================
-// 8️⃣ عرض النص المُزامن مع الإبراز
+// 🔟 عرض النص المُزامن
 // ============================================================
 function renderAlignedSegmentsPreview() {
     const el = document.getElementById('syncAlignedPreview');
@@ -1448,7 +1658,7 @@ function seekToSegment(idx, playerType = 'processed') {
 
 
 // ============================================================
-// 9️⃣ حفظ الصوت المعالج
+// 1️⃣1️⃣ حفظ الصوت المعالج/المُستنسخ
 // ============================================================
 async function saveProcessedVoiceover() {
     if (!SyncProcessState.processedBlob) {
@@ -1458,16 +1668,24 @@ async function saveProcessedVoiceover() {
     const title = document.getElementById('voiceoverTitle').value.trim() || 'تعليق صوتي';
     const script = document.getElementById('voiceoverScript').value.trim();
 
+    const isCloned = !!SyncProcessState.clonedVoiceId;
+    const source = isCloned ? 'cloned' : (VoiceoverState.source || 'recording');
+
     const formData = new FormData();
-    formData.append('file', SyncProcessState.processedBlob, 'processed.webm');
+    formData.append('file', SyncProcessState.processedBlob,
+        isCloned ? 'cloned.mp3' : 'processed.webm');
     formData.append('project_id', state.projectId);
     formData.append('title', title);
     formData.append('script', script);
     formData.append('script_segments', JSON.stringify(VoiceoverState.scriptSegments));
-    formData.append('source', VoiceoverState.source || 'recording');
+    formData.append('source', source);
     formData.append('start', String(getCurrentPlayheadTime()));
-    formData.append('processed', 'true');
-    formData.append('processing_options', JSON.stringify(SyncProcessState.processingOptions));
+    formData.append('processed', isCloned ? 'true' : 'true');
+    formData.append('processing_options', JSON.stringify({
+        ...SyncProcessState.processingOptions,
+        voice_id: SyncProcessState.clonedVoiceId || null,
+        voice_name: SyncProcessState.clonedVoiceName || null,
+    }));
 
     try {
         const res = await fetch('/api/media/upload-voiceover', {
@@ -1485,14 +1703,20 @@ async function saveProcessedVoiceover() {
             mediaId: data.media_id,
             script: script,
             script_segments: VoiceoverState.scriptSegments,
-            duration: data.duration || 0,
+            duration: data.duration || SyncProcessState.clonedDuration || 0,
             start: getCurrentPlayheadTime(),
-            source: VoiceoverState.source || 'recording',
+            source: source,
             processed: true,
             processingOptions: SyncProcessState.processingOptions,
+            voice_id: SyncProcessState.clonedVoiceId || null,
         });
 
-        showToast('✅ تم حفظ الصوت المعالج في المشروع', 'success');
+        showToast(
+            isCloned
+                ? '✅ تم حفظ الصوت المُستنسخ في المشروع'
+                : '✅ تم حفظ الصوت المعالج في المشروع',
+            'success'
+        );
         closeSyncProcessModal();
         closeVoiceoverStudio();
     } catch (err) {
@@ -1502,7 +1726,7 @@ async function saveProcessedVoiceover() {
 
 
 // ============================================================
-// 🔟 أدوات مساعدة
+// 1️⃣2️⃣ أدوات مساعدة
 // ============================================================
 function escapeHtml(text) {
     if (!text) return '';
@@ -1516,7 +1740,7 @@ function escapeHtml(text) {
 
 
 // ============================================================
-// Toast helper (fallback إذا لم يكن موجوداً)
+// Toast helper
 // ============================================================
 if (typeof window.showToast !== 'function') {
     window.showToast = function (msg, type = 'info') {
@@ -1575,7 +1799,7 @@ window.loadAudioFile = loadAudioFile;
 window.showSyncButton = showSyncButton;
 window.hideSyncButton = hideSyncButton;
 
-// المزامنة والمعالجة
+// Voice Cloning + المزامنة والمعالجة
 window.openSyncProcessModal = openSyncProcessModal;
 window.closeSyncProcessModal = closeSyncProcessModal;
 window.alignScriptWithAudio = alignScriptWithAudio;
@@ -1589,3 +1813,6 @@ window.deleteSyncSegment = deleteSyncSegment;
 window.autoSegmentFromScript = autoSegmentFromScript;
 window.seekToSegment = seekToSegment;
 window.escapeHtml = escapeHtml;
+window.resetClonedVoice = resetClonedVoice;
+window.updateClonedVoiceStatus = updateClonedVoiceStatus;
+window.renderClonedAudio = renderClonedAudio;
