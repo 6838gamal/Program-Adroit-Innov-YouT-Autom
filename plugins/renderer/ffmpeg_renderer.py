@@ -49,6 +49,11 @@ class FFmpegRendererPlugin(RendererPort):
     - Uses ultrafast/veryfast x264 presets.
     - Uses -threads 1 to limit memory.
     - Uses -crf 28 for smaller buffers.
+
+    Audio notes:
+    - If a scene has separate audio_path → uses it.
+    - If a scene is a video with embedded audio (e.g. D-ID) → keeps it.
+    - If a scene is an image (or has no embedded audio) → uses silence.
     """
 
     # Memory safety: never exceed this pixel count per frame.
@@ -367,6 +372,11 @@ class FFmpegRendererPlugin(RendererPort):
         Accepts both key naming conventions:
         - image_path / image
         - audio_path / audio
+
+        Audio strategy:
+        - If scene has separate audio_path → use it.
+        - If scene is a video with embedded audio → keep embedded audio.
+        - If scene is an image (or video without embedded audio) → use silence.
         """
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -462,29 +472,39 @@ class FFmpegRendererPlugin(RendererPort):
         # Audio input
         # ---------------------------------------------------------
 
-        has_audio = False
+        has_separate_audio = False
 
         if audio_path:
             audio = Path(str(audio_path))
 
             if audio.exists() and audio.stat().st_size > 0:
-                command.extend([
-                    "-i", str(audio),
-                ])
-                has_audio = True
+                command.extend(["-i", str(audio)])
+                has_separate_audio = True
             else:
                 _diag_err(
                     f"⚠️ Scene audio missing or empty, "
                     f"falling back to silence: {audio}"
                 )
 
-        if not has_audio:
-            # أولّد صوتاً صامتاً ليكون لكل مقطع نفس البنية.
-            command.extend([
-                "-f", "lavfi",
-                "-i",
-                "anullsrc=channel_layout=stereo:sample_rate=44100",
-            ])
+        # ✅ استراتيجية الصوت:
+        # - إذا يوجد ملف صوتي منفصل → استخدمه
+        # - إذا الفيديو يحتوي على صوت مدمج (D-ID مثلاً) → استخدم صوته
+        # - إذا صورة بدون صوت → أضف anullsrc
+        use_embedded_audio = False
+
+        if not has_separate_audio:
+            if is_video and has_media:
+                # فيديو بصوت مدمج → نستخدم صوته الأصلي
+                _diag("🔊 Using embedded audio from video input (no anullsrc)")
+                use_embedded_audio = True
+            else:
+                # صورة أو fallback → نضيف صوتاً صامتاً
+                command.extend([
+                    "-f", "lavfi",
+                    "-i",
+                    "anullsrc=channel_layout=stereo:sample_rate=44100",
+                ])
+                _diag("🔇 Using silence (image or no-media scene)")
 
         # ---------------------------------------------------------
         # Video filters
@@ -551,7 +571,16 @@ class FFmpegRendererPlugin(RendererPort):
             "-b:a", "128k",
             "-ar", "44100",
             "-ac", "2",
-            "-af", f"atrim=0:{duration:.3f},asetpts=PTS-STARTPTS",
+        ])
+
+        if use_embedded_audio or has_separate_audio:
+            # صوت حقيقي (مدمج من الفيديو أو ملف منفصل) → أضف trim
+            command.extend([
+                "-af", f"atrim=0:{duration:.3f},asetpts=PTS-STARTPTS",
+            ])
+        # else: anullsrc (صامت) → لا حاجة لـ trim
+
+        command.extend([
             "-shortest",
             "-movflags", "+faststart",
             str(output_path),
