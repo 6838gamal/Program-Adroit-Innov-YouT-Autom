@@ -24,7 +24,6 @@ supabase
 
 
 edge-tts
-ffmpeg-python
 requests
 beautifulsoup4
 lxml
@@ -36,4 +35,6 @@ google-auth-oauthlib
 google-auth-httplib2
 pytube
 
-httpx
+
+
+gradio_client
