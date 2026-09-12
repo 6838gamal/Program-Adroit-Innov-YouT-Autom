@@ -1,20 +1,55 @@
 /**
  * voiceover.js — نظام شامل لتسجيل/توليد/استنساخ الصوت
- * يعتمد على: timeline-core.js (state, API)
+ * Multi-Provider: Edge TTS + HuggingFace + ElevenLabs + D-ID
  *
- * المزودين المدعومين:
- *   1) Edge TTS — مجاني تماماً (أصوات جاهزة)
- *   2) HuggingFace XTTS — مجاني (استنساخ صوتك)
- *   3) ElevenLabs — مدفوع (اختياري، أفضل جودة)
- *   4) D-ID — Talking Head (تحريك صور)
- *
- * الأوضاع:
- *   - TTS: أصوات جاهزة (Web Speech + Edge TTS)
- *   - Record: تسجيل مباشر + STT
- *   - File: رفع ملف صوتي
- *   - Cloning: استنساخ صوتك
- *   - Talking Head: تحريك صورة
+ * ✅ إصلاح: state is not defined
+ *    نستخدم متغيرات timeline-core.js مباشرة:
+ *    - projectData
+ *    - projectId
+ *    - currentTime
  */
+
+// ============================================================
+// Safe Accessors — الوصول الآمن لمتغيرات timeline-core.js
+// ============================================================
+
+/**
+ * الوصول الآمن إلى projectData
+ */
+function safeGetProjectData() {
+    if (typeof projectData !== 'undefined' && projectData) {
+        return projectData;
+    }
+    console.warn('⚠️ projectData غير معرّف — استخدام fallback');
+    return {
+        clips: [],
+        layers: [{ name: 'طبقة 1', visible: true, locked: false }],
+        mediaFiles: [],
+        totalDuration: 10,
+        cellWidth: 80,
+    };
+}
+
+/**
+ * الوصول الآمن إلى projectId
+ */
+function safeGetProjectId() {
+    if (typeof projectId !== 'undefined' && projectId) {
+        return projectId;
+    }
+    return '';
+}
+
+/**
+ * الوصول الآمن إلى currentTime
+ */
+function safeGetCurrentTime() {
+    if (typeof currentTime !== 'undefined' && currentTime != null) {
+        return currentTime;
+    }
+    return 0;
+}
+
 
 // ============================================================
 // حالة النظام
@@ -94,7 +129,7 @@ const TalkingHeadState = {
 
 
 // ============================================================
-// أصوات TTS المتاحة (Web Speech API)
+// تحميل أصوات TTS
 // ============================================================
 function loadTTSVoices() {
     if (!('speechSynthesis' in window)) return [];
@@ -137,8 +172,10 @@ function openVoiceoverStudio(clipId = null) {
 
     populateVoiceSelect();
 
-    if (clipId && typeof state !== 'undefined' && state.clips) {
-        const clip = state.clips.find(c => c.id === clipId);
+    // ✅ استخدام projectData بدلاً من state
+    const pd = safeGetProjectData();
+    if (clipId && pd.clips) {
+        const clip = pd.clips.find(c => c.id === clipId);
         if (clip) {
             document.getElementById('voiceoverScript').value = clip.script || '';
             document.getElementById('voiceoverTitle').value = clip.title || '';
@@ -170,10 +207,9 @@ function closeVoiceoverStudio() {
 
 
 // ============================================================
-// إظهار/إخفاء الأزرار المتقدمة
+// إظهار/إخفاء الأزرار
 // ============================================================
 function showSyncButton() {
-    // زر Voice Cloning
     const el = document.getElementById('openSyncBtnContainer');
     if (el) {
         el.innerHTML = `
@@ -185,7 +221,6 @@ function showSyncButton() {
         el.style.display = 'block';
     }
 
-    // زر Talking Head
     const thEl = document.getElementById('openTalkingHeadBtnContainer');
     if (thEl) {
         thEl.style.display = 'block';
@@ -202,7 +237,7 @@ function hideSyncButton() {
 
 
 // ============================================================
-// تعبئة قائمة أصوات TTS (Web Speech API)
+// تعبئة قائمة أصوات TTS
 // ============================================================
 function populateVoiceSelect() {
     const select = document.getElementById('voiceoverVoiceSelect');
@@ -228,7 +263,7 @@ function populateVoiceSelect() {
 
 
 // ============================================================
-// معاينة TTS (Web Speech API)
+// معاينة TTS
 // ============================================================
 function previewTTS() {
     const script = document.getElementById('voiceoverScript').value.trim();
@@ -260,7 +295,7 @@ function previewTTS() {
 
 
 // ============================================================
-// 🎙️ وضع التسجيل المباشر
+// 🎙️ التسجيل المباشر
 // ============================================================
 function toggleVoiceoverRec() {
     if (VoiceoverState.mediaRecorder &&
@@ -346,7 +381,7 @@ function startRecTimer() {
 
 
 // ============================================================
-// التعرف على الكلام (Speech Recognition)
+// التعرف على الكلام
 // ============================================================
 function startSpeechRecognition() {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -427,7 +462,7 @@ async function handleRecordedAudio(blob) {
 
 
 // ============================================================
-// عرض مقاطع النص المُزامن
+// عرض مقاطع النص
 // ============================================================
 function renderSegments() {
     const container = document.getElementById('voiceoverSegments');
@@ -584,7 +619,7 @@ function clearAudioFile() {
 
 
 // ============================================================
-// 🎬 استخراج النص (Whisper)
+// 🎬 استخراج النص
 // ============================================================
 async function extractTranscriptFromFile() {
     if (!VoiceoverState.pendingBlob) {
@@ -762,7 +797,7 @@ async function saveTTSToTimeline() {
             pitch: parseFloat(document.getElementById('voiceoverPitch').value) || 1,
         },
         duration: estimateSpeechDuration(script),
-        start: getCurrentPlayheadTime(),
+        start: safeGetCurrentTime(),
         source: 'tts',
         url: null,
     };
@@ -786,12 +821,12 @@ async function saveRecordingToTimeline() {
 
     const formData = new FormData();
     formData.append('file', VoiceoverState.pendingBlob, `voiceover_${Date.now()}.webm`);
-    formData.append('project_id', state.projectId);
+    formData.append('project_id', safeGetProjectId());  // ✅
     formData.append('title', title);
     formData.append('script', script);
     formData.append('script_segments', JSON.stringify(VoiceoverState.scriptSegments));
     formData.append('source', 'recording');
-    formData.append('start', String(getCurrentPlayheadTime()));
+    formData.append('start', String(safeGetCurrentTime()));  // ✅
 
     try {
         const res = await fetch('/api/media/upload-voiceover', {
@@ -810,7 +845,7 @@ async function saveRecordingToTimeline() {
             script: script,
             script_segments: VoiceoverState.scriptSegments,
             duration: data.duration || VoiceoverState.pendingDuration || 3,
-            start: getCurrentPlayheadTime(),
+            start: safeGetCurrentTime(),  // ✅
             source: 'recording',
         });
 
@@ -837,12 +872,12 @@ async function saveAudioFileToTimeline() {
     const formData = new FormData();
     formData.append('file', VoiceoverState.pendingBlob,
         VoiceoverState.pendingFileName || 'audio.webm');
-    formData.append('project_id', state.projectId);
+    formData.append('project_id', safeGetProjectId());  // ✅
     formData.append('title', title);
     formData.append('script', script);
     formData.append('script_segments', JSON.stringify(VoiceoverState.scriptSegments));
     formData.append('source', 'file');
-    formData.append('start', String(getCurrentPlayheadTime()));
+    formData.append('start', String(safeGetCurrentTime()));  // ✅
 
     try {
         const res = await fetch('/api/media/upload-voiceover', {
@@ -861,7 +896,7 @@ async function saveAudioFileToTimeline() {
             script: script,
             script_segments: VoiceoverState.scriptSegments,
             duration: data.duration || VoiceoverState.pendingDuration || 3,
-            start: getCurrentPlayheadTime(),
+            start: safeGetCurrentTime(),  // ✅
             source: 'file',
             fileName: VoiceoverState.pendingFileName,
         });
@@ -878,12 +913,17 @@ async function saveAudioFileToTimeline() {
 // إضافة مقطع للخط الزمني
 // ============================================================
 async function addVoiceoverClip(clipData) {
-    if (!state.clips) state.clips = [];
-    if (!state.layers) state.layers = [{ id: 'layer-1', name: 'الطبقة 1', visible: true }];
+    // ✅ استخدام projectData بدلاً من state
+    const pd = safeGetProjectData();
+
+    if (!pd.clips) pd.clips = [];
+    if (!pd.layers) {
+        pd.layers = [{ id: 'layer-1', name: 'الطبقة 1', visible: true }];
+    }
 
     const clip = {
         id: 'clip-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7),
-        layerId: state.layers[state.layers.length - 1].id,
+        layerId: pd.layers[pd.layers.length - 1].id || 0,
         start: clipData.start || 0,
         duration: clipData.duration || 3,
         ...clipData,
@@ -897,16 +937,27 @@ async function addVoiceoverClip(clipData) {
         processingOptions: clipData.processingOptions || null,
     };
 
-    state.clips.push(clip);
+    pd.clips.push(clip);
 
-    if (typeof renderTimeline === 'function') renderTimeline();
-    if (typeof renderLayers === 'function') renderLayers();
-    if (typeof updateStatusBar === 'function') updateStatusBar();
-    if (typeof drawPreview === 'function') drawPreview();
-
-    if (typeof saveProject === 'function') {
-        try { await saveProject(); } catch (e) { console.warn(e); }
+    // إعادة الرسم
+    if (typeof renderTimeline === 'function') {
+        try { renderTimeline(); } catch (e) { console.warn('renderTimeline:', e); }
     }
+    if (typeof renderLayers === 'function') {
+        try { renderLayers(); } catch (e) { console.warn('renderLayers:', e); }
+    }
+    if (typeof updateStatus === 'function') {
+        try { updateStatus(); } catch (e) { console.warn('updateStatus:', e); }
+    }
+    if (typeof renderPreview === 'function') {
+        try { renderPreview(safeGetCurrentTime()); } catch (e) { console.warn('renderPreview:', e); }
+    }
+
+    // حفظ في السحابة
+    if (typeof saveProjectData === 'function') {
+        try { await saveProjectData(); } catch (e) { console.warn('saveProjectData:', e); }
+    }
+
     return clip;
 }
 
@@ -936,8 +987,8 @@ function estimateSpeechDuration(script, wordsPerSecond = 2.5) {
 }
 
 function getCurrentPlayheadTime() {
-    if (typeof state !== 'undefined' && state.currentTime != null) return state.currentTime;
-    return 0;
+    // ✅ استخدام currentTime بدلاً من state.currentTime
+    return safeGetCurrentTime();
 }
 
 function round2(n) {
@@ -958,14 +1009,17 @@ function escapeHtml(text) {
 // ============================================================
 // تشغيل النص أثناء العرض
 // ============================================================
-function syncScriptWithPlayback(currentTime) {
-    if (!state.clips) return;
-    const audioClips = state.clips.filter(c =>
+function syncScriptWithPlayback(playbackTime) {
+    // ✅ استخدام projectData بدلاً من state
+    const pd = safeGetProjectData();
+    if (!pd.clips) return;
+
+    const audioClips = pd.clips.filter(c =>
         c.type === 'audio' && c.scriptSegments?.length
     );
 
     for (const clip of audioClips) {
-        const localT = currentTime - clip.start;
+        const localT = playbackTime - clip.start;
         if (localT < 0 || localT > clip.duration) continue;
 
         const activeSeg = clip.scriptSegments.find(s =>
@@ -982,8 +1036,10 @@ function showScriptOverlay(text, title) {
     const el = document.getElementById('scriptOverlay');
     if (!el) return;
 
-    document.getElementById('scriptOverlayTitle').textContent = title || '';
-    document.getElementById('scriptOverlayText').textContent = text || '';
+    const titleEl = document.getElementById('scriptOverlayTitle');
+    const textEl = document.getElementById('scriptOverlayText');
+    if (titleEl) titleEl.textContent = title || '';
+    if (textEl) textEl.textContent = text || '';
     el.classList.add('visible');
 
     clearTimeout(el._hideTimer);
@@ -1077,9 +1133,9 @@ function updateCharCounter() {
     counter.textContent = `${len} حرف`;
 
     counter.classList.remove('warning', 'danger');
-    if (len > 4500) {
+    if (len > 9000) {
         counter.classList.add('danger');
-    } else if (len > 4000) {
+    } else if (len > 8000) {
         counter.classList.add('warning');
     }
 }
@@ -1119,7 +1175,6 @@ function renderSavedVoicesList() {
             ? new Date(voice.created_at).toLocaleDateString('ar-EG')
             : '';
 
-        // شارة المزود
         let providerBadge = '';
         if (voice.provider === 'edge_tts') {
             providerBadge = '<span style="background:rgba(16,185,129,0.2);color:#34d399;padding:1px 6px;border-radius:8px;font-size:9px;margin-right:4px;">🔊 Edge TTS</span>';
@@ -1218,7 +1273,7 @@ async function cloneVoiceAndSave() {
         formData.append('file', VoiceoverState.pendingBlob, 'my_voice.webm');
         formData.append('name', displayName);
         formData.append('description', displayName);
-        formData.append('project_id', state.projectId || '');
+        formData.append('project_id', safeGetProjectId());  // ✅
 
         const res = await fetch('/api/voice/clone', {
             method: 'POST',
@@ -1238,7 +1293,7 @@ async function cloneVoiceAndSave() {
         }
 
         // احفظ في المشروع
-        const saveRes = await fetch(`/api/voice/saved/${state.projectId}`, {
+        const saveRes = await fetch(`/api/voice/saved/${safeGetProjectId()}`, {  // ✅
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -1329,7 +1384,6 @@ async function loadEdgeVoices() {
         }
     } catch (e) {
         console.warn('Failed to load edge voices:', e);
-        // fallback: قائمة ثابتة
         const fallbackVoices = [
             { id: 'ar-SA-HamedNeural', name: 'حامد (سعودي)', lang: 'ar-SA' },
             { id: 'ar-SA-ZariyahNeural', name: 'زارية (سعودية)', lang: 'ar-SA' },
@@ -1354,7 +1408,6 @@ function selectEdgeVoice(voiceId) {
     const voiceInfo = VoiceCloneState.edgeVoices.find(v => v.id === voiceId);
     const displayName = voiceInfo ? `🔊 ${voiceInfo.name}` : `🔊 ${voiceId}`;
 
-    // تحقق من عدم وجوده
     let voice = VoiceCloneState.savedVoices.find(v => v.voice_id === voiceId);
     if (!voice) {
         voice = {
@@ -1429,13 +1482,13 @@ async function generateWithCache() {
     try {
         let res, remoteUrl, duration, cacheHit, provider;
 
-        // ── HuggingFace: يحتاج إعادة رفع المرجع ──
+        // HuggingFace
         if (isHuggingFace && VoiceoverState.pendingBlob) {
             const formData = new FormData();
             formData.append('file', VoiceoverState.pendingBlob, 'reference.webm');
             formData.append('text', script);
             formData.append('language', 'ar');
-            formData.append('project_id', state.projectId || '');
+            formData.append('project_id', safeGetProjectId());  // ✅
 
             res = await fetch('/api/voice/hf-clone', {
                 method: 'POST',
@@ -1451,14 +1504,13 @@ async function generateWithCache() {
             duration = parseFloat(res.headers.get('X-Duration') || '0');
             cacheHit = false;
             provider = 'huggingface';
-
         }
-        // ── Edge TTS: مع Cache ──
+        // Edge TTS
         else {
             const formData = new FormData();
             formData.append('voice_id', VoiceCloneState.selectedVoiceId);
             formData.append('script', script);
-            formData.append('project_id', state.projectId || '');
+            formData.append('project_id', safeGetProjectId());  // ✅
             formData.append('use_cache', useCache ? 'true' : 'false');
             formData.append('speed', '1.0');
 
@@ -1481,17 +1533,15 @@ async function generateWithCache() {
         const blob = await res.blob();
         const localUrl = URL.createObjectURL(blob);
 
-        // احفظ الحالة
         SyncProcessState.processedBlob = blob;
         SyncProcessState.processedUrl = localUrl;
         SyncProcessState.clonedRemoteUrl = remoteUrl;
         SyncProcessState.clonedDuration = duration;
         SyncProcessState.clonedVoiceId = VoiceCloneState.selectedVoiceId;
 
-        // املأ النص
-        document.getElementById('voiceoverScript').value = script;
+        const originalScript = document.getElementById('voiceoverScript');
+        if (originalScript) originalScript.value = script;
 
-        // زامن المقاطع
         if (!VoiceoverState.scriptSegments.length) {
             VoiceoverState.scriptSegments = autoSegmentScript(script);
         }
@@ -1511,7 +1561,6 @@ async function generateWithCache() {
 
         SyncProcessState.isAligned = true;
 
-        // اعرض الصوت
         renderGeneratedAudio(localUrl, duration, script, cacheHit, provider);
 
         if (statusEl) {
@@ -1601,7 +1650,8 @@ async function saveGeneratedToProject() {
         return showToast('⚠️ لا يوجد صوت مُولَّد', 'warning');
     }
 
-    const script = document.getElementById('voiceCloneScript').value.trim();
+    const scriptEl = document.getElementById('voiceCloneScript');
+    const script = scriptEl?.value.trim() || '';
     const titleInput = document.getElementById('voiceoverTitle');
     const title = (titleInput?.value || '').trim() || 'صوت مُولَّد';
 
@@ -1612,12 +1662,12 @@ async function saveGeneratedToProject() {
 
     const formData = new FormData();
     formData.append('file', SyncProcessState.processedBlob, 'generated.mp3');
-    formData.append('project_id', state.projectId);
+    formData.append('project_id', safeGetProjectId());  // ✅
     formData.append('title', title);
     formData.append('script', script);
     formData.append('script_segments', JSON.stringify(VoiceoverState.scriptSegments));
     formData.append('source', source);
-    formData.append('start', String(getCurrentPlayheadTime()));
+    formData.append('start', String(safeGetCurrentTime()));  // ✅
     formData.append('processed', 'true');
     formData.append('processing_options', JSON.stringify({
         voice_id: VoiceCloneState.selectedVoiceId,
@@ -1641,7 +1691,7 @@ async function saveGeneratedToProject() {
             script: script,
             script_segments: VoiceoverState.scriptSegments,
             duration: data.duration || SyncProcessState.clonedDuration || 0,
-            start: getCurrentPlayheadTime(),
+            start: safeGetCurrentTime(),  // ✅
             source: source,
             processed: true,
             voice_id: VoiceCloneState.selectedVoiceId,
@@ -1729,7 +1779,7 @@ async function renameVoice(recordId, currentName) {
     if (!newName || newName === currentName) return;
 
     try {
-        const res = await fetch(`/api/voice/saved/${state.projectId}/${recordId}`, {
+        const res = await fetch(`/api/voice/saved/${safeGetProjectId()}/${recordId}`, {  // ✅
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ display_name: newName }),
@@ -1754,7 +1804,7 @@ async function deleteSavedVoice(recordId, name) {
     if (!confirm(`حذف الصوت "${name}"؟`)) return;
 
     try {
-        const res = await fetch(`/api/voice/saved/${state.projectId}/${recordId}`, {
+        const res = await fetch(`/api/voice/saved/${safeGetProjectId()}/${recordId}`, {  // ✅
             method: 'DELETE',
         });
         const data = await res.json();
@@ -1776,15 +1826,16 @@ async function deleteSavedVoice(recordId, name) {
 // 📤 تصدير / 📥 استيراد
 // ============================================================
 async function exportVoices() {
-    if (!state.projectId) {
+    const pid = safeGetProjectId();
+    if (!pid) {
         return showToast('⚠️ لا يوجد مشروع', 'warning');
     }
 
     try {
-        const url = `/api/voice/export/${state.projectId}`;
+        const url = `/api/voice/export/${pid}`;
         const a = document.createElement('a');
         a.href = url;
-        a.download = `voices_${state.projectId.slice(0, 8)}_${Date.now()}.json`;
+        a.download = `voices_${pid.slice(0, 8)}_${Date.now()}.json`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
@@ -1810,7 +1861,8 @@ function triggerImportVoices() {
 
 
 async function importVoicesFromFile(file) {
-    if (!state.projectId) {
+    const pid = safeGetProjectId();
+    if (!pid) {
         return showToast('⚠️ لا يوجد مشروع', 'warning');
     }
 
@@ -1825,7 +1877,7 @@ async function importVoicesFromFile(file) {
         formData.append('file', file);
         formData.append('merge', merge ? 'true' : 'false');
 
-        const res = await fetch(`/api/voice/import/${state.projectId}`, {
+        const res = await fetch(`/api/voice/import/${pid}`, {
             method: 'POST',
             body: formData,
         });
@@ -1847,8 +1899,11 @@ async function importVoicesFromFile(file) {
 
 
 async function reloadSavedVoices() {
+    const pid = safeGetProjectId();
+    if (!pid) return;
+
     try {
-        const res = await fetch(`/api/voice/saved/${state.projectId}`);
+        const res = await fetch(`/api/voice/saved/${pid}`);
         const data = await res.json();
         if (data.success) {
             VoiceCloneState.savedVoices = data.voices || [];
@@ -2059,7 +2114,6 @@ function renderSegmentsForSync() {
 // ============================================================
 // 🎭 TALKING HEAD — فتح/إغلاق
 // ============================================================
-
 function openTalkingHeadModal() {
     const modal = document.getElementById('talkingHeadModal');
     if (!modal) {
@@ -2202,7 +2256,6 @@ function populateTalkingHeadVoices() {
 
     select.innerHTML = '<option value="">— اختر صوتاً —</option>';
 
-    // 1. أضف الأصوات المحفوظة (Cloned + Edge TTS)
     const voices = VoiceCloneState.savedVoices || [];
 
     voices.forEach((voice) => {
@@ -2212,7 +2265,6 @@ function populateTalkingHeadVoices() {
         select.appendChild(opt);
     });
 
-    // 2. إذا لم توجد أصوات، أضف Edge TTS الافتراضية
     if (!voices.length && VoiceCloneState.edgeVoices.length) {
         VoiceCloneState.edgeVoices.forEach((v) => {
             const opt = document.createElement('option');
@@ -2322,7 +2374,7 @@ async function generateTalkingHead() {
         formData.append('text', text);
         formData.append('voice_id', voiceId);
         formData.append('language', 'ar');
-        formData.append('project_id', state.projectId || '');
+        formData.append('project_id', safeGetProjectId());  // ✅
 
         updateTHProgress(10, '🎭 جاري الرفع للخادم...');
 
@@ -2366,7 +2418,7 @@ async function generateTalkingHead() {
 // ============================================================
 function startTalkingHeadPolling(talkId) {
     let attempts = 0;
-    const maxAttempts = 60; // 5 دقائق
+    const maxAttempts = 60;
 
     TalkingHeadState.pollingInterval = setInterval(async () => {
         attempts++;
@@ -2512,7 +2564,7 @@ async function saveTalkingHeadToProject() {
     const voiceId = voiceSelect?.value;
 
     try {
-        const res = await fetch(`/api/talking-head/save/${state.projectId}`, {
+        const res = await fetch(`/api/talking-head/save/${safeGetProjectId()}`, {  // ✅
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -2520,7 +2572,7 @@ async function saveTalkingHeadToProject() {
                 title: `Talking Head - ${new Date().toLocaleTimeString('ar')}`,
                 text: text,
                 voice_id: voiceId,
-                start: getCurrentPlayheadTime(),
+                start: safeGetCurrentTime(),  // ✅
                 duration: 5,
             }),
         });
@@ -2585,7 +2637,6 @@ if (typeof window.showToast !== 'function') {
             background: ${colors[type] || colors.info}; color: #fff;
             padding: 10px 18px; border-radius: 8px; font-size: 14px;
             box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-            animation: slideIn 0.3s ease-out;
         `;
         el.textContent = msg;
         document.body.appendChild(el);
@@ -2598,19 +2649,16 @@ if (typeof window.showToast !== 'function') {
 // تهيئة عند التحميل
 // ============================================================
 document.addEventListener('DOMContentLoaded', () => {
-    // عداد أحرف Voice Clone
     const ta = document.getElementById('voiceCloneScript');
     if (ta) {
         ta.addEventListener('input', updateCharCounter);
     }
 
-    // عداد أحرف Talking Head
     const thTa = document.getElementById('talkingHeadScript');
     if (thTa) {
         thTa.addEventListener('input', updateTalkingHeadCharCount);
     }
 
-    // ربط شريط LUFS
     const lufs = document.getElementById('optTargetLufs');
     if (lufs) {
         lufs.addEventListener('input', () => {
@@ -2618,19 +2666,18 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // تهيئة الأصوات
     initSavedVoices();
-
-    // تحميل أصوات Edge TTS
     loadEdgeVoices();
+
+    console.log('✅ voiceover.js loaded (no state dependency)');
 });
 
 
 // ============================================================
-// تصدير كل الدوال للنطاق العام
+// تصدير الدوال للنطاق العام
 // ============================================================
 
-// الاستوديو الأساسي
+// الاستوديو
 window.openVoiceoverStudio = openVoiceoverStudio;
 window.closeVoiceoverStudio = closeVoiceoverStudio;
 window.previewTTS = previewTTS;
@@ -2707,3 +2754,7 @@ window.updateTalkingHeadGenerateBtn = updateTalkingHeadGenerateBtn;
 
 // Helpers
 window.escapeHtml = escapeHtml;
+window.getCurrentPlayheadTime = getCurrentPlayheadTime;
+window.safeGetProjectData = safeGetProjectData;
+window.safeGetProjectId = safeGetProjectId;
+window.safeGetCurrentTime = safeGetCurrentTime;
