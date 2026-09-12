@@ -56,7 +56,8 @@
     "scenes": {{ scenes_json | safe }},
     "voiceoverClips": {{ voiceover_clips | tojson | safe if voiceover_clips else '[]' }},
     "savedVoices": {{ saved_voices | tojson | safe if saved_voices else '[]' }},
-    "elevenlabsConfigured": {{ 'true' if elevenlabs_configured else 'false' }}
+    "elevenlabsConfigured": {{ 'true' if elevenlabs_configured else 'false' }},
+    "didConfigured": {{ 'true' if did_configured else 'false' }}
 }
 </script>
 
@@ -305,7 +306,7 @@
             <button onclick="closeVoiceoverStudio()" class="text-slate-400 hover:text-white text-xl">✕</button>
         </div>
 
-        <!-- اختيار الوضع (3 خيارات) -->
+        <!-- اختيار الوضع -->
         <div class="grid grid-cols-3 gap-2 mb-4">
             <label class="cursor-pointer">
                 <input type="radio" name="voiceoverMode" value="tts" checked class="hidden peer">
@@ -345,7 +346,7 @@
             </div>
         </div>
 
-        <!-- ====== إعدادات TTS ====== -->
+        <!-- إعدادات TTS -->
         <div id="ttsSettings" class="bg-slate-900/50 rounded-lg p-3 mb-3 space-y-2">
             <div class="grid grid-cols-2 gap-3">
                 <div>
@@ -370,7 +371,7 @@
             </div>
         </div>
 
-        <!-- ====== إعدادات التسجيل ====== -->
+        <!-- إعدادات التسجيل -->
         <div id="recordSettings" class="hidden bg-slate-900/50 rounded-lg p-3 mb-3">
             <div class="flex items-center gap-3">
                 <button id="voiceoverRecBtn" onclick="toggleVoiceoverRec()"
@@ -382,7 +383,7 @@
             </div>
         </div>
 
-        <!-- ====== إعدادات الملف الصوتي ====== -->
+        <!-- إعدادات الملف الصوتي -->
         <div id="fileSettings" class="hidden bg-slate-900/50 rounded-lg p-3 mb-3">
             <input type="file" id="voiceoverFileInput" accept="audio/*" class="hidden"
                    onchange="handleAudioFileSelected(event)">
@@ -411,11 +412,16 @@
         <!-- المعاينة -->
         <div id="voiceoverPreview" class="mb-3"></div>
 
-        <!-- ✅ زر فتح Voice Cloning -->
+        <!-- ✅ أزرار الميزات المتقدمة -->
         <div id="openSyncBtnContainer" class="mb-3" style="display:none;">
-            <button onclick="openVoiceCloneModal()"
-                    class="btn-primary btn-sm w-full sync-open-btn">
-                🎙️ استنساخ صوتي + توليد النص
+            <!-- يُملأ بالـ JS -->
+        </div>
+
+        <div id="openTalkingHeadBtnContainer" class="mb-3" style="display:none;">
+            <button onclick="openTalkingHeadModal()"
+                    class="btn-primary btn-sm w-full"
+                    style="background:linear-gradient(135deg,#ec4899,#7c3aed);">
+                🎭 تحريك صورة الشخص (Talking Head)
             </button>
         </div>
 
@@ -427,7 +433,7 @@
             </div>
         </div>
 
-        <!-- النص المباشر (أثناء التسجيل) -->
+        <!-- النص المباشر -->
         <div class="mb-3">
             <label class="text-slate-400 text-sm">📝 النص المُكتشف (مباشر)</label>
             <div id="voiceoverTranscript" class="bg-slate-900/50 rounded-lg p-2 mt-1 min-h-[40px] text-sm text-slate-300" dir="auto"></div>
@@ -442,7 +448,7 @@
 </div>
 
 <!-- ============================================================ -->
-<!-- 🎙️ نافذة Voice Cloning — النسخة المُحسّنة -->
+<!-- 🎙️ نافذة Voice Cloning -->
 <!-- ============================================================ -->
 <div id="voiceCloneModal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
     <div class="bg-slate-800 rounded-xl p-6 max-w-3xl w-full border border-slate-700 max-h-[90vh] overflow-y-auto">
@@ -554,7 +560,7 @@
         <!-- ═══════════ قسم 5: الاستعراض ═══════════ -->
         <div id="generatedAudioPlayer" style="display:none;margin-bottom:12px;"></div>
 
-        <!-- ═══════════ إغلاق ═══════════ -->
+        <!-- إغلاق -->
         <div class="flex justify-end gap-2 pt-4 border-t border-slate-700">
             <button onclick="closeVoiceCloneModal()" class="btn-secondary btn-sm">إغلاق</button>
         </div>
@@ -562,12 +568,117 @@
 </div>
 
 <!-- ============================================================ -->
-<!-- 🎚️ نافذة المزامنة والمعالجة (اختيارية) -->
+<!-- 🎭 نافذة Talking Head -->
+<!-- ============================================================ -->
+<div id="talkingHeadModal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+    <div class="bg-slate-800 rounded-xl p-6 max-w-3xl w-full border border-slate-700 max-h-[90vh] overflow-y-auto">
+
+        <!-- Header -->
+        <div class="flex justify-between items-center mb-4">
+            <h3 class="text-white text-lg font-semibold">🎭 تحريك صورة الشخص</h3>
+            <button onclick="closeTalkingHeadModal()" class="text-slate-400 hover:text-white text-xl">✕</button>
+        </div>
+
+        <!-- شرح -->
+        <div class="voice-clone-tip">
+            <div class="voice-clone-tip-title">✨ كيف تعمل الميزة؟</div>
+            <div class="voice-clone-tip-text">
+                <strong>1.</strong> ارفع صورة شخص (وجه واضح، نظرة للأمام)<br>
+                <strong>2.</strong> اختر صوتاً من أصواتك المحفوظة<br>
+                <strong>3.</strong> اكتب النص المطلوب<br>
+                <strong>4.</strong> الذكاء الاصطناعي يُنتج فيديو:
+                <span class="highlight">الصورة تنطق النص بصوتك!</span>
+            </div>
+        </div>
+
+        <!-- ═══════════ قسم 1: الصورة ═══════════ -->
+        <div class="mb-5">
+            <div class="flex items-center gap-2 mb-2">
+                <span class="badge-step">1</span>
+                <h4 class="text-white font-semibold text-sm">🖼️ صورة الشخص</h4>
+            </div>
+
+            <input type="file" id="talkingHeadImageInput" accept="image/*" class="hidden"
+                   onchange="handleTalkingHeadImage(event)">
+
+            <div id="talkingHeadImagePreview"></div>
+
+            <button onclick="pickTalkingHeadImage()" class="btn-secondary btn-sm w-full mt-2">
+                📂 اختيار صورة
+            </button>
+
+            <div class="text-xs text-slate-500 mt-2">
+                💡 نصائح: صورة واضحة، وجه كبير، نظرة للأمام، بدون نظارة شمسية
+                <br>الحد: 10MB — JPG, PNG, WEBP
+            </div>
+        </div>
+
+        <!-- ═══════════ قسم 2: الصوت ═══════════ -->
+        <div class="mb-5">
+            <div class="flex items-center gap-2 mb-2">
+                <span class="badge-step">2</span>
+                <h4 class="text-white font-semibold text-sm">🎙️ الصوت</h4>
+            </div>
+
+            <label class="text-slate-400 text-xs">اختر صوتاً من أصواتك المحفوظة</label>
+            <select id="talkingHeadVoice"
+                    class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-white text-sm mt-1"
+                    onchange="updateTalkingHeadGenerateBtn()">
+            </select>
+
+            <div class="text-xs text-slate-500 mt-2">
+                💡 إذا لم يكن لديك صوت، استنسخ صوتك من <strong>🎙️ Voice Cloning</strong>
+            </div>
+        </div>
+
+        <!-- ═══════════ قسم 3: النص ═══════════ -->
+        <div class="mb-5">
+            <div class="flex items-center gap-2 mb-2">
+                <span class="badge-step">3</span>
+                <h4 class="text-white font-semibold text-sm">📝 النص</h4>
+            </div>
+
+            <textarea id="talkingHeadScript" rows="4" dir="auto"
+                      placeholder="اكتب النص الذي ستقوله الصورة..."
+                      style="width:100%;background:rgba(15,23,42,0.6);border:1px solid #334155;
+                             border-radius:8px;padding:10px;color:#f1f5f9;font-size:13px;
+                             resize:vertical;font-family:inherit;"
+                      maxlength="1000"
+                      oninput="updateTalkingHeadCharCount()"></textarea>
+
+            <div style="display:flex;justify-content:flex-end;margin-top:6px;">
+                <span id="talkingHeadCharCount" class="char-counter">0 / 1000 حرف</span>
+            </div>
+        </div>
+
+        <!-- ═══════════ قسم 4: زر التوليد ═══════════ -->
+        <div class="mb-5">
+            <button id="btnGenerateTalkingHead" onclick="generateTalkingHead()"
+                    class="btn-primary btn-sm w-full"
+                    disabled>
+                🎭 إنشاء الفيديو
+            </button>
+
+            <div id="talkingHeadProgress" class="mt-3" style="display:none;"></div>
+            <div id="talkingHeadStatus" class="mt-3 text-xs"></div>
+        </div>
+
+        <!-- ═══════════ قسم 5: النتيجة ═══════════ -->
+        <div id="talkingHeadResult" style="display:none;margin-bottom:12px;"></div>
+
+        <!-- إغلاق -->
+        <div class="flex justify-end gap-2 pt-4 border-t border-slate-700">
+            <button onclick="closeTalkingHeadModal()" class="btn-secondary btn-sm">إغلاق</button>
+        </div>
+    </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- 🎚️ نافذة معالجة الصوت (اختياري) -->
 <!-- ============================================================ -->
 <div id="syncProcessModal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
     <div class="bg-slate-800 rounded-xl p-6 max-w-4xl w-full border border-slate-700 max-h-[90vh] overflow-y-auto">
 
-        <!-- Header -->
         <div class="flex justify-between items-center mb-4">
             <h3 class="text-white text-lg font-semibold">🎚️ معالجة الصوت</h3>
             <button onclick="closeSyncProcessModal()" class="text-slate-400 hover:text-white text-xl">✕</button>
@@ -594,7 +705,7 @@
             <div id="syncSegmentsList" class="sync-segments-container"></div>
         </div>
 
-        <!-- قسم 3: معالجة الصوت -->
+        <!-- قسم 3: المعالجة -->
         <div class="mb-5">
             <div class="flex items-center gap-2 mb-2">
                 <span class="badge-step">3</span>
@@ -659,7 +770,6 @@
             <div id="syncComparisonSection" class="mt-4"></div>
         </div>
 
-        <!-- أزرار -->
         <div class="flex justify-end gap-2 mt-5 pt-4 border-t border-slate-700">
             <button onclick="closeSyncProcessModal()" class="btn-secondary btn-sm">إلغاء</button>
         </div>
@@ -687,45 +797,14 @@ document.querySelectorAll('input[name="voiceoverMode"]').forEach(radio => {
 });
 
 // ─────────────────────────────────────────────────────────
-// عداد أحرف Voice Clone
+// ربط شريط LUFS
 // ─────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
-    const ta = document.getElementById('voiceCloneScript');
-    const counter = document.getElementById('voiceCloneCharCount');
-
-    if (ta && counter) {
-        ta.addEventListener('input', () => {
-            const len = ta.value.length;
-            counter.textContent = `${len} حرف`;
-
-            counter.classList.remove('warning', 'danger');
-            if (len > 4500) {
-                counter.classList.add('danger');
-            } else if (len > 4000) {
-                counter.classList.add('warning');
-            }
-        });
-    }
-
-    // ربط شريط LUFS
     const lufs = document.getElementById('optTargetLufs');
     if (lufs) {
         lufs.addEventListener('input', () => {
             document.getElementById('lufsVal').textContent = lufs.value;
         });
-    }
-
-    // تحقق من تهيئة ElevenLabs
-    try {
-        const configEl = document.getElementById('timeline-config');
-        if (configEl) {
-            const config = JSON.parse(configEl.textContent);
-            if (!config.elevenlabsConfigured) {
-                console.warn('⚠️ ElevenLabs غير مهيأ — Voice Cloning معطّل');
-            }
-        }
-    } catch (e) {
-        console.warn('Failed to parse timeline-config:', e);
     }
 });
 </script>
