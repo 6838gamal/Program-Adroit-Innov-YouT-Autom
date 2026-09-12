@@ -646,7 +646,6 @@
         touch-action: none;
     }
 
-    /* منطقة لمس واسعة (شفافة) حول المؤشر */
     .playhead::after {
         content: '';
         position: absolute;
@@ -1086,7 +1085,6 @@
     <span class="hidden xs:inline">المشروع</span>
 </a>
 
-<!-- ====== زر المزامنة ====== -->
 <button onclick="syncProject()" class="btn-secondary btn-sm" title="مزامنة مع السحابة" id="syncBtn">
     <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.418 0V4m0 5h-.582M4 15v5h.582m15.418 0V15m0 5h-.582"/>
@@ -1095,7 +1093,6 @@
 </button>
 <span class="sync-status" id="syncStatus">✅ متزامن</span>
 
-<!-- ====== زر المشاركة ====== -->
 <button onclick="openShareModal()" class="btn-secondary btn-sm" title="مشاركة المشروع">
     <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"/>
@@ -1122,13 +1119,11 @@
 {% endblock %}
 
 {% block content %}
-<!-- ====== شاشة التحميل ====== -->
 <div class="loading-overlay" id="loadingOverlay">
     <div class="spinner-large"></div>
     <p>🔄 جاري تحميل المشروع...</p>
 </div>
 
-<!-- رأس المشروع -->
 <div class="flex flex-wrap items-center gap-2 sm:gap-3 mb-4">
     <span class="badge status-{{ project.status.value }}">
         {% if project.status.value == 'draft' %}📝 مسودة
@@ -1149,7 +1144,6 @@
 </div>
 
 <div class="editor-container">
-    <!-- ====== منطقة المعاينة ====== -->
     <div class="preview-area" id="previewArea">
         <canvas id="previewCanvas"></canvas>
         <audio id="audioPlayer"></audio>
@@ -1159,7 +1153,6 @@
             <button class="record-btn" id="recordBtn" onclick="toggleRecording()" title="تسجيل الصوت من موضع المؤشر (مرتبط بالشريحة النشطة)">🎙️</button>
         </div>
 
-        <!-- ✅ مؤشر التسجيل النشط -->
         <div class="recording-indicator" id="recordingIndicator">
             <span class="dot"></span>
             <span>🔴 التسجيل من <span id="recordingStartLabel">00:00</span></span>
@@ -1170,13 +1163,11 @@
         </div>
     </div>
 
-    <!-- ====== معرض الوسائط ====== -->
     <div class="media-gallery" id="mediaGallery">
         <span class="media-gallery-label">📁</span>
         <span style="color:var(--text-muted);font-size:9px;opacity:0.4;" id="mediaGalleryEmpty">اسحب أو استورد</span>
     </div>
 
-    <!-- ====== شريط التحكم السفلي ====== -->
     <div class="controls-bar" id="controlsBar">
         <div class="control-group">
             <button onclick="seekTo(0)" title="البداية">⏮</button>
@@ -1216,7 +1207,6 @@
         </div>
     </div>
 
-    <!-- ====== شريط الأدوات ====== -->
     <div class="toolbar">
         <div class="toolbar-group">
             <button class="tool-btn active" onclick="selectTool('select')" id="toolSelect" title="تحديد (V)">⬡</button>
@@ -1243,7 +1233,6 @@
         </div>
     </div>
 
-    <!-- ====== لوحة الطبقات ====== -->
     <div class="layers-panel" id="layersPanel">
         <div class="layers-header">
             <span>🧩 الطبقات <span id="layerCount" style="font-size:10px;color:var(--text-muted);background:rgba(0,0,0,0.3);padding:0 6px;border-radius:8px;margin-left:4px;">0</span></span>
@@ -1257,7 +1246,6 @@
         <div id="layersList"></div>
     </div>
 
-    <!-- ====== منطقة التايم لاين ====== -->
     <div class="timeline-area">
         <div class="timeline-scroll" id="timelineContainer">
             <div id="timeline-inner" style="--cell-w:80px; min-width: max-content;">
@@ -1285,10 +1273,8 @@
     </div>
 </div>
 
-<!-- ====== سلة المحذوفات ====== -->
 <div class="trash-zone" id="trashZone">🗑️ اسقط هنا للحذف</div>
 
-<!-- ====== مودال استيراد ====== -->
 <div id="importModal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
     <div class="bg-slate-800 rounded-xl p-6 max-w-md w-full border border-slate-700">
         <h3 class="text-white text-lg font-semibold mb-4">📥 استيراد وسائط</h3>
@@ -1305,7 +1291,6 @@
     </div>
 </div>
 
-<!-- ====== مودال خصائص المقطع ====== -->
 <div id="clipPropertiesModal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
     <div class="bg-slate-800 rounded-xl p-6 max-w-md w-full border border-slate-700">
         <h3 class="text-white text-lg font-semibold mb-4">⚙️ خصائص المقطع</h3>
@@ -1343,7 +1328,6 @@
     </div>
 </div>
 
-<!-- ====== مودال المشاركة ====== -->
 <div id="shareModal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
     <div class="bg-slate-800 rounded-xl p-6 max-w-md w-full border border-slate-700">
         <h3 class="text-white text-lg font-semibold mb-4">👥 مشاركة المشروع</h3>
@@ -1945,6 +1929,69 @@ function updatePlayheadLock() {
 }
 
 // ============================================================
+//  FIND NEXT INSERT POINT — إيجاد نقطة إدراج دقيقة
+// ============================================================
+function findNextInsertPoint(layerIndex, preferredStart = null) {
+    /**
+     * يجد أول نقطة فارغة (غير متداخلة) في الطبقة.
+     * - إذا كانت preferredStart داخل فجوة → استخدمها
+     * - وإلا ابحث عن أقرب نهاية شريحة بعدها
+     */
+    const layerClips = projectData.clips
+        .filter(c => c.layer === layerIndex)
+        .sort((a, b) => a.start - b.start);
+
+    if (layerClips.length === 0) {
+        return preferredStart !== null ? Math.max(0, preferredStart) : 0;
+    }
+
+    let start = preferredStart !== null ? Math.max(0, preferredStart) : 0;
+
+    for (const clip of layerClips) {
+        const clipEnd = clip.start + clip.duration;
+
+        // إذا كنا قبل بداية هذه الشريحة → لا مشكلة
+        if (start + 0.01 < clip.start) {
+            return start;
+        }
+
+        // إذا كنا داخل الشريحة أو عندها → انقل بعد نهايتها
+        if (start < clipEnd - 0.001) {
+            start = clipEnd;
+        }
+    }
+
+    return start;
+}
+
+function findExactEndOfLayer(layerIndex) {
+    const layerClips = projectData.clips.filter(c => c.layer === layerIndex);
+    if (layerClips.length === 0) return 0;
+    return Math.max(...layerClips.map(c => c.start + c.duration));
+}
+
+// ============================================================
+//  NORMALIZE LAYER — إزالة الفراغات (اختياري)
+// ============================================================
+function normalizeLayer(layerIndex) {
+    const layerClips = projectData.clips
+        .filter(c => c.layer === layerIndex)
+        .sort((a, b) => a.start - b.start);
+
+    if (layerClips.length === 0) return;
+
+    let cursor = 0;
+    layerClips.forEach(clip => {
+        if (cursor === 0 && clip.start < 0.1) {
+            clip.start = 0;
+        } else {
+            clip.start = cursor;
+        }
+        cursor = clip.start + clip.duration;
+    });
+}
+
+// ============================================================
 //  SYNC AUDIO
 // ============================================================
 function syncAudio(time) {
@@ -2122,11 +2169,16 @@ function renderMediaGallery() {
     });
 }
 
+// ============================================================
+//  ADD MEDIA TO TIMELINE — مع نقل المؤشر تلقائياً
+// ============================================================
 function addMediaToTimeline(index) {
     const file = projectData.mediaFiles[index];
     if (!file) return;
 
-    let startTime = currentTime;
+    // ✅ احسب نقطة البداية بدقة (بدون فراغات أو تداخل)
+    const startTime = findNextInsertPoint(selectedLayerIndex, currentTime);
+
     const type = file.type.split('/')[0];
     const duration = type === 'image' ? 3 : (type === 'video' ? 3 : 2);
 
@@ -2156,8 +2208,24 @@ function addMediaToTimeline(index) {
     renderTimeline();
     renderMediaGallery();
     updateStatus();
+
+    // ✅ انقل المؤشر إلى نهاية الشريحة الجديدة بالضبط
+    currentTime = clip.start + clip.duration;
+    updatePlayhead();
+    renderPreview(currentTime);
+
+    // ✅ مرّر تلقائياً لرؤية المؤشر
+    const scroll = document.getElementById('timelineContainer');
+    if (scroll) {
+        const pxPerSec = projectData.cellWidth / 2;
+        const playheadX = currentTime * pxPerSec + 60;
+        if (playheadX > scroll.scrollLeft + scroll.clientWidth - 120) {
+            scroll.scrollLeft = playheadX - scroll.clientWidth + 120;
+        }
+    }
+
     saveProjectData();
-    showToast(`✅ تم إضافة ${file.name}`, 'success');
+    showToast(`✅ تم إضافة ${file.name} — المؤشر عند ${formatTime(currentTime)}`, 'success');
 }
 
 function getLayerEndTime(layerIndex) {
@@ -2338,7 +2406,6 @@ function renderTimeline() {
     const pxPerSec = projectData.cellWidth / 2;
     const totalWidth = projectData.totalDuration * pxPerSec + 120;
 
-    // ===== الرولر =====
     const rulerMarks = document.getElementById('rulerMarks');
     rulerMarks.innerHTML = '';
     rulerMarks.style.display = 'flex';
@@ -2364,7 +2431,6 @@ function renderTimeline() {
         rulerMarks.appendChild(mark);
     }
 
-    // ===== المسارات =====
     container.innerHTML = '';
     projectData.layers.forEach((layer, layerIdx) => {
         if (!layer.visible) return;
@@ -2432,7 +2498,6 @@ function renderTimeline() {
 
             block.ondblclick = () => editClipProperties(clip.id);
 
-            // ✅ مقابض تغيير الحجم (أوسع للجوال + دعم touchstart)
             const resizeHandle = document.createElement('div');
             resizeHandle.style.cssText = 'position:absolute;right:-8px;top:0;width:16px;height:100%;cursor:ew-resize;z-index:5;touch-action:none;';
             resizeHandle.onmousedown = (e) => {
@@ -2600,6 +2665,9 @@ function selectClip(id) {
     renderTimeline();
 }
 
+// ============================================================
+//  ADD CLIP — مع نقل المؤشر تلقائياً
+// ============================================================
 function addClip(type) {
     if (type === 'image' || type === 'video' || type === 'audio') {
         const input = document.createElement('input');
@@ -2618,11 +2686,14 @@ function addClip(type) {
         const text = prompt('نص المقطع:');
         if (!text) return;
 
+        // ✅ نقطة البداية بدقة
+        const startTime = findNextInsertPoint(selectedLayerIndex, currentTime);
+
         const clip = {
             id: clipIdCounter++,
             type: 'text',
             layer: selectedLayerIndex,
-            start: currentTime,
+            start: startTime,
             duration: 2,
             title: text.slice(0, 18),
             content: text,
@@ -2634,8 +2705,24 @@ function addClip(type) {
         updateTotalDuration();
         renderTimeline();
         updateStatus();
+
+        // ✅ انقل المؤشر لنهاية الشريحة
+        currentTime = clip.start + clip.duration;
+        updatePlayhead();
+        renderPreview(currentTime);
+
+        // مرّر تلقائياً
+        const scroll = document.getElementById('timelineContainer');
+        if (scroll) {
+            const pxPerSec = projectData.cellWidth / 2;
+            const playheadX = currentTime * pxPerSec + 60;
+            if (playheadX > scroll.scrollLeft + scroll.clientWidth - 120) {
+                scroll.scrollLeft = playheadX - scroll.clientWidth + 120;
+            }
+        }
+
         saveProjectData();
-        showToast('✅ تم إضافة النص', 'success');
+        showToast(`✅ تم إضافة النص — المؤشر عند ${formatTime(currentTime)}`, 'success');
     }
 }
 
@@ -2933,7 +3020,6 @@ function setupPlayheadDragging() {
     let dragPointerId = null;
     let dragTouchId = null;
 
-    // ✅ helper: احسب الزمن من إحداثيات الشاشة
     function getTimeFromClientX(clientX) {
         const inner = document.getElementById('timeline-inner');
         const rect = inner.getBoundingClientRect();
@@ -2942,7 +3028,6 @@ function setupPlayheadDragging() {
         return Math.max(0, Math.min(x / pxPerSec, projectData.totalDuration));
     }
 
-    // ===== Pointer Events (الفأرة + القلم + اللمس في المتصفحات الحديثة) =====
     if (window.PointerEvent) {
         playhead.addEventListener('pointerdown', (e) => {
             if (isRecording) {
@@ -2980,9 +3065,8 @@ function setupPlayheadDragging() {
         playhead.addEventListener('lostpointercapture', endPointerDrag);
     }
 
-    // ===== Touch Events (fallback للجوالات القديمة) =====
     playhead.addEventListener('touchstart', (e) => {
-        if (window.PointerEvent) return; // Pointer Events يعمل بالفعل
+        if (window.PointerEvent) return;
         if (isRecording) {
             showToast('⚠️ لا يمكن تحريك المؤشر أثناء التسجيل', 'warning');
             return;
@@ -3023,7 +3107,6 @@ function setupPlayheadDragging() {
         playhead.classList.remove('dragging');
     });
 
-    // ===== Mouse Events (fallback إضافي للفأرة القديمة) =====
     playhead.addEventListener('mousedown', (e) => {
         if (window.PointerEvent) return;
         if (isRecording) {
@@ -3054,15 +3137,13 @@ function setupPlayheadDragging() {
         }
     });
 
-    // ===== النقر/اللمس على الرولر =====
+    // ===== الرولر =====
     const rulerMarks = document.getElementById('rulerMarks');
     if (rulerMarks) {
         rulerMarks.style.cursor = 'ew-resize';
-
         let rulerDragging = false;
         let rulerPointerId = null;
 
-        // Pointer Events للرولر
         if (window.PointerEvent) {
             rulerMarks.addEventListener('pointerdown', (e) => {
                 if (isRecording) return;
@@ -3091,7 +3172,6 @@ function setupPlayheadDragging() {
 
             rulerMarks.addEventListener('pointercancel', () => { rulerDragging = false; });
         } else {
-            // Fallback للجوالات القديمة
             rulerMarks.addEventListener('touchstart', (e) => {
                 if (isRecording) return;
                 const touch = e.touches[0];
@@ -3124,7 +3204,7 @@ function setupPlayheadDragging() {
         }
     }
 
-    // ===== النقر/اللمس على خلفية المسارات =====
+    // ===== خلفية المسارات =====
     document.addEventListener('pointerdown', (e) => {
         if (isRecording) return;
         if (e.target.classList.contains('track-body')) {
@@ -3145,7 +3225,6 @@ function setupPlayheadDragging() {
     }, { passive: true });
 }
 
-// تمرير تلقائي عند الحواف أثناء سحب المؤشر
 function autoScrollDuringDrag(clientX, timelineScroll) {
     if (!timelineScroll) return;
     const scrollRect = timelineScroll.getBoundingClientRect();
@@ -3158,7 +3237,7 @@ function autoScrollDuringDrag(clientX, timelineScroll) {
 }
 
 // ============================================================
-//  TOUCH DRAG for clips — بديل لـ HTML5 Drag API على الجوال
+//  TOUCH DRAG for clips
 // ============================================================
 function setupTouchClipDragging() {
     let touchDragData = null;
@@ -3167,7 +3246,6 @@ function setupTouchClipDragging() {
         if (isRecording) return;
         const block = e.target.closest('.clip-block');
         if (!block) return;
-        // تجاهل إذا كان اللمس على مقبض resize
         if (e.target.style.cursor === 'ew-resize') return;
 
         const clipId = parseInt(block.dataset.clipId);
@@ -3226,7 +3304,6 @@ function setupTouchClipDragging() {
         touchDragData.clip.layer = newLayer;
 
         renderTimeline();
-
         e.preventDefault();
     }, { passive: false });
 
@@ -3931,8 +4008,8 @@ document.addEventListener('DOMContentLoaded', function() {
 
     setupDragDrop();
     setupKeyboardShortcuts();
-    setupPlayheadDragging();      // ✅ يدعم الفأرة + اللمس
-    setupTouchClipDragging();     // ✅ سحب الكليبات باللمس
+    setupPlayheadDragging();
+    setupTouchClipDragging();
 
     loadProjectData();
 });
@@ -4020,6 +4097,6 @@ window.addEventListener('beforeunload', function() {
     });
 });
 
-console.log('🎬 المحرر جاهز - مؤشر مرن + تسجيل مرتبط بالمقطع + دعم الفأرة واللمس ✅');
+console.log('🎬 المحرر جاهز - مؤشر مرن + تسجيل مرتبط + نقل تلقائي بعد الإضافة ✅');
 </script>
 {% endblock %}
