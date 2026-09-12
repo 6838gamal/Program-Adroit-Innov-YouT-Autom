@@ -1,4 +1,8 @@
-"""Application service for Production / Render use cases."""
+"""Application service for Production / Render use cases.
+
+✅ لا TTS تلقائي — الصوت فقط من تسجيلات المستخدم (metadata.audioRecordings).
+✅ المشاهد بدون تسجيل = صمت.
+"""
 import asyncio
 import inspect
 import logging
@@ -388,7 +392,7 @@ class ProductionService:
                 quality=quality,
             )
 
-            await save_progress(5.0, "تحليل النص وتقسيمه إلى مشاهد")
+            await save_progress(5.0, "تحليل المشاهد")
 
             # ── Build scenes from clips OR script ────────────────────────────
             script = project_data.get("script", "") or ""
@@ -404,48 +408,35 @@ class ProductionService:
             clips = project_data_data.get("clips", []) or []
 
             if clips:
-                # ✅ scenes objects كاملة مع media_url + recorded_audio_url
+                # ✅ scenes من clips (مع التسجيلات، بلا TTS)
                 scene_objects = self._build_scenes_from_clips(clips)
                 _diag(f"📽️ Using {len(scene_objects)} scenes from client clips")
             else:
-                # fallback: نصوص فقط من السكريبت
-                script_texts = _split_script_to_scenes(script, title)
-                scene_objects = [
-                    {
-                        "text": t,
-                        "type": "text",
-                        "media_url": None,
-                        "recorded_audio_url": None,
-                        "recorded_audio_duration": None,
-                        "original_text": t,
-                        "title": f"مشهد {i + 1}",
-                        "duration": max(3.0, len(t.split()) / 2.5),
-                        "start": 0.0,
-                        "layer": 0,
-                    }
-                    for i, t in enumerate(script_texts)
-                ]
-                _diag(f"📝 Using {len(scene_objects)} scenes from script")
+                # ✅ لا clips → مشهد واحد صامت
+                # (لا نستخدم السكريبت لأنه لا يعني أن المستخدم يريد صوتاً)
+                _diag("⚠️ No clips found — creating single silent scene")
+                scene_objects = [{
+                    "text": "",
+                    "type": "text",
+                    "media_url": None,
+                    "recorded_audio_url": None,
+                    "recorded_audio_duration": None,
+                    "original_text": title or "مشهد",
+                    "title": title or "مشهد",
+                    "duration": max(3.0, float(project_data.get("duration", 5.0) or 5.0)),
+                    "start": 0.0,
+                    "layer": 0,
+                }]
 
-            await save_progress(10.0, f"توليد {len(scene_objects)} مشهد")
+            await save_progress(10.0, f"تحضير {len(scene_objects)} مشهد")
 
-            # ── Resolve active HF models (if any) ────────────────────────────
-            try:
-                voice_plugin = await _resolve_voice_plugin(self._registry)
-                _diag(f"🔥 voice_plugin={voice_plugin}")
-            except Exception as e:
-                _diag_err(f"💥 _resolve_voice_plugin failed: {e}", e)
-                raise
-
+            # ── Resolve active HF models (image only, لا voice) ──────────────
             try:
                 image_generator = await _resolve_image_generator(rs)
                 _diag(f"🔥 image_generator={image_generator}")
             except Exception as e:
                 _diag_err(f"💥 _resolve_image_generator failed: {e}", e)
                 raise
-
-            from shared.ports.voice_port import VoiceConfig
-            voice_config = VoiceConfig(language="ar", speed=1.0, pitch=1.0)
 
             scenes_data: list[dict] = []
             total = len(scene_objects)
@@ -454,7 +445,7 @@ class ProductionService:
                 pct = 10.0 + (i / max(total, 1)) * 50.0
                 await save_progress(pct, f"معالجة المشهد {i + 1}/{total}")
 
-                scene_text = scene_obj["text"]
+                scene_text = scene_obj["text"]               # دائماً ""
                 scene_type = scene_obj["type"]
                 scene_media_url = scene_obj.get("media_url")
                 scene_title = scene_obj.get("title") or f"مشهد {i + 1}"
@@ -463,12 +454,11 @@ class ProductionService:
                 recorded_audio_url = scene_obj.get("recorded_audio_url")
                 recorded_audio_duration = scene_obj.get("recorded_audio_duration")
 
-                audio_path = temp_dir / f"audio_{i:04d}.mp3"
                 actual_audio: Optional[Path] = None
                 duration = scene_duration
 
                 # ══════════════════════════════════════════════════════════
-                # ✅ 1) أولوية: التسجيل الصوتي للمستخدم (لا TTS)
+                # ✅ التسجيل الصوتي فقط — لا TTS إطلاقاً
                 # ══════════════════════════════════════════════════════════
                 if recorded_audio_url:
                     recorded_ext = _guess_audio_ext(recorded_audio_url)
@@ -490,35 +480,10 @@ class ProductionService:
                         )
                     else:
                         _diag_err(
-                            f"⚠️ Scene {i}: recording download failed, "
-                            f"falling back to TTS"
+                            f"⚠️ Scene {i}: recording download failed → silent"
                         )
-
-                # ══════════════════════════════════════════════════════════
-                # ✅ 2) Fallback: توليد TTS فقط إن:
-                #    - لا يوجد تسجيل صوتي
-                #    - وscene_text ليس فارغاً (لم يُتجاهل بسبب التكرار)
-                # ══════════════════════════════════════════════════════════
-                if (
-                    actual_audio is None
-                    and scene_text
-                    and scene_text.strip()
-                    and scene_type in ("text", "image", "video")
-                ):
-                    try:
-                        voice_result = await voice_plugin.generate(
-                            text=scene_text,
-                            config=voice_config,
-                            output_path=audio_path,
-                        )
-                        actual_audio = voice_result.audio_path
-                        if voice_result.duration and voice_result.duration > 0.5:
-                            duration = voice_result.duration
-                        _diag(f"🔊 Scene {i}: generated TTS ({duration:.2f}s)")
-                    except Exception as e:
-                        _diag_err(f"⚠️ TTS failed for scene {i}: {e}", e)
-                elif actual_audio is None:
-                    _diag(f"🔇 Scene {i}: silent (no audio)")
+                else:
+                    _diag(f"🔇 Scene {i}: silent (no recording in timeline)")
 
                 # ── الوسائط الحقيقية أو توليد صورة ──────────────────────
                 image_path = temp_dir / f"scene_{i:04d}.jpg"
@@ -539,7 +504,7 @@ class ProductionService:
                 if not used_real_media:
                     try:
                         await image_generator.generate_scene_image(
-                            text=scene_text or scene_title,
+                            text=scene_title,
                             output_path=image_path,
                             scene_index=i,
                             title=title,
@@ -550,18 +515,14 @@ class ProductionService:
                         image_path = None
 
                 scenes_data.append({
-                    "text": scene_text,
+                    "text": scene_text,                     # دائماً ""
                     "image_path": str(image_path) if image_path else "",
                     "audio_path": str(actual_audio) if actual_audio else "",
                     "duration": duration,
                     "transition": "fade",
                     "type": scene_type,
                     "media_url": scene_media_url,
-                    "audio_source": (
-                        "user_recording" if recorded_audio_url and actual_audio
-                        else "tts" if actual_audio
-                        else "silent"
-                    ),
+                    "audio_source": "user_recording" if actual_audio else "silent",
                 })
 
             await save_progress(62.0, "تركيب الفيديو النهائي")
@@ -784,27 +745,25 @@ class ProductionService:
             _active_renders.pop(str(job_id), None)
             _diag(f"🔥 _run_render END job_id={job_id}")
 
-    # ── Scene builder from clips (preserves media + user audio) ─────────────
+    # ── Scene builder from clips ─────────────────────────────────────────────
     def _build_scenes_from_clips(
         self,
         clips: List[Dict[str, Any]],
     ) -> List[Dict[str, Any]]:
         """
-        Convert client clips to scene objects that PRESERVE:
-          - the real media URL (image/video) from Supabase
-          - the user's recorded audio URL (metadata.audioRecordings)
-
-        ✅ ميزة جديدة: أي مشهد يحمل نفس نص مشهد آخر له تسجيل صوتي
-           لن يولّد TTS (سيُترك صامتاً) لمنع الصوت المكرر.
+        ✅ يتبع التحرير حرفياً:
+           - إذا كان clip له تسجيل صوتي (metadata.audioRecordings) → يُشغّل
+           - إذا لم يكن له تسجيل → صمت (text = "")
+           - لا TTS إطلاقاً
 
         Returns a list of dicts:
             {
-                "text": str,                    # نص TTS (فارغ إن وُجد تسجيل)
+                "text": "",                    # دائماً فارغ (لا TTS)
                 "type": "image"|"video"|"text",
                 "media_url": str|None,
                 "recorded_audio_url": str|None,
                 "recorded_audio_duration": float|None,
-                "original_text": str,
+                "original_text": str,          # للعنوان فقط
                 "title": str,
                 "duration": float,
                 "start": float,
@@ -813,38 +772,7 @@ class ProductionService:
         """
         scenes: list[dict] = []
 
-        # ══════════════════════════════════════════════════════════════════
-        # ✅ الخطوة 1: اجمع كل النصوص التي لها تسجيل صوتي صالح
-        # ══════════════════════════════════════════════════════════════════
-        recorded_texts: set[str] = set()
-        for clip in clips:
-            metadata = clip.get("metadata") or {}
-            if not isinstance(metadata, dict):
-                continue
-            recs = metadata.get("audioRecordings") or []
-            if not isinstance(recs, list) or not recs:
-                continue
-            has_valid = any(
-                isinstance(r, dict)
-                and isinstance(r.get("url"), str)
-                and r["url"].startswith("http")
-                and "blob:" not in r["url"]
-                for r in recs
-            )
-            if has_valid:
-                text = (clip.get("content") or clip.get("title") or "").strip()
-                if text:
-                    recorded_texts.add(text)
-
-        if recorded_texts:
-            _diag(
-                f"🔍 {len(recorded_texts)} text(s) with recordings: "
-                f"{[t[:30] for t in recorded_texts]}"
-            )
-
-        # ══════════════════════════════════════════════════════════════════
-        # ✅ الخطوة 2: رتّب clips حسب (الطبقة، البداية)
-        # ══════════════════════════════════════════════════════════════════
+        # ── رتّب حسب (الطبقة، البداية) ─────────────────────────
         try:
             sorted_clips = sorted(
                 clips,
@@ -856,16 +784,14 @@ class ProductionService:
         except Exception:
             sorted_clips = list(clips)
 
-        # ══════════════════════════════════════════════════════════════════
-        # ✅ الخطوة 3: حوّل كل clip إلى scene
-        # ══════════════════════════════════════════════════════════════════
+        # ── حوّل كل clip إلى scene ────────────────────────────
         for clip in sorted_clips:
             clip_type = (clip.get("type") or "text").lower()
             metadata = clip.get("metadata") or {}
             if not isinstance(metadata, dict):
                 metadata = {}
 
-            # ── رابط الوسائط الحقيقي (صورة/فيديو فقط) ────────────────
+            # ── رابط الوسائط الحقيقي (صورة/فيديو فقط) ──────────
             media_url = None
             if clip_type in ("image", "video"):
                 candidate = (
@@ -876,7 +802,7 @@ class ProductionService:
                 if isinstance(candidate, str) and candidate.startswith("http") and "blob:" not in candidate:
                     media_url = candidate
 
-            # ── استخراج التسجيل الصوتي من metadata.audioRecordings ─
+            # ── استخراج التسجيل الصوتي ────────────────────────
             audio_recordings = metadata.get("audioRecordings") or []
             recorded_audio_url: Optional[str] = None
             recorded_audio_duration: Optional[float] = None
@@ -897,34 +823,30 @@ class ProductionService:
                     recorded_audio_url = best_rec["url"]
                     recorded_audio_duration = float(best_rec.get("duration", 0) or 0)
 
-            # ── النص الأصلي لـ TTS (fallback) ────────────────────────
+            # ── النص الأصلي (للعرض/العنوان فقط) ────────────────
             if clip_type == "text":
                 original_text = (clip.get("content") or clip.get("title") or "").strip()
             else:
                 original_text = (clip.get("title") or "").strip()
 
-            # ══════════════════════════════════════════════════════════
-            # ✅ القرار: هل نولّد TTS أم لا؟
-            # ══════════════════════════════════════════════════════════
+            # ── السجلات التشخيصية ────────────────────────────
             if recorded_audio_url:
-                # هذا المشهد له تسجيل → لا TTS
-                text_for_tts = ""
-                _diag(f"🎤 Scene with recording (no TTS): '{original_text[:40]}'")
-            elif original_text and original_text in recorded_texts:
-                # نفس النص له تسجيل في مشهد آخر → لا TTS (منع التكرار)
-                text_for_tts = ""
-                _diag(f"🔇 Scene skipped (text has recording elsewhere): '{original_text[:40]}'")
+                _diag(
+                    f"🎤 Clip {clip.get('id')}: has recording "
+                    f"({recorded_audio_duration or 0:.1f}s) — '{original_text[:40]}'"
+                )
             else:
-                # لا تسجيل ولا تكرار → استخدم TTS
-                text_for_tts = original_text
+                _diag(
+                    f"🔇 Clip {clip.get('id')}: silent — '{original_text[:40]}'"
+                )
 
-            # ── المدة ────────────────────────────────────────────────
+            # ── المدة ────────────────────────────────────────
             duration = float(clip.get("duration", 3.0) or 3.0)
             if recorded_audio_duration and recorded_audio_duration > duration:
                 duration = recorded_audio_duration
 
             scenes.append({
-                "text": text_for_tts,
+                "text": "",                     # ✅ دائماً فارغ — لا TTS
                 "type": clip_type,
                 "media_url": media_url,
                 "recorded_audio_url": recorded_audio_url,
@@ -938,12 +860,12 @@ class ProductionService:
 
         if not scenes:
             scenes = [{
-                "text": "مشهد بدون نص",
+                "text": "",
                 "type": "text",
                 "media_url": None,
                 "recorded_audio_url": None,
                 "recorded_audio_duration": None,
-                "original_text": "مشهد بدون نص",
+                "original_text": "",
                 "title": "مشهد",
                 "duration": 3.0,
                 "start": 0.0,
@@ -986,37 +908,6 @@ class ProductionService:
 # ─────────────────────────────────────────────────────────────────────────────
 # Helpers
 # ─────────────────────────────────────────────────────────────────────────────
-
-def _split_script_to_scenes(script: str, title: str = "") -> list[str]:
-    """Split project script into scenes."""
-    if not script or not script.strip():
-        return [title or "مشهد بدون نص"]
-
-    paragraphs = [p.strip() for p in re.split(r"\n{2,}", script.strip()) if p.strip()]
-
-    if len(paragraphs) >= 2:
-        return paragraphs
-
-    sentences = re.split(r"(?<=[.!?؟،\n])\s+", paragraphs[0])
-    sentences = [s.strip() for s in sentences if s.strip()]
-
-    if not sentences:
-        return [paragraphs[0]]
-
-    scenes, current, current_words = [], [], 0
-    for sentence in sentences:
-        words = len(sentence.split())
-        if current_words + words > 80 and current:
-            scenes.append(" ".join(current))
-            current, current_words = [], 0
-        current.append(sentence)
-        current_words += words
-
-    if current:
-        scenes.append(" ".join(current))
-
-    return scenes or [script.strip()]
-
 
 def _guess_audio_ext(url: str) -> str:
     """Determine the audio file extension from the URL."""
@@ -1161,32 +1052,9 @@ async def _build_public_url(storage, remote_path: str) -> Optional[str]:
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-# Model resolution helpers
+# Image generation helpers
+# (voice plugin helpers removed — no TTS)
 # ═════════════════════════════════════════════════════════════════════════════
-
-async def _resolve_voice_plugin(registry):
-    """Return active HF TTS plugin if configured, else fallback to edge_tts."""
-    try:
-        from infrastructure.database.session import get_session_factory
-        from infrastructure.repositories.sql_hf_model_repository import SQLHFModelRepository
-
-        factory = get_session_factory()
-        async with factory() as session:
-            repo = SQLHFModelRepository(session)
-            active = await repo.get_active("tts")
-            if active:
-                from plugins.hf.hf_tts_plugin import HFTTSPlugin
-                _diag(f"✅ Using HF TTS model: {active.hf_model_id}")
-                return HFTTSPlugin(model_id=active.hf_model_id, config=active.config)
-    except Exception as e:
-        _diag_err(f"⚠️ HF TTS lookup failed: {e} — using edge_tts", e)
-
-    try:
-        return registry.get_voice_provider()
-    except Exception as e:
-        _diag_err(f"💥 registry.get_voice_provider() failed: {e}", e)
-        raise
-
 
 async def _resolve_image_generator(rs: RenderSettings):
     """Return active HF image plugin if configured, else fallback to Pillow."""
