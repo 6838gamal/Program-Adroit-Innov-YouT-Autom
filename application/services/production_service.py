@@ -495,9 +495,16 @@ class ProductionService:
                         )
 
                 # ══════════════════════════════════════════════════════════
-                # ✅ 2) Fallback: توليد TTS إن لم يكن هناك تسجيل
+                # ✅ 2) Fallback: توليد TTS فقط إن:
+                #    - لا يوجد تسجيل صوتي
+                #    - وscene_text ليس فارغاً (لم يُتجاهل بسبب التكرار)
                 # ══════════════════════════════════════════════════════════
-                if actual_audio is None and scene_text and scene_type in ("text", "image", "video"):
+                if (
+                    actual_audio is None
+                    and scene_text
+                    and scene_text.strip()
+                    and scene_type in ("text", "image", "video")
+                ):
                     try:
                         voice_result = await voice_plugin.generate(
                             text=scene_text,
@@ -510,6 +517,8 @@ class ProductionService:
                         _diag(f"🔊 Scene {i}: generated TTS ({duration:.2f}s)")
                     except Exception as e:
                         _diag_err(f"⚠️ TTS failed for scene {i}: {e}", e)
+                elif actual_audio is None:
+                    _diag(f"🔇 Scene {i}: silent (no audio)")
 
                 # ── الوسائط الحقيقية أو توليد صورة ──────────────────────
                 image_path = temp_dir / f"scene_{i:04d}.jpg"
@@ -548,8 +557,11 @@ class ProductionService:
                     "transition": "fade",
                     "type": scene_type,
                     "media_url": scene_media_url,
-                    # ✅ للإصلاح: أضف علم يوضح مصدر الصوت
-                    "audio_source": "user_recording" if recorded_audio_url else "tts",
+                    "audio_source": (
+                        "user_recording" if recorded_audio_url and actual_audio
+                        else "tts" if actual_audio
+                        else "silent"
+                    ),
                 })
 
             await save_progress(62.0, "تركيب الفيديو النهائي")
@@ -782,14 +794,17 @@ class ProductionService:
           - the real media URL (image/video) from Supabase
           - the user's recorded audio URL (metadata.audioRecordings)
 
+        ✅ ميزة جديدة: أي مشهد يحمل نفس نص مشهد آخر له تسجيل صوتي
+           لن يولّد TTS (سيُترك صامتاً) لمنع الصوت المكرر.
+
         Returns a list of dicts:
             {
                 "text": str,                    # نص TTS (فارغ إن وُجد تسجيل)
                 "type": "image"|"video"|"text",
-                "media_url": str|None,          # Supabase public URL
-                "recorded_audio_url": str|None, # ✅ رابط التسجيل الصوتي
+                "media_url": str|None,
+                "recorded_audio_url": str|None,
                 "recorded_audio_duration": float|None,
-                "original_text": str,           # النص الأصلي
+                "original_text": str,
                 "title": str,
                 "duration": float,
                 "start": float,
@@ -798,7 +813,38 @@ class ProductionService:
         """
         scenes: list[dict] = []
 
-        # رتّب حسب الطبقة ثم البداية
+        # ══════════════════════════════════════════════════════════════════
+        # ✅ الخطوة 1: اجمع كل النصوص التي لها تسجيل صوتي صالح
+        # ══════════════════════════════════════════════════════════════════
+        recorded_texts: set[str] = set()
+        for clip in clips:
+            metadata = clip.get("metadata") or {}
+            if not isinstance(metadata, dict):
+                continue
+            recs = metadata.get("audioRecordings") or []
+            if not isinstance(recs, list) or not recs:
+                continue
+            has_valid = any(
+                isinstance(r, dict)
+                and isinstance(r.get("url"), str)
+                and r["url"].startswith("http")
+                and "blob:" not in r["url"]
+                for r in recs
+            )
+            if has_valid:
+                text = (clip.get("content") or clip.get("title") or "").strip()
+                if text:
+                    recorded_texts.add(text)
+
+        if recorded_texts:
+            _diag(
+                f"🔍 {len(recorded_texts)} text(s) with recordings: "
+                f"{[t[:30] for t in recorded_texts]}"
+            )
+
+        # ══════════════════════════════════════════════════════════════════
+        # ✅ الخطوة 2: رتّب clips حسب (الطبقة، البداية)
+        # ══════════════════════════════════════════════════════════════════
         try:
             sorted_clips = sorted(
                 clips,
@@ -810,6 +856,9 @@ class ProductionService:
         except Exception:
             sorted_clips = list(clips)
 
+        # ══════════════════════════════════════════════════════════════════
+        # ✅ الخطوة 3: حوّل كل clip إلى scene
+        # ══════════════════════════════════════════════════════════════════
         for clip in sorted_clips:
             clip_type = (clip.get("type") or "text").lower()
             metadata = clip.get("metadata") or {}
@@ -827,15 +876,12 @@ class ProductionService:
                 if isinstance(candidate, str) and candidate.startswith("http") and "blob:" not in candidate:
                     media_url = candidate
 
-            # ══════════════════════════════════════════════════════════
-            # ✅ استخراج التسجيل الصوتي من metadata.audioRecordings
-            # ══════════════════════════════════════════════════════════
+            # ── استخراج التسجيل الصوتي من metadata.audioRecordings ─
             audio_recordings = metadata.get("audioRecordings") or []
             recorded_audio_url: Optional[str] = None
             recorded_audio_duration: Optional[float] = None
 
             if isinstance(audio_recordings, list) and audio_recordings:
-                # اختر أطول تسجيل صالح
                 valid_recs = [
                     r for r in audio_recordings
                     if isinstance(r, dict)
@@ -857,8 +903,20 @@ class ProductionService:
             else:
                 original_text = (clip.get("title") or "").strip()
 
-            # ✅ إذا كان هناك تسجيل صوتي، لا نطلب TTS
-            text_for_tts = "" if recorded_audio_url else original_text
+            # ══════════════════════════════════════════════════════════
+            # ✅ القرار: هل نولّد TTS أم لا؟
+            # ══════════════════════════════════════════════════════════
+            if recorded_audio_url:
+                # هذا المشهد له تسجيل → لا TTS
+                text_for_tts = ""
+                _diag(f"🎤 Scene with recording (no TTS): '{original_text[:40]}'")
+            elif original_text and original_text in recorded_texts:
+                # نفس النص له تسجيل في مشهد آخر → لا TTS (منع التكرار)
+                text_for_tts = ""
+                _diag(f"🔇 Scene skipped (text has recording elsewhere): '{original_text[:40]}'")
+            else:
+                # لا تسجيل ولا تكرار → استخدم TTS
+                text_for_tts = original_text
 
             # ── المدة ────────────────────────────────────────────────
             duration = float(clip.get("duration", 3.0) or 3.0)
