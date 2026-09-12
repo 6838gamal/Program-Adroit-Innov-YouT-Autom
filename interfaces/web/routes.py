@@ -671,10 +671,122 @@ async def _elevenlabs_delete_voice(voice_id: str) -> bool:
 
 
 # ============================================================
-# 🎭 TALKING HEAD — D-ID (مُحدَّث)
+# 🎭 TALKING HEAD — D-ID
 # ============================================================
 
 DID_API_BASE = "https://api.d-id.com"
+
+
+async def _upload_to_catbox(content: bytes, filename: str) -> str:
+    """
+    ارفع ملف إلى catbox.moe — خدمة مجانية بدون تسجيل.
+    تستخدم كـ fallback إذا فشل Supabase.
+    """
+    import httpx
+
+    async with httpx.AsyncClient(timeout=120.0, follow_redirects=True) as client:
+        files = {"fileToUpload": (filename, content)}
+        data = {"reqtype": "fileupload"}
+
+        r = await client.post(
+            "https://catbox.moe/user/api.php",
+            files=files,
+            data=data,
+        )
+
+        if r.status_code != 200:
+            raise RuntimeError(f"Catbox upload failed: HTTP {r.status_code}")
+
+        url = r.text.strip()
+
+        if not url.startswith("http"):
+            raise RuntimeError(f"Catbox invalid response: {url[:100]}")
+
+        return url
+
+
+async def _upload_media_for_did(
+    content: bytes,
+    filename: str,
+    content_type: str,
+) -> str:
+    """
+    ارفع ملف (صورة/صوت) إلى خدمة عامة للحصول على رابط URL.
+    يحاول: Supabase أولاً → ثم Catbox → ثم tmpfiles.org.
+    """
+    # ── 1. جرّب Supabase ──
+    if settings.supabase_configured:
+        try:
+            from application.services.production_service import (
+                _upload_to_supabase, _build_public_url,
+            )
+
+            storage = SupabaseStorageAdapter()
+            unique = uuid.uuid4().hex[:12]
+            suffix = Path(filename).suffix.lower() or ".bin"
+            remote_path = f"talking_heads/{unique}{suffix}"
+
+            # احفظ مؤقتاً
+            tmp_path = Path(tempfile.gettempdir()) / f"did_{unique}{suffix}"
+            tmp_path.write_bytes(content)
+
+            try:
+                await _upload_to_supabase(
+                    storage=storage,
+                    local_path=tmp_path,
+                    remote_path=remote_path,
+                    content_type=content_type,
+                )
+                url = await _build_public_url(storage, remote_path)
+                if url and url.startswith("http"):
+                    _diag(f"✅ Supabase upload: {url[:80]}...")
+                    return url
+            finally:
+                tmp_path.unlink(missing_ok=True)
+
+        except Exception as e:
+            _diag_err(f"⚠️ Supabase upload failed: {e}", e)
+
+    # ── 2. جرّب Catbox ──
+    try:
+        _diag("🔄 Trying Catbox...")
+        url = await _upload_to_catbox(content, filename)
+        _diag(f"✅ Catbox upload: {url[:80]}...")
+        return url
+    except Exception as e:
+        _diag_err(f"⚠️ Catbox failed: {e}", e)
+
+    # ── 3. جرّب tmpfiles.org ──
+    try:
+        _diag("🔄 Trying tmpfiles.org...")
+        import httpx
+
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            files = {"file": (filename, content, content_type)}
+            r = await client.post(
+                "https://tmpfiles.org/api/v1/upload",
+                files=files,
+            )
+            if r.status_code == 200:
+                data = r.json()
+                url = data.get("data", {}).get("url", "")
+                if url:
+                    # حوّل إلى رابط مباشر
+                    direct = url.replace("tmpfiles.org/", "tmpfiles.org/dl/")
+                    _diag(f"✅ tmpfiles upload: {direct[:80]}...")
+                    return direct
+    except Exception as e:
+        _diag_err(f"⚠️ tmpfiles failed: {e}", e)
+
+    raise HTTPException(
+        status_code=500,
+        detail=(
+            "❌ فشل رفع الملفات إلى خدمة عامة.\n"
+            "الحلول:\n"
+            "1. تحقق من إعدادات Supabase\n"
+            "2. أو حاول لاحقاً (قد تكون الخدمات مشغولة)"
+        ),
+    )
 
 
 async def _did_create_talk(
@@ -684,7 +796,9 @@ async def _did_create_talk(
 ) -> str:
     """
     🎭 إنشاء فيديو talking head من صورة + صوت.
-    مع تشخيص كامل للأخطاء.
+
+    مهم: D-ID لا يقبل base64 data URLs،
+    يجب رفع الملفات إلى خدمة عامة والحصول على روابط https مباشرة.
     """
     import httpx
 
@@ -694,64 +808,70 @@ async def _did_create_talk(
             detail="D-ID API غير مهيأ. أضف DID_API_KEY.",
         )
 
-    api_key = settings.did_api_key_value
-
     # ═══════════════════════════════════════════════════════════
-    # ✅ 1. تحقق من الصورة
+    # 1. تحقق من الأحجام
     # ═══════════════════════════════════════════════════════════
     img_size_mb = len(image_content) / 1024 / 1024
-    _diag(f"🖼️  Image size: {img_size_mb:.2f} MB")
+    aud_size_mb = len(audio_content) / 1024 / 1024
+
+    _diag(f"🖼️  Image: {img_size_mb:.2f} MB")
+    _diag(f"🔊 Audio: {aud_size_mb:.2f} MB")
 
     if img_size_mb > 5:
         raise HTTPException(
             status_code=400,
-            detail=(
-                f"الصورة كبيرة جداً ({img_size_mb:.2f} MB). "
-                f"الحد الأقصى 5 MB. صغّر الصورة أولاً."
-            ),
+            detail=f"الصورة كبيرة جداً ({img_size_mb:.2f} MB). الحد 5 MB.",
         )
 
-    # اكتشف نوع الصورة
+    if aud_size_mb > 10:
+        raise HTTPException(
+            status_code=400,
+            detail=f"الصوت كبير جداً ({aud_size_mb:.2f} MB). استخدم نصاً أقصر.",
+        )
+
+    # ═══════════════════════════════════════════════════════════
+    # 2. حدد الأسماء والأنواع
+    # ═══════════════════════════════════════════════════════════
     suffix = Path(image_filename).suffix.lower()
-    mime = {
+    if suffix not in [".jpg", ".jpeg", ".png", ".webp"]:
+        suffix = ".jpg"
+
+    img_filename = f"image{suffix}"
+    img_content_type = {
         ".jpg": "image/jpeg",
         ".jpeg": "image/jpeg",
         ".png": "image/png",
         ".webp": "image/webp",
     }.get(suffix, "image/jpeg")
 
-    # ═══════════════════════════════════════════════════════════
-    # ✅ 2. تحقق من الصوت
-    # ═══════════════════════════════════════════════════════════
-    aud_size_mb = len(audio_content) / 1024 / 1024
-    _diag(f"🔊 Audio size: {aud_size_mb:.2f} MB")
-
-    if aud_size_mb > 10:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"الصوت كبير جداً ({aud_size_mb:.2f} MB). "
-                f"الحد الأقصى 10 MB. استخدم نصاً أقصر."
-            ),
-        )
+    aud_filename = "audio.mp3"
+    aud_content_type = "audio/mpeg"
 
     # ═══════════════════════════════════════════════════════════
-    # ✅ 3. تحويل إلى base64
+    # 3. ارفع الصورة والصوت → احصل على روابط https
     # ═══════════════════════════════════════════════════════════
-    img_b64 = base64.b64encode(image_content).decode('ascii')
-    aud_b64 = base64.b64encode(audio_content).decode('ascii')
+    _diag("📤 Uploading image to public host...")
+    img_url = await _upload_media_for_did(
+        image_content, img_filename, img_content_type
+    )
 
-    _diag(f"🖼️  Image base64 length: {len(img_b64)} chars")
-    _diag(f"🔊 Audio base64 length: {len(aud_b64)} chars")
+    _diag("📤 Uploading audio to public host...")
+    aud_url = await _upload_media_for_did(
+        audio_content, aud_filename, aud_content_type
+    )
+
+    _diag(f"✅ Public URLs ready:")
+    _diag(f"   🖼️  {img_url}")
+    _diag(f"   🔊 {aud_url}")
 
     # ═══════════════════════════════════════════════════════════
-    # ✅ 4. بناء الطلب
+    # 4. أرسل الطلب لـ D-ID (بروابط https حقيقية)
     # ═══════════════════════════════════════════════════════════
     payload = {
-        "source_url": f"data:{mime};base64,{img_b64}",
+        "source_url": img_url,
         "script": {
             "type": "audio",
-            "audio_url": f"data:audio/mpeg;base64,{aud_b64}",
+            "audio_url": aud_url,
         },
         "config": {
             "stitch": True,
@@ -760,19 +880,15 @@ async def _did_create_talk(
     }
 
     headers = {
-        "Authorization": api_key,
+        "Authorization": settings.did_api_key_value,
         "Content-Type": "application/json",
         "Accept": "application/json",
     }
 
     _diag(f"🎭 Sending request to D-ID...")
-    _diag(f"   URL: {DID_API_BASE}/talks")
-    _diag(f"   Auth: {api_key[:30]}...")
-    _diag(f"   Payload size: {len(json.dumps(payload))} chars")
+    _diag(f"   source_url: {img_url[:100]}...")
+    _diag(f"   audio_url: {aud_url[:100]}...")
 
-    # ═══════════════════════════════════════════════════════════
-    # ✅ 5. أرسل الطلب
-    # ═══════════════════════════════════════════════════════════
     async with httpx.AsyncClient(timeout=120.0) as client:
         try:
             r = await client.post(
@@ -783,7 +899,7 @@ async def _did_create_talk(
         except httpx.TimeoutException:
             raise HTTPException(
                 status_code=504,
-                detail="انتهت مهلة الاتصال بـ D-ID. جرّب نصاً أقصر.",
+                detail="انتهت مهلة الاتصال بـ D-ID.",
             )
         except Exception as e:
             _diag_err(f"❌ D-ID request failed: {e}", e)
@@ -793,10 +909,10 @@ async def _did_create_talk(
             )
 
     # ═══════════════════════════════════════════════════════════
-    # ✅ 6. عرض تفاصيل الخطأ الكاملة
+    # 5. عالج الاستجابة
     # ═══════════════════════════════════════════════════════════
     _diag(f"📡 D-ID response: status={r.status_code}")
-    _diag(f"📡 Response body: {r.text[:1500]}")
+    _diag(f"📡 Response: {r.text[:800]}")
 
     if r.status_code not in (200, 201):
         error_text = r.text[:800]
@@ -804,70 +920,39 @@ async def _did_create_talk(
 
         try:
             error_data = r.json()
-            _diag(f"📡 Parsed error JSON: {json.dumps(error_data, ensure_ascii=False)[:500]}")
+            _diag(f"📡 Parsed: {json.dumps(error_data, ensure_ascii=False)[:600]}")
 
-            # D-ID يستخدم تنسيقات متعددة
-            err_detail = (
-                error_data.get("description")
-                or error_data.get("message")
-                or error_data.get("detail")
-                or error_data.get("error")
-            )
-
-            if isinstance(err_detail, dict):
-                err_detail = (
-                    err_detail.get("message")
-                    or err_detail.get("description")
-                    or str(err_detail)
-                )
+            err_detail = error_data.get("description") or error_data.get("message")
 
             if err_detail:
                 user_message = f"❌ D-ID: {err_detail}"
 
-            # أضف تفاصيل الحقول الخاطئة
-            if "details" in error_data and isinstance(error_data["details"], list):
-                field_errors = []
-                for d in error_data["details"][:5]:
-                    if isinstance(d, dict):
-                        field = d.get("field", "?")
-                        msg = d.get("message", "?")
-                        field_errors.append(f"  • {field}: {msg}")
-                if field_errors:
-                    user_message += "\n" + "\n".join(field_errors)
+            # تفاصيل الحقول
+            if "details" in error_data and isinstance(error_data["details"], dict):
+                for field, info in list(error_data["details"].items())[:3]:
+                    if isinstance(info, dict):
+                        msg = info.get("message", "?")
+                        user_message += f"\n  • {field}: {msg}"
 
-        except Exception as e:
-            _diag(f"⚠️ Could not parse error JSON: {e}")
+        except Exception:
             user_message = f"❌ D-ID ({r.status_code}): {error_text}"
 
-        # رسائل مخصصة لرموز معينة
+        # رسائل مخصصة
         if r.status_code == 400:
             user_message += (
                 "\n\n💡 تحقق من:\n"
-                "• الصورة واضحة (< 5 MB)\n"
-                "• الوجه واضح ومباشر\n"
-                "• النص < 1000 حرف\n"
-                "• الصوت صالح (< 10 MB)"
+                "• الصورة: واضحة، وجه مباشر، < 5 MB\n"
+                "• النص: < 1000 حرف\n"
+                "• الرابط: يبدأ بـ https"
             )
         elif r.status_code == 401:
-            user_message = (
-                "🔑 مفتاح D-ID غير صالح.\n"
-                "تحقق من DID_API_KEY في Environment."
-            )
+            user_message = "🔑 مفتاح D-ID غير صالح. تحقق من DID_API_KEY."
         elif r.status_code == 402:
-            user_message = (
-                "💳 انتهى رصيدك في D-ID.\n"
-                "افتح https://studio.d-id.com للشحن."
-            )
+            user_message = "💳 انتهى رصيدك في D-ID."
         elif r.status_code == 403:
-            user_message = (
-                "🚫 تم رفض الوصول.\n"
-                "قد يكون المفتاح معطّل أو منتهي الصلاحية."
-            )
+            user_message = "🚫 تم رفض الوصول. المفتاح معطّل أو منتهي."
         elif r.status_code == 429:
-            user_message = (
-                "⏱️ تجاوزت الحد المسموح.\n"
-                "انتظر قليلاً ثم حاول مجدداً."
-            )
+            user_message = "⏱️ تجاوزت الحد المسموح. انتظر قليلاً."
 
         raise HTTPException(
             status_code=r.status_code,
@@ -875,7 +960,7 @@ async def _did_create_talk(
         )
 
     # ═══════════════════════════════════════════════════════════
-    # ✅ 7. نجاح
+    # 6. نجاح
     # ═══════════════════════════════════════════════════════════
     try:
         result = r.json()
@@ -892,7 +977,7 @@ async def _did_create_talk(
         _diag(f"⚠️ Response has no 'id': {result}")
         raise HTTPException(
             status_code=500,
-            detail="D-ID لم يُرجع talk_id. تحقق من Logs.",
+            detail="D-ID لم يُرجع talk_id.",
         )
 
     _diag(f"✅ D-ID talk created: {talk_id}")
@@ -1908,6 +1993,14 @@ async def get_voice_providers():
                 "supports_cloning": True,
                 "note": "الخطة المجانية لا تدعم الاستنساخ",
             },
+            {
+                "id": "did_talking_head",
+                "name": "D-ID Talking Head",
+                "description": "تحريك صورة الشخص",
+                "available": settings.did_configured,
+                "requires_key": True,
+                "supports_cloning": False,
+            },
         ],
     }
 
@@ -1951,6 +2044,10 @@ async def check_permissions():
             "tier": elevenlabs_tier,
             "supports_cloning": elevenlabs_tier in ["starter", "creator", "pro", "scale", "business"],
             "free_tier_note": "Free tier does NOT support voice cloning",
+        },
+        "did_talking_head": {
+            "available": settings.did_configured,
+            "free_tier_minutes": 5,
         },
     }
 
