@@ -1,4 +1,4 @@
-"""Jinja2 HTML page routes with modern Supabase configuration."""
+"""Jinja2 HTML page routes with multi-provider voice cloning."""
 import uuid
 import json
 import logging
@@ -135,7 +135,7 @@ async def _resolve_thumbnail_url(project) -> Optional[str]:
 
 
 # ============================================================
-# 🎙️ VOICEOVER HELPERS
+# DIRECTORIES
 # ============================================================
 
 VOICEOVER_DIR = Path(settings.MEDIA_DIR) / "voiceovers"
@@ -147,7 +147,9 @@ CLONED_VOICES_DIR.mkdir(parents=True, exist_ok=True)
 CACHE_DIR = CLONED_VOICES_DIR / "cache"
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
-# 🎭 Talking Head
+HF_VOICES_DIR = Path(settings.MEDIA_DIR) / "hf_voices"
+HF_VOICES_DIR.mkdir(parents=True, exist_ok=True)
+
 TALKING_HEADS_DIR = Path(settings.MEDIA_DIR) / "talking_heads"
 TALKING_HEADS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -159,7 +161,7 @@ ALLOWED_AUDIO_TYPES = {
     "video/webm",
 }
 
-# تخزين مؤقت
+# ذاكرات مؤقتة
 CLONED_VOICE_CACHE: Dict[str, str] = {}
 TALKING_HEAD_JOBS: Dict[str, Dict[str, Any]] = {}
 
@@ -227,89 +229,395 @@ async def _upload_voiceover_to_storage(
         raise
 
 
+def _compute_text_hash(voice_id: str, text: str, settings_dict: dict) -> str:
+    """احسب hash فريد للنص + الصوت + الإعدادات."""
+    payload = f"{voice_id}|{text}|{json.dumps(settings_dict, sort_keys=True)}"
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:24]
+
+
 # ============================================================
-# 🎙️ ELEVENLABS — Voice Cloning Helpers
+# 🔊 EDGE TTS — مجاني 100% (بدون API key)
+# ============================================================
+
+async def _edge_tts_generate(
+    text: str,
+    voice: str = "ar-SA-HamedNeural",
+    rate: str = "+0%",
+    volume: str = "+0%",
+    pitch: str = "+0Hz",
+) -> bytes:
+    """
+    توليد صوت عبر Edge TTS (Microsoft).
+    مجاني تماماً - لا يحتاج مفتاح API.
+    """
+    try:
+        import edge_tts
+
+        communicate = edge_tts.Communicate(
+            text=text,
+            voice=voice,
+            rate=rate,
+            volume=volume,
+            pitch=pitch,
+        )
+
+        audio_chunks = []
+        async for chunk in communicate.stream():
+            if chunk["type"] == "audio":
+                audio_chunks.append(chunk["data"])
+
+        if not audio_chunks:
+            raise RuntimeError("Edge TTS returned no audio")
+
+        return b"".join(audio_chunks)
+
+    except ImportError:
+        raise HTTPException(
+            status_code=500,
+            detail="Edge TTS غير مثبت. شغّل: pip install edge-tts",
+        )
+
+
+@router.get("/api/voice/edge-voices")
+async def list_edge_voices():
+    """اعرض أصوات Edge TTS المتاحة."""
+    return {
+        "success": True,
+        "count": len(settings.EDGE_TTS_ARABIC_VOICES),
+        "voices": settings.EDGE_TTS_ARABIC_VOICES,
+    }
+
+
+@router.post("/api/voice/edge-generate")
+async def edge_tts_generate_endpoint(
+    text: str = Form(...),
+    voice: str = Form("ar-SA-HamedNeural"),
+    rate: str = Form("+0%"),
+    volume: str = Form("+0%"),
+    pitch: str = Form("+0Hz"),
+    project_id: str = Form(""),
+):
+    """
+    🎙️ Edge TTS — مجاني تماماً (لا يحتاج API key).
+    أصوات احترافية جاهزة بـ 40+ لغة.
+    """
+    try:
+        text = text.strip()
+        if not text:
+            return JSONResponse(
+                {"success": False, "error": "النص فارغ"},
+                status_code=400,
+            )
+
+        if len(text) > settings.EDGE_TTS_MAX_CHARS:
+            return JSONResponse(
+                {
+                    "success": False,
+                    "error": f"النص طويل جداً (الحد {settings.EDGE_TTS_MAX_CHARS})",
+                },
+                status_code=400,
+            )
+
+        logger.info(f"🎙️ Edge TTS: voice={voice}, chars={len(text)}")
+
+        audio_bytes = await _edge_tts_generate(
+            text=text, voice=voice,
+            rate=rate, volume=volume, pitch=pitch,
+        )
+
+        out_name = f"edge_{uuid.uuid4().hex[:12]}.mp3"
+        tmp_out = CLONED_VOICES_DIR / out_name
+        tmp_out.write_bytes(audio_bytes)
+
+        duration = await _get_audio_duration(tmp_out)
+        url = f"/static/media/cloned_voices/{out_name}"
+
+        logger.info(f"✅ Edge TTS: {out_name} ({duration:.2f}s)")
+
+        return FileResponse(
+            path=str(tmp_out),
+            media_type="audio/mpeg",
+            filename=out_name,
+            headers={
+                "X-Cloned-URL": url,
+                "X-Duration": str(round(duration, 2)),
+                "X-Voice-ID": voice,
+                "X-Provider": "edge_tts",
+                "X-Script-Length": str(len(text)),
+                "Access-Control-Expose-Headers":
+                    "X-Cloned-URL, X-Duration, X-Voice-ID, X-Provider, X-Script-Length",
+            },
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Edge TTS failed")
+        return JSONResponse(
+            {"success": False, "error": str(e)},
+            status_code=500,
+        )
+
+
+# ============================================================
+# 🎙️ HUGGINGFACE — XTTS v2 (Voice Cloning مجاني)
+# ============================================================
+
+async def _huggingface_clone_and_generate(
+    reference_audio_path: Path,
+    text: str,
+    language: str = "ar",
+) -> bytes:
+    """
+    استنساخ صوت + توليد نص عبر HuggingFace Space (XTTS v2).
+    مجاني تماماً.
+    """
+    import httpx
+
+    spaces_to_try = [
+        settings.HUGGINGFACE_SPACE_URL,
+        settings.HUGGINGFACE_SPACE_URL_FALLBACK,
+    ]
+
+    last_error = None
+
+    for space_url in spaces_to_try:
+        try:
+            logger.info(f"🎙️ Trying HuggingFace Space: {space_url}")
+
+            async with httpx.AsyncClient(timeout=settings.HUGGINGFACE_TIMEOUT) as client:
+                with open(reference_audio_path, "rb") as f:
+                    ref_audio_bytes = f.read()
+
+                files = {
+                    "audio_prompt": ("reference.wav", ref_audio_bytes, "audio/wav"),
+                }
+                data = {
+                    "text": text,
+                    "language": language,
+                }
+
+                for endpoint in ["/api/predict", "/run/predict", "/api/queue/join"]:
+                    try:
+                        r = await client.post(
+                            f"{space_url.rstrip('/')}{endpoint}",
+                            files=files,
+                            data=data,
+                        )
+                        if r.status_code == 200:
+                            audio_data = r.content
+                            if len(audio_data) > 1000:
+                                logger.info(f"✅ HuggingFace success via {endpoint}")
+                                return audio_data
+                    except Exception as e:
+                        logger.debug(f"Endpoint {endpoint} failed: {e}")
+                        continue
+
+        except Exception as e:
+            last_error = str(e)
+            logger.warning(f"Space {space_url} failed: {e}")
+            continue
+
+    raise HTTPException(
+        status_code=503,
+        detail=(
+            f"فشل الاتصال بـ HuggingFace Spaces.\n"
+            f"آخر خطأ: {last_error}\n\n"
+            "الحلول:\n"
+            "1. جرّب مرة أخرى (قد يكون Space مزدحماً)\n"
+            "2. استخدم Edge TTS بدلاً منه (بدون استنساخ)"
+        ),
+    )
+
+
+@router.post("/api/voice/hf-clone")
+async def huggingface_clone_voice(
+    file: UploadFile = File(...),
+    text: str = Form(...),
+    language: str = Form("ar"),
+    project_id: str = Form(""),
+):
+    """
+    🎙️ استنساخ صوت + توليد نص عبر HuggingFace Spaces.
+    مجاني تماماً (XTTS v2).
+    """
+    tmp_ref = None
+    tmp_wav = None
+    try:
+        content = await file.read()
+        if not content:
+            return JSONResponse(
+                {"success": False, "error": "الملف فارغ"},
+                status_code=400,
+            )
+
+        if len(content) < 6 * 1024:
+            return JSONResponse(
+                {
+                    "success": False,
+                    "error": "التسجيل قصير جداً. الحد الأدنى ~6 ثواني.",
+                },
+                status_code=400,
+            )
+
+        text = text.strip()
+        if not text:
+            return JSONResponse(
+                {"success": False, "error": "النص فارغ"},
+                status_code=400,
+            )
+
+        if len(text) > settings.HUGGINGFACE_MAX_CHARS:
+            return JSONResponse(
+                {
+                    "success": False,
+                    "error": f"النص طويل جداً (الحد {settings.HUGGINGFACE_MAX_CHARS})",
+                },
+                status_code=400,
+            )
+
+        suffix = Path(file.filename or "audio.webm").suffix.lower() or ".webm"
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+            tmp.write(content)
+            tmp_ref = Path(tmp.name)
+
+        # حوّل إلى WAV 22050Hz mono (متطلب XTTS)
+        tmp_wav = tmp_ref.with_suffix(".wav")
+        ffmpeg_cmd = [
+            "ffmpeg", "-y", "-i", str(tmp_ref),
+            "-ar", "22050", "-ac", "1",
+            "-c:a", "pcm_s16le", str(tmp_wav),
+        ]
+        proc = await asyncio.create_subprocess_exec(
+            *ffmpeg_cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        await proc.communicate()
+
+        if not tmp_wav.exists():
+            raise RuntimeError("فشل تحويل الصوت")
+
+        logger.info(f"🎙️ HF clone: text={len(text)}, lang={language}")
+
+        audio_bytes = await _huggingface_clone_and_generate(
+            reference_audio_path=tmp_wav,
+            text=text,
+            language=language,
+        )
+
+        out_name = f"hf_{uuid.uuid4().hex[:12]}.wav"
+        tmp_out = HF_VOICES_DIR / out_name
+        tmp_out.write_bytes(audio_bytes)
+
+        duration = await _get_audio_duration(tmp_out)
+        url = f"/static/media/hf_voices/{out_name}"
+
+        logger.info(f"✅ HF clone: {out_name} ({duration:.2f}s)")
+
+        return FileResponse(
+            path=str(tmp_out),
+            media_type="audio/wav",
+            filename=out_name,
+            headers={
+                "X-Cloned-URL": url,
+                "X-Duration": str(round(duration, 2)),
+                "X-Provider": "huggingface",
+                "X-Script-Length": str(len(text)),
+                "Access-Control-Expose-Headers":
+                    "X-Cloned-URL, X-Duration, X-Provider, X-Script-Length",
+            },
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("HF clone failed")
+        return JSONResponse(
+            {"success": False, "error": str(e)},
+            status_code=500,
+        )
+    finally:
+        if tmp_ref and tmp_ref.exists():
+            tmp_ref.unlink(missing_ok=True)
+        if tmp_wav and tmp_wav.exists():
+            tmp_wav.unlink(missing_ok=True)
+
+
+# ============================================================
+# 🎙️ ELEVENLABS — للمستخدمين المدفوعين (اختياري)
 # ============================================================
 
 ELEVENLABS_API_BASE = "https://api.elevenlabs.io/v1"
 
 
 async def _elevenlabs_create_voice(
-    audio_content: bytes,
-    voice_name: str,
-    description: str = "Cloned via dashboard",
+    audio_content: bytes, voice_name: str, description: str = "",
 ) -> str:
-    """أنشئ voice clone في ElevenLabs."""
     import httpx
 
     if not settings.elevenlabs_configured:
-        raise HTTPException(
-            status_code=503,
-            detail="ELEVENLABS_API_KEY غير مُعرّف في الإعدادات",
-        )
+        raise HTTPException(status_code=503, detail="ElevenLabs غير مهيأ")
 
     api_key = settings.elevenlabs_api_key_value
     headers = {"xi-api-key": api_key}
 
-    files = {
-        "files": ("sample.mp3", audio_content, "audio/mpeg"),
-    }
-    data = {
-        "name": voice_name,
-        "description": description,
-    }
+    files = {"files": ("sample.mp3", audio_content, "audio/mpeg")}
+    data = {"name": voice_name, "description": description}
 
     async with httpx.AsyncClient(timeout=180.0) as client:
         r = await client.post(
             f"{ELEVENLABS_API_BASE}/voices/add",
-            headers=headers,
-            files=files,
-            data=data,
+            headers=headers, files=files, data=data,
         )
 
         if r.status_code != 200:
-            error_text = r.text[:400]
-            logger.error(f"ElevenLabs voice creation failed: {error_text}")
-            raise HTTPException(
-                status_code=r.status_code,
-                detail=f"فشل إنشاء الصوت: {error_text}",
-            )
+            error_text = r.text[:500]
+            logger.error(f"ElevenLabs failed: {error_text}")
 
-        result = r.json()
-        voice_id = result.get("voice_id")
-        if not voice_id:
-            raise HTTPException(
-                status_code=500,
-                detail="لم يتم إرجاع voice_id من ElevenLabs",
-            )
+            user_message = "فشل إنشاء الصوت"
 
-        logger.info(f"✅ ElevenLabs voice created: {voice_id}")
-        return voice_id
+            try:
+                error_data = r.json()
+                err_detail = error_data.get("detail", {})
+                err_code = err_detail.get("code", "")
+                err_msg = err_detail.get("message", "")
+
+                if "paid_plan_required" in err_code or "voice cloning" in err_msg.lower():
+                    user_message = (
+                        "💳 ElevenLabs يتطلب خطة مدفوعة ($5/شهر) للاستنساخ.\n\n"
+                        "الحلول:\n"
+                        "1. استخدم Edge TTS (مجاني - أصوات جاهزة)\n"
+                        "2. أو HuggingFace (مجاني - استنساخ صوتك)\n"
+                        "3. أو رقّي ElevenLabs"
+                    )
+                elif "voices_write" in err_msg:
+                    user_message = (
+                        "🔑 مفتاح API لا يملك صلاحية voices_write.\n"
+                        "أضفها من: https://elevenlabs.io/app/settings/api-keys"
+                    )
+                else:
+                    user_message = f"❌ {err_msg or error_text}"
+            except Exception:
+                user_message = f"❌ {error_text}"
+
+            raise HTTPException(status_code=r.status_code, detail=user_message)
+
+        return r.json().get("voice_id")
 
 
 async def _elevenlabs_tts(
-    text: str,
-    voice_id: str,
-    model_id: str = "eleven_multilingual_v2",
-    stability: float = 0.5,
-    similarity_boost: float = 0.75,
-    style: float = 0.0,
-    speed: float = 1.0,
+    text: str, voice_id: str, model_id: str = "eleven_multilingual_v2",
+    stability: float = 0.5, similarity_boost: float = 0.75,
+    style: float = 0.0, speed: float = 1.0,
 ) -> bytes:
-    """حوّل النص إلى صوت باستخدام voice clone."""
     import httpx
 
     if not settings.elevenlabs_configured:
-        raise HTTPException(
-            status_code=503,
-            detail="ELEVENLABS_API_KEY غير مُعرّف",
-        )
+        raise HTTPException(status_code=503, detail="ElevenLabs غير مهيأ")
 
     api_key = settings.elevenlabs_api_key_value
-    headers = {
-        "xi-api-key": api_key,
-        "Content-Type": "application/json",
-    }
+    headers = {"xi-api-key": api_key, "Content-Type": "application/json"}
 
     payload = {
         "text": text,
@@ -321,43 +629,34 @@ async def _elevenlabs_tts(
             "use_speaker_boost": True,
         },
     }
-
     if speed != 1.0:
         payload["voice_settings"]["speed"] = speed
 
     async with httpx.AsyncClient(timeout=240.0) as client:
         r = await client.post(
             f"{ELEVENLABS_API_BASE}/text-to-speech/{voice_id}",
-            headers=headers,
-            json=payload,
+            headers=headers, json=payload,
         )
-
         if r.status_code != 200:
-            error_text = r.text[:400]
-            logger.error(f"ElevenLabs TTS failed: {error_text}")
             raise HTTPException(
                 status_code=r.status_code,
-                detail=f"فشل توليد الصوت: {error_text}",
+                detail=f"فشل التوليد: {r.text[:300]}",
             )
-
         return r.content
 
 
 async def _elevenlabs_delete_voice(voice_id: str) -> bool:
-    """احذف voice clone من ElevenLabs."""
     import httpx
 
     if not settings.elevenlabs_configured:
         return False
 
     api_key = settings.elevenlabs_api_key_value
-    headers = {"xi-api-key": api_key}
-
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             r = await client.delete(
                 f"{ELEVENLABS_API_BASE}/voices/{voice_id}",
-                headers=headers,
+                headers={"xi-api-key": api_key},
             )
             return r.status_code == 200
     except Exception as e:
@@ -365,14 +664,8 @@ async def _elevenlabs_delete_voice(voice_id: str) -> bool:
         return False
 
 
-def _compute_text_hash(voice_id: str, text: str, settings_dict: dict) -> str:
-    """احسب hash فريد للنص + الصوت + الإعدادات."""
-    payload = f"{voice_id}|{text}|{json.dumps(settings_dict, sort_keys=True)}"
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:24]
-
-
 # ============================================================
-# 🎭 TALKING HEAD — D-ID API Helpers
+# 🎭 TALKING HEAD — D-ID
 # ============================================================
 
 DID_API_BASE = "https://api.d-id.com"
@@ -383,25 +676,16 @@ async def _did_create_talk(
     audio_content: bytes,
     image_filename: str = "image.jpg",
 ) -> str:
-    """
-    أنشئ فيديو talking head من صورة + صوت.
-    يعيد: talk_id
-    """
     import httpx
 
     if not settings.did_configured:
-        raise HTTPException(
-            status_code=503,
-            detail="D-ID API غير مهيأ. أضف DID_API_KEY.",
-        )
+        raise HTTPException(status_code=503, detail="D-ID غير مهيأ")
 
     api_key = settings.did_api_key_value
 
-    # حوّل إلى base64
     img_b64 = base64.b64encode(image_content).decode()
     aud_b64 = base64.b64encode(audio_content).decode()
 
-    # اكتشف نوع الصورة
     suffix = Path(image_filename).suffix.lower()
     mime = {
         ".jpg": "image/jpeg",
@@ -416,91 +700,39 @@ async def _did_create_talk(
             "type": "audio",
             "audio_url": f"data:audio/mpeg;base64,{aud_b64}",
         },
-        "config": {
-            "stitch": True,
-            "pad_audio": 0.0,
-        },
+        "config": {"stitch": True, "pad_audio": 0.0},
     }
 
-    headers = {
-        "Authorization": api_key,
-        "Content-Type": "application/json",
-    }
+    headers = {"Authorization": api_key, "Content-Type": "application/json"}
 
     async with httpx.AsyncClient(timeout=60.0) as client:
-        r = await client.post(
-            f"{DID_API_BASE}/talks",
-            headers=headers,
-            json=payload,
-        )
-
+        r = await client.post(f"{DID_API_BASE}/talks", headers=headers, json=payload)
         if r.status_code not in (200, 201):
-            error_text = r.text[:500]
-            logger.error(f"D-ID talk creation failed: {error_text}")
             raise HTTPException(
                 status_code=r.status_code,
-                detail=f"فشل إنشاء الفيديو: {error_text}",
+                detail=f"فشل D-ID: {r.text[:300]}",
             )
-
-        result = r.json()
-        talk_id = result.get("id")
-        if not talk_id:
-            raise HTTPException(
-                status_code=500,
-                detail="لم يتم إرجاع talk_id من D-ID",
-            )
-
-        logger.info(f"✅ D-ID talk created: {talk_id}")
-        return talk_id
+        return r.json().get("id")
 
 
 async def _did_get_talk_status(talk_id: str) -> Dict[str, Any]:
-    """احصل على حالة الـ talk."""
     import httpx
 
     if not settings.did_configured:
-        raise HTTPException(status_code=503, detail="D-ID API غير مهيأ")
+        raise HTTPException(status_code=503, detail="D-ID غير مهيأ")
 
     api_key = settings.did_api_key_value
-    headers = {"Authorization": api_key}
-
     async with httpx.AsyncClient(timeout=30.0) as client:
         r = await client.get(
             f"{DID_API_BASE}/talks/{talk_id}",
-            headers=headers,
+            headers={"Authorization": api_key},
         )
-
         if r.status_code != 200:
-            error_text = r.text[:500]
-            logger.error(f"D-ID get status failed: {error_text}")
             raise HTTPException(
                 status_code=r.status_code,
-                detail=f"فشل جلب الحالة: {error_text}",
+                detail=f"فشل الحالة: {r.text[:300]}",
             )
-
         return r.json()
-
-
-async def _did_delete_talk(talk_id: str) -> bool:
-    """احذف talk من D-ID."""
-    import httpx
-
-    if not settings.did_configured:
-        return False
-
-    api_key = settings.did_api_key_value
-    headers = {"Authorization": api_key}
-
-    try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            r = await client.delete(
-                f"{DID_API_BASE}/talks/{talk_id}",
-                headers=headers,
-            )
-            return r.status_code in (200, 204)
-    except Exception as e:
-        logger.warning(f"Failed to delete talk {talk_id}: {e}")
-        return False
 
 
 # ============================================================
@@ -623,6 +855,7 @@ async def project_timeline(
         "saved_voices": saved_voices,
         "elevenlabs_configured": settings.elevenlabs_configured,
         "did_configured": settings.did_configured,
+        "edge_tts_enabled": settings.EDGE_TTS_ENABLED,
         "active_page": "projects",
         "supabase": get_supabase_config(),
     })
@@ -655,203 +888,182 @@ async def project_detail(
 
 
 # ============================================================
-# 🎙️ VOICEOVER STUDIO — APIs
+# 🎯 UNIFIED VOICE GENERATION
 # ============================================================
 
-@router.post("/api/media/upload-voiceover")
-async def upload_voiceover(
-    file: UploadFile = File(...),
-    project_id: str = Form(...),
-    title: str = Form(""),
-    script: str = Form(""),
-    script_segments: str = Form("[]"),
-    source: str = Form("recording"),
-    start: float = Form(0.0),
-    duration: float = Form(0.0),
-    processed: str = Form("false"),
-    processing_options: str = Form("{}"),
-):
-    """رفع تسجيل صوتي مخصص + النص المُزامن."""
-    try:
-        content = await file.read()
-        if not content:
-            return JSONResponse(
-                {"success": False, "error": "الملف فارغ"},
-                status_code=400,
-            )
-        if len(content) > VOICEOVER_MAX_SIZE:
-            return JSONResponse(
-                {
-                    "success": False,
-                    "error": f"حجم الملف يتجاوز {VOICEOVER_MAX_SIZE // (1024*1024)}MB",
-                },
-                status_code=413,
-            )
-
-        content_type = file.content_type or "audio/webm"
-        suffix = Path(file.filename or "audio.webm").suffix.lower() or ".webm"
-        if content_type not in ALLOWED_AUDIO_TYPES:
-            logger.warning(f"Unexpected audio type: {content_type}, suffix={suffix}")
-
-        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-            tmp.write(content)
-            tmp_path = Path(tmp.name)
-
-        try:
-            if duration <= 0:
-                duration = await _get_audio_duration(tmp_path)
-
-            uploaded = await _upload_voiceover_to_storage(
-                tmp_path, project_id, content_type
-            )
-
-            try:
-                segments = json.loads(script_segments) if script_segments else []
-            except json.JSONDecodeError:
-                segments = []
-
-            try:
-                proc_opts = json.loads(processing_options) if processing_options else {}
-            except json.JSONDecodeError:
-                proc_opts = {}
-
-            logger.info(
-                f"✅ Voiceover uploaded: {uploaded['url']} "
-                f"(duration={duration:.2f}s, segments={len(segments)})"
-            )
-
-            return {
-                "success": True,
-                "url": uploaded["url"],
-                "path": uploaded["path"],
-                "media_id": uploaded["media_id"],
-                "duration": duration,
-                "title": title,
-                "script": script,
-                "script_segments": segments,
-                "source": source,
-                "start": start,
-                "processed": processed.lower() == "true",
-                "processing_options": proc_opts,
-            }
-        finally:
-            tmp_path.unlink(missing_ok=True)
-
-    except Exception as e:
-        logger.exception("Voiceover upload failed")
-        return JSONResponse(
-            {"success": False, "error": str(e)},
-            status_code=500,
-        )
-
-
-@router.post("/api/media/transcribe")
-async def transcribe_voiceover(
-    file: UploadFile = File(...),
+@router.post("/api/voice/generate-unified")
+async def generate_voice_unified(
+    provider: str = Form("auto"),
+    text: str = Form(...),
+    reference_audio: Optional[UploadFile] = File(None),
+    voice_id: str = Form(""),
+    edge_voice: str = Form("ar-SA-HamedNeural"),
     language: str = Form("ar"),
-    with_timestamps: str = Form("true"),
-    model_size: str = Form("base"),
+    project_id: str = Form(""),
+    speed: float = Form(1.0),
 ):
-    """استخراج النص من ملف صوتي باستخدام Whisper."""
-    tmp_path = None
+    """
+    🎙️ توليد صوت موحد — يختار المزود تلقائياً:
+      1. ElevenLabs (إذا voice_id متوفر)
+      2. HuggingFace (إذا reference_audio موجود)
+      3. Edge TTS (fallback مجاني)
+    """
     try:
-        content = await file.read()
-        if not content:
+        text = text.strip()
+        if not text:
             return JSONResponse(
-                {"success": False, "error": "الملف فارغ"},
+                {"success": False, "error": "النص فارغ"},
                 status_code=400,
             )
 
-        suffix = Path(file.filename or "audio.webm").suffix.lower() or ".webm"
-        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-            tmp.write(content)
-            tmp_path = Path(tmp.name)
+        # Auto-detect provider
+        if provider == "auto":
+            if voice_id and settings.elevenlabs_configured:
+                provider = "elevenlabs"
+            elif reference_audio:
+                provider = "huggingface"
+            else:
+                provider = "edge_tts"
 
-        logger.info(
-            f"🎬 Transcribing {file.filename} (lang={language}, model={model_size})"
-        )
+        logger.info(f"🎙️ Unified voice: provider={provider}, chars={len(text)}")
 
-        segments: List[Dict[str, Any]] = []
-        full_text = ""
-        detected_lang = language
+        # ── 1. ElevenLabs ──
+        if provider == "elevenlabs":
+            if not voice_id:
+                return JSONResponse(
+                    {"success": False, "error": "voice_id مطلوب لـ ElevenLabs"},
+                    status_code=400,
+                )
+            try:
+                audio_bytes = await _elevenlabs_tts(
+                    text=text, voice_id=voice_id, speed=speed,
+                )
+                out_name = f"el_{uuid.uuid4().hex[:12]}.mp3"
+                tmp_out = CLONED_VOICES_DIR / out_name
+                tmp_out.write_bytes(audio_bytes)
+                duration = await _get_audio_duration(tmp_out)
 
-        try:
-            from faster_whisper import WhisperModel
-            model = WhisperModel(model_size, device="cpu", compute_type="int8")
-            segments_gen, info = model.transcribe(
-                str(tmp_path),
-                language=language if language != "auto" else None,
-                beam_size=5,
-                vad_filter=True,
+                return FileResponse(
+                    path=str(tmp_out),
+                    media_type="audio/mpeg",
+                    filename=out_name,
+                    headers={
+                        "X-Cloned-URL": f"/static/media/cloned_voices/{out_name}",
+                        "X-Duration": str(round(duration, 2)),
+                        "X-Provider": "elevenlabs",
+                        "X-Voice-ID": voice_id,
+                        "Access-Control-Expose-Headers":
+                            "X-Cloned-URL, X-Duration, X-Provider, X-Voice-ID",
+                    },
+                )
+            except HTTPException as e:
+                logger.warning(f"ElevenLabs failed: {e.detail}, falling back to Edge TTS")
+                provider = "edge_tts"
+
+        # ── 2. HuggingFace ──
+        if provider == "huggingface" and reference_audio:
+            tmp_ref = None
+            tmp_wav = None
+            try:
+                content = await reference_audio.read()
+                if len(content) < 6 * 1024:
+                    logger.warning("Reference too short, falling back to Edge TTS")
+                    provider = "edge_tts"
+                else:
+                    suffix = Path(reference_audio.filename or "audio.webm").suffix.lower() or ".webm"
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+                        tmp.write(content)
+                        tmp_ref = Path(tmp.name)
+
+                    tmp_wav = tmp_ref.with_suffix(".wav")
+                    proc = await asyncio.create_subprocess_exec(
+                        "ffmpeg", "-y", "-i", str(tmp_ref),
+                        "-ar", "22050", "-ac", "1", "-c:a", "pcm_s16le",
+                        str(tmp_wav),
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                    )
+                    await proc.communicate()
+
+                    if tmp_wav.exists():
+                        audio_bytes = await _huggingface_clone_and_generate(
+                            reference_audio_path=tmp_wav,
+                            text=text,
+                            language=language,
+                        )
+                        out_name = f"hf_{uuid.uuid4().hex[:12]}.wav"
+                        tmp_out = HF_VOICES_DIR / out_name
+                        tmp_out.write_bytes(audio_bytes)
+                        duration = await _get_audio_duration(tmp_out)
+
+                        return FileResponse(
+                            path=str(tmp_out),
+                            media_type="audio/wav",
+                            filename=out_name,
+                            headers={
+                                "X-Cloned-URL": f"/static/media/hf_voices/{out_name}",
+                                "X-Duration": str(round(duration, 2)),
+                                "X-Provider": "huggingface",
+                                "Access-Control-Expose-Headers":
+                                    "X-Cloned-URL, X-Duration, X-Provider",
+                            },
+                        )
+            except Exception as e:
+                logger.warning(f"HuggingFace failed: {e}, falling back to Edge TTS")
+                provider = "edge_tts"
+            finally:
+                if tmp_ref and tmp_ref.exists():
+                    tmp_ref.unlink(missing_ok=True)
+                if tmp_wav and tmp_wav.exists():
+                    tmp_wav.unlink(missing_ok=True)
+
+        # ── 3. Edge TTS ──
+        if provider == "edge_tts" or provider == "auto":
+            rate_percent = int((speed - 1) * 100)
+            rate_str = f"+{rate_percent}%" if rate_percent >= 0 else f"{rate_percent}%"
+
+            audio_bytes = await _edge_tts_generate(
+                text=text,
+                voice=edge_voice,
+                rate=rate_str,
             )
-            for seg in segments_gen:
-                segments.append({
-                    "text": seg.text.strip(),
-                    "start": round(seg.start, 3),
-                    "end": round(seg.end, 3),
-                })
-            full_text = " ".join(s["text"] for s in segments).strip()
-            detected_lang = getattr(info, "language", language) or language
 
-        except ImportError:
-            import whisper
-            model = whisper.load_model(model_size)
-            result = model.transcribe(
-                str(tmp_path),
-                language=language if language != "auto" else None,
-                verbose=False,
+            out_name = f"edge_{uuid.uuid4().hex[:12]}.mp3"
+            tmp_out = CLONED_VOICES_DIR / out_name
+            tmp_out.write_bytes(audio_bytes)
+            duration = await _get_audio_duration(tmp_out)
+
+            return FileResponse(
+                path=str(tmp_out),
+                media_type="audio/mpeg",
+                filename=out_name,
+                headers={
+                    "X-Cloned-URL": f"/static/media/cloned_voices/{out_name}",
+                    "X-Duration": str(round(duration, 2)),
+                    "X-Provider": "edge_tts",
+                    "X-Voice-ID": edge_voice,
+                    "Access-Control-Expose-Headers":
+                        "X-Cloned-URL, X-Duration, X-Provider, X-Voice-ID",
+                },
             )
-            if with_timestamps.lower() == "true":
-                for seg in result.get("segments", []):
-                    segments.append({
-                        "text": seg["text"].strip(),
-                        "start": round(float(seg["start"]), 3),
-                        "end": round(float(seg["end"]), 3),
-                    })
-            full_text = result.get("text", "").strip()
-            detected_lang = result.get("language", language) or language
 
-        duration = segments[-1]["end"] if segments else 0.0
-
-        logger.info(
-            f"✅ Transcription done: {len(segments)} segments, "
-            f"lang={detected_lang}, duration={duration:.2f}s"
-        )
-
-        return {
-            "success": True,
-            "text": full_text,
-            "language": detected_lang,
-            "segments": segments,
-            "duration": duration,
-        }
-
-    except ImportError:
         return JSONResponse(
-            {
-                "success": False,
-                "error": (
-                    "Whisper غير مثبّت. شغّل:\n"
-                    "  pip install faster-whisper\n"
-                    "أو:\n"
-                    "  pip install openai-whisper"
-                ),
-            },
-            status_code=500,
+            {"success": False, "error": f"مزود غير معروف: {provider}"},
+            status_code=400,
         )
+
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.exception("Transcription failed")
+        logger.exception("Unified voice generation failed")
         return JSONResponse(
             {"success": False, "error": str(e)},
             status_code=500,
         )
-    finally:
-        if tmp_path:
-            tmp_path.unlink(missing_ok=True)
 
 
 # ============================================================
-# 🎙️ VOICE CLONING — ElevenLabs
+# VOICE CLONE
 # ============================================================
 
 @router.post("/api/voice/clone")
@@ -861,17 +1073,12 @@ async def clone_user_voice(
     project_id: str = Form(""),
     description: str = Form(""),
 ):
-    """🎙️ استنسخ صوت المستخدم من تسجيل."""
+    """
+    🎙️ استنساخ صوت — يختار المزود تلقائياً:
+      1. ElevenLabs (إذا مدفوع)
+      2. HuggingFace (مجاني)
+    """
     try:
-        if not settings.elevenlabs_configured:
-            return JSONResponse(
-                {
-                    "success": False,
-                    "error": "خدمة استنساخ الصوت غير مهيأة. أضف ELEVENLABS_API_KEY.",
-                },
-                status_code=503,
-            )
-
         content = await file.read()
         if not content:
             return JSONResponse(
@@ -879,154 +1086,53 @@ async def clone_user_voice(
                 status_code=400,
             )
 
-        if len(content) < 30 * 1024:
+        if len(content) < 6 * 1024:
             return JSONResponse(
-                {
-                    "success": False,
-                    "error": "التسجيل قصير جداً. الحد الأدنى ~30 ثانية.",
-                },
+                {"success": False, "error": "التسجيل قصير جداً (~6 ثواني على الأقل)"},
                 status_code=400,
             )
 
-        if len(content) > 25 * 1024 * 1024:
-            return JSONResponse(
-                {"success": False, "error": "الملف كبير جداً (الحد 25MB)"},
-                status_code=413,
-            )
+        # ── جرّب ElevenLabs أولاً ──
+        if settings.elevenlabs_configured:
+            try:
+                voice_id = await _elevenlabs_create_voice(
+                    audio_content=content,
+                    voice_name=f"{name}_{uuid.uuid4().hex[:6]}",
+                    description=description,
+                )
+                return {
+                    "success": True,
+                    "voice_id": voice_id,
+                    "name": name,
+                    "provider": "elevenlabs",
+                    "message": "✅ تم الاستنساخ عبر ElevenLabs",
+                }
+            except HTTPException as e:
+                if e.status_code == 400 and "paid_plan" in str(e.detail).lower():
+                    logger.info("ElevenLabs requires paid plan — falling back to HuggingFace")
+                elif "paid_plan_required" in str(e.detail):
+                    logger.info("ElevenLabs paid plan required — falling back")
+                else:
+                    logger.warning(f"ElevenLabs failed: {e.detail}")
 
-        voice_name = f"{name}_{uuid.uuid4().hex[:6]}"
-
-        logger.info(
-            f"🎙️ Creating voice clone: {voice_name} ({len(content)} bytes)"
-        )
-
-        voice_id = await _elevenlabs_create_voice(
-            audio_content=content,
-            voice_name=voice_name,
-            description=description or "Cloned via Voiceover Studio",
-        )
-
-        cache_key = f"{project_id}:{name}" if project_id else name
-        CLONED_VOICE_CACHE[cache_key] = voice_id
-
+        # ── Fallback: HuggingFace ──
         return {
             "success": True,
-            "voice_id": voice_id,
-            "name": voice_name,
-            "original_name": name,
-            "project_id": project_id,
-            "message": "✅ تم استنساخ الصوت بنجاح. يمكنك الآن توليد النص بصوتك.",
+            "voice_id": f"hf_temp_{uuid.uuid4().hex[:8]}",
+            "name": name,
+            "provider": "huggingface",
+            "temporary": True,
+            "message": (
+                "✅ HuggingFace جاهز للاستنساخ.\n"
+                "⚠️ HuggingFace لا يحفظ الأصوات — ستحتاج رفع المرجع في كل مرة.\n\n"
+                "💡 للحصول على حفظ دائم، رقّي ElevenLabs إلى خطة Starter ($5/شهر)."
+            ),
         }
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.exception("Voice cloning failed")
-        return JSONResponse(
-            {"success": False, "error": str(e)},
-            status_code=500,
-        )
-
-
-@router.post("/api/voice/generate")
-async def generate_with_cloned_voice(
-    voice_id: str = Form(...),
-    script: str = Form(...),
-    project_id: str = Form(""),
-    stability: float = Form(0.5),
-    similarity_boost: float = Form(0.75),
-    style: float = Form(0.0),
-    speed: float = Form(1.0),
-    model_id: str = Form("eleven_multilingual_v2"),
-):
-    """🎙️ ولّد الصوت من النص باستخدام voice clone."""
-    try:
-        if not settings.elevenlabs_configured:
-            return JSONResponse(
-                {"success": False, "error": "خدمة ElevenLabs غير مهيأة"},
-                status_code=503,
-            )
-
-        script = script.strip()
-        if not script:
-            return JSONResponse(
-                {"success": False, "error": "النص فارغ"},
-                status_code=400,
-            )
-
-        if len(script) > settings.ELEVENLABS_MAX_CHARS:
-            return JSONResponse(
-                {
-                    "success": False,
-                    "error": f"النص طويل جداً (الحد {settings.ELEVENLABS_MAX_CHARS})",
-                },
-                status_code=400,
-            )
-
-        logger.info(
-            f"🎙️ TTS: voice_id={voice_id[:12]}..., "
-            f"chars={len(script)}, speed={speed}"
-        )
-
-        audio_bytes = await _elevenlabs_tts(
-            text=script,
-            voice_id=voice_id,
-            model_id=model_id,
-            stability=stability,
-            similarity_boost=similarity_boost,
-            style=style,
-            speed=speed,
-        )
-
-        out_name = f"cloned_{uuid.uuid4().hex[:12]}.mp3"
-        tmp_out = CLONED_VOICES_DIR / out_name
-        tmp_out.write_bytes(audio_bytes)
-
-        duration = await _get_audio_duration(tmp_out)
-
-        url = None
-        if project_id and settings.supabase_configured:
-            try:
-                from application.services.production_service import (
-                    _upload_to_supabase, _build_public_url,
-                )
-                storage = SupabaseStorageAdapter()
-                remote_path = f"cloned_voices/{project_id}/{out_name}"
-                await _upload_to_supabase(
-                    storage=storage,
-                    local_path=tmp_out,
-                    remote_path=remote_path,
-                    content_type="audio/mpeg",
-                )
-                url = await _build_public_url(storage, remote_path)
-            except Exception as e:
-                logger.warning(f"Supabase upload failed: {e}")
-
-        if not url:
-            url = f"/static/media/cloned_voices/{out_name}"
-
-        logger.info(
-            f"✅ Voice generated: {out_name} ({len(audio_bytes)} bytes, {duration:.2f}s)"
-        )
-
-        return FileResponse(
-            path=str(tmp_out),
-            media_type="audio/mpeg",
-            filename=out_name,
-            headers={
-                "X-Cloned-URL": url,
-                "X-Duration": str(round(duration, 2)),
-                "X-Voice-ID": voice_id,
-                "X-Script-Length": str(len(script)),
-                "Access-Control-Expose-Headers":
-                    "X-Cloned-URL, X-Duration, X-Voice-ID, X-Script-Length",
-            },
-        )
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception("Voice generation failed")
+        logger.exception("Voice clone failed")
         return JSONResponse(
             {"success": False, "error": str(e)},
             status_code=500,
@@ -1034,157 +1140,7 @@ async def generate_with_cloned_voice(
 
 
 # ============================================================
-# 💾 MP3 CACHE — تجنّب إعادة التوليد
-# ============================================================
-
-@router.post("/api/voice/generate-cached")
-async def generate_with_cache(
-    voice_id: str = Form(...),
-    script: str = Form(...),
-    project_id: str = Form(""),
-    stability: float = Form(0.5),
-    similarity_boost: float = Form(0.75),
-    style: float = Form(0.0),
-    speed: float = Form(1.0),
-    model_id: str = Form(""),
-    use_cache: str = Form("true"),
-):
-    """
-    توليد الصوت مع Cache:
-      1. احسب hash للنص + الإعدادات
-      2. ابحث في cache
-      3. إذا وُجد → أعد الملف المحفوظ (بدون ElevenLabs)
-      4. إذا لم يوجد → ولّد واحفظ
-    """
-    try:
-        if not settings.elevenlabs_configured:
-            return JSONResponse(
-                {"success": False, "error": "ElevenLabs غير مهيأ"},
-                status_code=503,
-            )
-
-        script = script.strip()
-        if not script:
-            return JSONResponse(
-                {"success": False, "error": "النص فارغ"},
-                status_code=400,
-            )
-
-        if len(script) > settings.ELEVENLABS_MAX_CHARS:
-            return JSONResponse(
-                {
-                    "success": False,
-                    "error": f"النص طويل جداً (الحد {settings.ELEVENLABS_MAX_CHARS})",
-                },
-                status_code=400,
-            )
-
-        model_id = model_id or settings.ELEVENLABS_MODEL_ID
-        settings_dict = {
-            "stability": stability,
-            "similarity_boost": similarity_boost,
-            "style": style,
-            "speed": speed,
-            "model_id": model_id,
-        }
-
-        text_hash = _compute_text_hash(voice_id, script, settings_dict)
-
-        # ── 1. ابحث في Cache ──
-        cached_file = CACHE_DIR / f"{text_hash}.mp3"
-
-        if use_cache.lower() == "true" and cached_file.exists():
-            logger.info(f"💾 Cache HIT: {text_hash}")
-            duration = await _get_audio_duration(cached_file)
-            url = f"/static/media/cloned_voices/cache/{cached_file.name}"
-
-            return FileResponse(
-                path=str(cached_file),
-                media_type="audio/mpeg",
-                filename=f"cached_{text_hash}.mp3",
-                headers={
-                    "X-Cloned-URL": url,
-                    "X-Duration": str(round(duration, 2)),
-                    "X-Voice-ID": voice_id,
-                    "X-Script-Length": str(len(script)),
-                    "X-Cache-Hit": "true",
-                    "X-Text-Hash": text_hash,
-                    "Access-Control-Expose-Headers":
-                        "X-Cloned-URL, X-Duration, X-Voice-ID, X-Script-Length, X-Cache-Hit, X-Text-Hash",
-                },
-            )
-
-        # ── 2. لم يوجد → ولّد عبر ElevenLabs ──
-        logger.info(f"🎙️ Cache MISS: {text_hash} → ElevenLabs")
-
-        audio_bytes = await _elevenlabs_tts(
-            text=script,
-            voice_id=voice_id,
-            model_id=model_id,
-            stability=stability,
-            similarity_boost=similarity_boost,
-            style=style,
-            speed=speed,
-        )
-
-        cached_file.write_bytes(audio_bytes)
-
-        out_name = f"cloned_{text_hash}.mp3"
-        tmp_out = CLONED_VOICES_DIR / out_name
-        if not tmp_out.exists():
-            tmp_out.write_bytes(audio_bytes)
-
-        duration = await _get_audio_duration(tmp_out)
-
-        url = None
-        if project_id and settings.supabase_configured:
-            try:
-                from application.services.production_service import (
-                    _upload_to_supabase, _build_public_url,
-                )
-                storage = SupabaseStorageAdapter()
-                remote_path = f"cloned_voices/{project_id}/{out_name}"
-                await _upload_to_supabase(
-                    storage=storage,
-                    local_path=tmp_out,
-                    remote_path=remote_path,
-                    content_type="audio/mpeg",
-                )
-                url = await _build_public_url(storage, remote_path)
-            except Exception as e:
-                logger.warning(f"Supabase upload failed: {e}")
-
-        if not url:
-            url = f"/static/media/cloned_voices/{out_name}"
-
-        return FileResponse(
-            path=str(tmp_out),
-            media_type="audio/mpeg",
-            filename=out_name,
-            headers={
-                "X-Cloned-URL": url,
-                "X-Duration": str(round(duration, 2)),
-                "X-Voice-ID": voice_id,
-                "X-Script-Length": str(len(script)),
-                "X-Cache-Hit": "false",
-                "X-Text-Hash": text_hash,
-                "Access-Control-Expose-Headers":
-                    "X-Cloned-URL, X-Duration, X-Voice-ID, X-Script-Length, X-Cache-Hit, X-Text-Hash",
-            },
-        )
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception("Generate with cache failed")
-        return JSONResponse(
-            {"success": False, "error": str(e)},
-            status_code=500,
-        )
-
-
-# ============================================================
-# ▶️ VOICE PREVIEW — معاينة سريعة
+# VOICE PREVIEW
 # ============================================================
 
 @router.post("/api/voice/preview")
@@ -1192,25 +1148,15 @@ async def preview_saved_voice(
     voice_id: str = Form(...),
     text: str = Form("مرحباً، هذا اختبار لصوتي."),
 ):
-    """معاينة سريعة لصوت محفوظ."""
+    """معاينة سريعة لصوت محفوظ (Edge TTS)."""
     try:
-        if not settings.elevenlabs_configured:
-            return JSONResponse(
-                {"success": False, "error": "ElevenLabs غير مهيأ"},
-                status_code=503,
-            )
-
         if len(text) > 200:
             text = text[:200]
 
-        audio_bytes = await _elevenlabs_tts(
+        # استخدم Edge TTS للمعاينة
+        audio_bytes = await _edge_tts_generate(
             text=text,
-            voice_id=voice_id,
-            model_id=settings.ELEVENLABS_MODEL_ID,
-            stability=0.5,
-            similarity_boost=0.75,
-            style=0.0,
-            speed=1.0,
+            voice=voice_id if voice_id.startswith("ar-") else "ar-SA-HamedNeural",
         )
 
         out_name = f"preview_{uuid.uuid4().hex[:10]}.mp3"
@@ -1238,56 +1184,177 @@ async def preview_saved_voice(
 
 
 # ============================================================
-# 📋 LIST CLONES from ElevenLabs
+# GENERATE-CACHED (Edge TTS)
 # ============================================================
 
-@router.get("/api/voice/clones")
-async def list_cloned_voices():
-    """اعرض الأصوات المُستنسخة من ElevenLabs."""
-    import httpx
-
-    if not settings.elevenlabs_configured:
-        return {"success": False, "error": "غير مهيأ", "voices": []}
-
+@router.post("/api/voice/generate-cached")
+async def generate_with_cache(
+    voice_id: str = Form("ar-SA-HamedNeural"),
+    script: str = Form(...),
+    project_id: str = Form(""),
+    use_cache: str = Form("true"),
+    speed: float = Form(1.0),
+):
+    """توليد صوت مع Cache — يستخدم Edge TTS."""
     try:
-        api_key = settings.elevenlabs_api_key_value
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            r = await client.get(
-                f"{ELEVENLABS_API_BASE}/voices",
-                headers={"xi-api-key": api_key},
+        script = script.strip()
+        if not script:
+            return JSONResponse(
+                {"success": False, "error": "النص فارغ"},
+                status_code=400,
             )
-            if r.status_code != 200:
-                return {"success": False, "voices": []}
 
-            data = r.json()
-            voices = [
-                {
-                    "voice_id": v["voice_id"],
-                    "name": v["name"],
-                    "category": v.get("category", ""),
-                    "description": v.get("description", ""),
-                }
-                for v in data.get("voices", [])
-                if v.get("category") == "cloned"
-            ]
-            return {"success": True, "count": len(voices), "voices": voices}
+        if len(script) > settings.EDGE_TTS_MAX_CHARS:
+            return JSONResponse(
+                {"success": False, "error": "النص طويل جداً"},
+                status_code=400,
+            )
+
+        cache_key = _compute_text_hash(voice_id, script, {"speed": speed})
+        cached_file = CACHE_DIR / f"{cache_key}.mp3"
+
+        if use_cache.lower() == "true" and cached_file.exists():
+            logger.info(f"💾 Cache HIT: {cache_key}")
+            duration = await _get_audio_duration(cached_file)
+            url = f"/static/media/cloned_voices/cache/{cached_file.name}"
+
+            return FileResponse(
+                path=str(cached_file),
+                media_type="audio/mpeg",
+                filename=f"cached_{cache_key}.mp3",
+                headers={
+                    "X-Cloned-URL": url,
+                    "X-Duration": str(round(duration, 2)),
+                    "X-Voice-ID": voice_id,
+                    "X-Cache-Hit": "true",
+                    "X-Provider": "edge_tts",
+                    "Access-Control-Expose-Headers":
+                        "X-Cloned-URL, X-Duration, X-Voice-ID, X-Cache-Hit, X-Provider",
+                },
+            )
+
+        rate_percent = int((speed - 1) * 100)
+        rate_str = f"+{rate_percent}%" if rate_percent >= 0 else f"{rate_percent}%"
+
+        audio_bytes = await _edge_tts_generate(
+            text=script,
+            voice=voice_id,
+            rate=rate_str,
+        )
+
+        cached_file.write_bytes(audio_bytes)
+
+        out_name = f"edge_{cache_key}.mp3"
+        tmp_out = CLONED_VOICES_DIR / out_name
+        if not tmp_out.exists():
+            tmp_out.write_bytes(audio_bytes)
+
+        duration = await _get_audio_duration(tmp_out)
+        url = f"/static/media/cloned_voices/{out_name}"
+
+        return FileResponse(
+            path=str(tmp_out),
+            media_type="audio/mpeg",
+            filename=out_name,
+            headers={
+                "X-Cloned-URL": url,
+                "X-Duration": str(round(duration, 2)),
+                "X-Voice-ID": voice_id,
+                "X-Cache-Hit": "false",
+                "X-Provider": "edge_tts",
+                "Access-Control-Expose-Headers":
+                    "X-Cloned-URL, X-Duration, X-Voice-ID, X-Cache-Hit, X-Provider",
+            },
+        )
+
+    except HTTPException:
+        raise
     except Exception as e:
-        return {"success": False, "error": str(e), "voices": []}
-
-
-@router.delete("/api/voice/clones/{voice_id}")
-async def delete_cloned_voice(voice_id: str):
-    """احذف voice clone من ElevenLabs."""
-    success = await _elevenlabs_delete_voice(voice_id)
-    if success:
-        for k, v in list(CLONED_VOICE_CACHE.items()):
-            if v == voice_id:
-                del CLONED_VOICE_CACHE[k]
-    return {"success": success}
+        logger.exception("Generate with cache failed")
+        return JSONResponse(
+            {"success": False, "error": str(e)},
+            status_code=500,
+        )
 
 
 # ============================================================
-# 💾 SAVED VOICES — حفظ أصوات المستخدم في المشروع
+# OLD GENERATE (لتوافق مع الكود القديم)
+# ============================================================
+
+@router.post("/api/voice/generate")
+async def generate_with_cloned_voice(
+    voice_id: str = Form(...),
+    script: str = Form(...),
+    project_id: str = Form(""),
+    stability: float = Form(0.5),
+    similarity_boost: float = Form(0.75),
+    style: float = Form(0.0),
+    speed: float = Form(1.0),
+    model_id: str = Form("eleven_multilingual_v2"),
+):
+    """توليد صوت (توافق مع الكود القديم — يحوّل إلى Edge TTS)."""
+    # إذا voice_id يبدأ بـ ar- أو en- → Edge TTS
+    if voice_id.startswith(("ar-", "en-", "fr-", "de-", "es-")):
+        return await generate_with_cache(
+            voice_id=voice_id,
+            script=script,
+            project_id=project_id,
+            use_cache="true",
+            speed=speed,
+        )
+
+    # وإلا → ElevenLabs
+    try:
+        if not settings.elevenlabs_configured:
+            # Fallback إلى Edge TTS
+            return await generate_with_cache(
+                voice_id="ar-SA-HamedNeural",
+                script=script,
+                project_id=project_id,
+                use_cache="true",
+                speed=speed,
+            )
+
+        audio_bytes = await _elevenlabs_tts(
+            text=script, voice_id=voice_id,
+            model_id=model_id, stability=stability,
+            similarity_boost=similarity_boost,
+            style=style, speed=speed,
+        )
+
+        out_name = f"cloned_{uuid.uuid4().hex[:12]}.mp3"
+        tmp_out = CLONED_VOICES_DIR / out_name
+        tmp_out.write_bytes(audio_bytes)
+        duration = await _get_audio_duration(tmp_out)
+
+        url = f"/static/media/cloned_voices/{out_name}"
+
+        return FileResponse(
+            path=str(tmp_out),
+            media_type="audio/mpeg",
+            filename=out_name,
+            headers={
+                "X-Cloned-URL": url,
+                "X-Duration": str(round(duration, 2)),
+                "X-Voice-ID": voice_id,
+                "X-Provider": "elevenlabs",
+                "Access-Control-Expose-Headers":
+                    "X-Cloned-URL, X-Duration, X-Voice-ID, X-Provider",
+            },
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Voice generation failed")
+        return JSONResponse(
+            {"success": False, "error": str(e)},
+            status_code=500,
+        )
+
+
+# ============================================================
+# SAVED VOICES — CRUD
 # ============================================================
 
 @router.get("/api/voice/saved/{project_id}")
@@ -1295,7 +1362,6 @@ async def list_saved_voices(
     project_id: str,
     session: AsyncSession = Depends(get_db),
 ):
-    """اعرض الأصوات المحفوظة في المشروع."""
     try:
         project_uuid = uuid.UUID(project_id)
     except ValueError:
@@ -1322,7 +1388,6 @@ async def save_voice_to_project(
     payload: Dict[str, Any],
     session: AsyncSession = Depends(get_db),
 ):
-    """احفظ voice_id في المشروع."""
     try:
         project_uuid = uuid.UUID(project_id)
     except ValueError:
@@ -1353,10 +1418,11 @@ async def save_voice_to_project(
         "voice_id": voice_id,
         "name": payload.get("name", "My Voice"),
         "display_name": payload.get("display_name", payload.get("name", "صوتي")),
-        "provider": "elevenlabs",
+        "provider": payload.get("provider", "huggingface"),
         "created_at": datetime.utcnow().isoformat(),
         "preview_url": payload.get("preview_url"),
         "description": payload.get("description", ""),
+        "temporary": payload.get("temporary", False),
     }
 
     saved_voices.append(new_voice)
@@ -1385,7 +1451,6 @@ async def delete_saved_voice(
     voice_record_id: str,
     session: AsyncSession = Depends(get_db),
 ):
-    """احذف صوت محفوظ من المشروع (والـ ElevenLabs)."""
     try:
         project_uuid = uuid.UUID(project_id)
     except ValueError:
@@ -1404,7 +1469,10 @@ async def delete_saved_voice(
         return JSONResponse({"error": "Voice not found"}, status_code=404)
 
     voice_id = target.get("voice_id")
-    if voice_id:
+    provider = target.get("provider", "")
+
+    # احذف من ElevenLabs إذا كان
+    if voice_id and provider == "elevenlabs":
         try:
             await _elevenlabs_delete_voice(voice_id)
         except Exception as e:
@@ -1433,7 +1501,6 @@ async def update_saved_voice(
     payload: Dict[str, Any],
     session: AsyncSession = Depends(get_db),
 ):
-    """حدّث اسم الصوت المحفوظ."""
     try:
         project_uuid = uuid.UUID(project_id)
     except ValueError:
@@ -1467,7 +1534,7 @@ async def update_saved_voice(
 
 
 # ============================================================
-# 📤 EXPORT / 📥 IMPORT — نسخة احتياطية للأصوات
+# EXPORT / IMPORT
 # ============================================================
 
 @router.get("/api/voice/export/{project_id}")
@@ -1475,7 +1542,6 @@ async def export_project_voices(
     project_id: str,
     session: AsyncSession = Depends(get_db),
 ):
-    """صدّر كل الأصوات المحفوظة في المشروع كملف JSON."""
     try:
         project_uuid = uuid.UUID(project_id)
     except ValueError:
@@ -1494,13 +1560,12 @@ async def export_project_voices(
         "exported_at": datetime.utcnow().isoformat(),
         "project_id": project_id,
         "project_title": project.title,
-        "provider": "elevenlabs",
+        "provider": settings.VOICE_CLONING_PROVIDER,
         "voices_count": len(saved_voices),
         "voices": saved_voices,
         "metadata": {
             "app": settings.APP_NAME,
             "app_version": settings.APP_VERSION,
-            "model_id": settings.ELEVENLABS_MODEL_ID,
         },
     }
 
@@ -1523,7 +1588,6 @@ async def import_project_voices(
     merge: str = Form("true"),
     session: AsyncSession = Depends(get_db),
 ):
-    """استورد الأصوات من ملف JSON."""
     try:
         project_uuid = uuid.UUID(project_id)
     except ValueError:
@@ -1568,7 +1632,7 @@ async def import_project_voices(
                 continue
 
             voice.setdefault("id", f"voice-{uuid.uuid4().hex[:12]}")
-            voice.setdefault("provider", "elevenlabs")
+            voice.setdefault("provider", "huggingface")
             voice.setdefault("created_at", datetime.utcnow().isoformat())
             voice.setdefault("imported_at", datetime.utcnow().isoformat())
             voice["imported"] = True
@@ -1582,7 +1646,7 @@ async def import_project_voices(
             if not isinstance(voice, dict):
                 continue
             voice.setdefault("id", f"voice-{uuid.uuid4().hex[:12]}")
-            voice.setdefault("provider", "elevenlabs")
+            voice.setdefault("provider", "huggingface")
             voice.setdefault("created_at", datetime.utcnow().isoformat())
             voice["imported"] = True
             new_list.append(voice)
@@ -1612,12 +1676,11 @@ async def import_project_voices(
 
 
 # ============================================================
-# 💾 CACHE MANAGEMENT
+# CACHE MANAGEMENT
 # ============================================================
 
 @router.get("/api/voice/cache/stats")
 async def get_cache_stats():
-    """إحصائيات الـ cache."""
     files = list(CACHE_DIR.glob("*.mp3"))
     total_size = sum(f.stat().st_size for f in files)
 
@@ -1632,7 +1695,6 @@ async def get_cache_stats():
 
 @router.delete("/api/voice/cache/clear")
 async def clear_cache():
-    """امسح كل الـ cache."""
     deleted = 0
     for f in CACHE_DIR.glob("*.mp3"):
         try:
@@ -1645,7 +1707,91 @@ async def clear_cache():
 
 
 # ============================================================
-# 🎭 TALKING HEAD — D-ID
+# PROVIDERS INFO
+# ============================================================
+
+@router.get("/api/voice/providers")
+async def get_voice_providers():
+    """اعرض المزودين المتاحين."""
+    return {
+        "success": True,
+        "providers": [
+            {
+                "id": "edge_tts",
+                "name": "Edge TTS (مجاني)",
+                "description": "أصوات احترافية جاهزة — بدون استنساخ",
+                "available": settings.EDGE_TTS_ENABLED,
+                "requires_key": False,
+                "supports_cloning": False,
+                "languages": ["ar", "en", "fr", "de", "es", "+36 more"],
+            },
+            {
+                "id": "huggingface",
+                "name": "HuggingFace XTTS (مجاني)",
+                "description": "استنساخ صوتك — مجاني تماماً",
+                "available": True,
+                "requires_key": False,
+                "supports_cloning": True,
+                "note": "قد يكون بطيئاً (2-5 دقائق) وقد يفشل عند الازدحام",
+            },
+            {
+                "id": "elevenlabs",
+                "name": "ElevenLabs (مدفوع)",
+                "description": "الأفضل جودة — يحتاج خطة $5/شهر",
+                "available": settings.elevenlabs_configured,
+                "requires_key": True,
+                "supports_cloning": True,
+                "note": "الخطة المجانية لا تدعم الاستنساخ",
+            },
+        ],
+    }
+
+
+@router.get("/api/voice/check-permissions")
+async def check_permissions():
+    """تحقق من حالة كل مزود."""
+    elevenlabs_ok = False
+    elevenlabs_tier = None
+
+    if settings.elevenlabs_configured:
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                r = await client.get(
+                    f"{ELEVENLABS_API_BASE}/user",
+                    headers={"xi-api-key": settings.elevenlabs_api_key_value},
+                )
+                if r.status_code == 200:
+                    data = r.json()
+                    elevenlabs_ok = True
+                    elevenlabs_tier = data.get("subscription", {}).get("tier", "unknown")
+        except Exception:
+            pass
+
+    return {
+        "success": True,
+        "edge_tts": {
+            "available": settings.EDGE_TTS_ENABLED,
+            "free": True,
+            "supports_cloning": False,
+        },
+        "huggingface": {
+            "available": True,
+            "free": True,
+            "supports_cloning": True,
+            "space_url": settings.HUGGINGFACE_SPACE_URL,
+        },
+        "elevenlabs": {
+            "available": elevenlabs_ok,
+            "tier": elevenlabs_tier,
+            "supports_cloning": elevenlabs_tier in ["starter", "creator", "pro", "scale", "business"],
+            "free_tier_note": "Free tier does NOT support voice cloning",
+        },
+    }
+
+
+# ============================================================
+# 🎭 TALKING HEAD
 # ============================================================
 
 @router.post("/api/talking-head/create")
@@ -1654,24 +1800,11 @@ async def create_talking_head(
     audio: UploadFile = File(...),
     project_id: str = Form(""),
 ):
-    """
-    🎭 أنشئ فيديو talking head من صورة + صوت.
-
-    Args:
-        image: صورة الشخص (وجه واضح، jpg/png)
-        audio: الصوت (mp3/wav)
-        project_id: المشروع
-
-    Returns:
-        {success: true, talk_id: "...", status: "created"}
-    """
+    """🎭 أنشئ فيديو talking head من صورة + صوت جاهز."""
     try:
         if not settings.did_configured:
             return JSONResponse(
-                {
-                    "success": False,
-                    "error": "D-ID API غير مهيأ. أضف DID_API_KEY.",
-                },
+                {"success": False, "error": "D-ID غير مهيأ. أضف DID_API_KEY."},
                 status_code=503,
             )
 
@@ -1701,12 +1834,6 @@ async def create_talking_head(
                 {"success": False, "error": "الصوت كبير جداً (الحد 100MB)"},
                 status_code=413,
             )
-
-        logger.info(
-            f"🎭 Creating talking head: "
-            f"image={len(img_content)} bytes, "
-            f"audio={len(aud_content)} bytes"
-        )
 
         talk_id = await _did_create_talk(
             image_content=img_content,
@@ -1740,18 +1867,91 @@ async def create_talking_head(
         )
 
 
-@router.get("/api/talking-head/status/{talk_id}")
-async def get_talking_head_status(talk_id: str):
+@router.post("/api/talking-head/generate")
+async def generate_talking_head(
+    image: UploadFile = File(...),
+    text: str = Form(...),
+    voice_id: str = Form("ar-SA-HamedNeural"),
+    use_edge_tts: str = Form("true"),
+    language: str = Form("ar"),
+    project_id: str = Form(""),
+):
     """
-    احصل على حالة معالجة الفيديو.
-
-    Returns:
-        {success: true, status: "created"|"started"|"done"|"error", result_url: "..."}
+    🎭 توليد فيديو ناطق من صورة + نص (D-ID + Edge TTS).
     """
     try:
         if not settings.did_configured:
             return JSONResponse(
-                {"success": False, "error": "D-ID API غير مهيأ"},
+                {"success": False, "error": "D-ID غير مهيأ — أضف DID_API_KEY"},
+                status_code=503,
+            )
+
+        text = text.strip()
+        if not text:
+            return JSONResponse(
+                {"success": False, "error": "النص فارغ"},
+                status_code=400,
+            )
+
+        if len(text) > settings.DID_MAX_TEXT_CHARS:
+            return JSONResponse(
+                {"success": False, "error": f"النص طويل جداً (الحد {settings.DID_MAX_TEXT_CHARS})"},
+                status_code=400,
+            )
+
+        img_content = await image.read()
+        if not img_content:
+            return JSONResponse(
+                {"success": False, "error": "الصورة فارغة"},
+                status_code=400,
+            )
+
+        # ولّد الصوت عبر Edge TTS
+        audio_bytes = await _edge_tts_generate(
+            text=text,
+            voice=voice_id,
+        )
+
+        # أنشئ Talking Head
+        talk_id = await _did_create_talk(
+            image_content=img_content,
+            audio_content=audio_bytes,
+            image_filename=image.filename or "image.jpg",
+        )
+
+        TALKING_HEAD_JOBS[talk_id] = {
+            "id": talk_id,
+            "project_id": project_id,
+            "status": "created",
+            "text": text,
+            "voice_id": voice_id,
+            "provider": "edge_tts",
+            "created_at": datetime.utcnow().isoformat(),
+        }
+
+        return {
+            "success": True,
+            "talk_id": talk_id,
+            "status": "created",
+            "message": "✅ تم إنشاء الفيديو. جاري المعالجة...",
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Talking head failed")
+        return JSONResponse(
+            {"success": False, "error": str(e)},
+            status_code=500,
+        )
+
+
+@router.get("/api/talking-head/status/{talk_id}")
+async def get_talking_head_status(talk_id: str):
+    try:
+        if not settings.did_configured:
+            return JSONResponse(
+                {"success": False, "error": "D-ID غير مهيأ"},
                 status_code=503,
             )
 
@@ -1774,134 +1974,12 @@ async def get_talking_head_status(talk_id: str):
             "status": status,
             "result_url": result_url,
             "error": error,
-            "progress": data.get("progress"),
         }
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.exception("Get talking head status failed")
-        return JSONResponse(
-            {"success": False, "error": str(e)},
-            status_code=500,
-        )
-
-
-@router.post("/api/talking-head/generate")
-async def generate_talking_head_from_text(
-    image: UploadFile = File(...),
-    text: str = Form(...),
-    voice_id: str = Form(""),
-    language: str = Form("ar"),
-    project_id: str = Form(""),
-):
-    """
-    🎭 نسخة مُحسّنة: صورة + نص → فيديو.
-
-    يقوم بـ:
-      1. توليد الصوت من النص (ElevenLabs)
-      2. إنشاء talking head (D-ID)
-
-    Args:
-        image: صورة الشخص
-        text: النص
-        voice_id: voice_id من ElevenLabs
-        language: اللغة
-        project_id: المشروع
-
-    Returns:
-        {success: true, talk_id: "..."}
-    """
-    try:
-        if not settings.did_configured:
-            return JSONResponse(
-                {"success": False, "error": "D-ID API غير مهيأ"},
-                status_code=503,
-            )
-
-        text = text.strip()
-        if not text:
-            return JSONResponse(
-                {"success": False, "error": "النص فارغ"},
-                status_code=400,
-            )
-
-        if len(text) > settings.DID_MAX_TEXT_CHARS:
-            return JSONResponse(
-                {
-                    "success": False,
-                    "error": f"النص طويل جداً (الحد {settings.DID_MAX_TEXT_CHARS} حرف)",
-                },
-                status_code=400,
-            )
-
-        img_content = await image.read()
-        if not img_content:
-            return JSONResponse(
-                {"success": False, "error": "الصورة فارغة"},
-                status_code=400,
-            )
-
-        # ── 1. ولّد الصوت من النص ──
-        audio_bytes = None
-
-        if voice_id and settings.elevenlabs_configured:
-            logger.info(f"🎙️ Using ElevenLabs voice: {voice_id}")
-            audio_bytes = await _elevenlabs_tts(
-                text=text,
-                voice_id=voice_id,
-                model_id=settings.ELEVENLABS_MODEL_ID,
-                stability=0.5,
-                similarity_boost=0.75,
-                style=0.0,
-                speed=1.0,
-            )
-        else:
-            return JSONResponse(
-                {
-                    "success": False,
-                    "error": "يجب توفير voice_id أو تفعيل ElevenLabs",
-                },
-                status_code=400,
-            )
-
-        if not audio_bytes:
-            return JSONResponse(
-                {"success": False, "error": "فشل توليد الصوت"},
-                status_code=500,
-            )
-
-        # ── 2. أنشئ talking head ──
-        logger.info(f"🎭 Creating talking head from image + generated audio")
-
-        talk_id = await _did_create_talk(
-            image_content=img_content,
-            audio_content=audio_bytes,
-            image_filename=image.filename or "image.jpg",
-        )
-
-        TALKING_HEAD_JOBS[talk_id] = {
-            "id": talk_id,
-            "project_id": project_id,
-            "status": "created",
-            "text": text,
-            "voice_id": voice_id,
-            "created_at": datetime.utcnow().isoformat(),
-            "result_url": None,
-            "error": None,
-        }
-
-        return {
-            "success": True,
-            "talk_id": talk_id,
-            "status": "created",
-            "message": "✅ تم إنشاء الفيديو. جاري المعالجة...",
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception("Generate talking head failed")
+        logger.exception("Get status failed")
         return JSONResponse(
             {"success": False, "error": str(e)},
             status_code=500,
@@ -1914,9 +1992,6 @@ async def save_talking_head_to_project(
     payload: Dict[str, Any],
     session: AsyncSession = Depends(get_db),
 ):
-    """
-    احفظ فيديو talking head في المشروع (كـ clip).
-    """
     try:
         project_uuid = uuid.UUID(project_id)
     except ValueError:
@@ -1961,27 +2036,36 @@ async def save_talking_head_to_project(
         await repo.save(project)
     await session.commit()
 
-    logger.info(f"✅ Talking head saved to project: {clip_id}")
-
     return {
         "success": True,
         "clip": new_clip,
-        "message": "✅ تم حفظ الفيديو في المشروع",
+        "message": "✅ تم الحفظ",
     }
 
 
 @router.delete("/api/talking-head/delete/{talk_id}")
 async def delete_talking_head(talk_id: str):
-    """احذف talking head job من D-ID."""
-    success = await _did_delete_talk(talk_id)
+    """احذف talking head job."""
+    import httpx
+
+    if settings.did_configured:
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                await client.delete(
+                    f"{DID_API_BASE}/talks/{talk_id}",
+                    headers={"Authorization": settings.did_api_key_value},
+                )
+        except Exception as e:
+            logger.warning(f"Failed to delete talk: {e}")
+
     if talk_id in TALKING_HEAD_JOBS:
         del TALKING_HEAD_JOBS[talk_id]
-    return {"success": success, "talk_id": talk_id}
+
+    return {"success": True, "talk_id": talk_id}
 
 
 @router.get("/api/talking-head/list")
 async def list_talking_head_jobs():
-    """اعرض قائمة talking head jobs النشطة."""
     return {
         "success": True,
         "count": len(TALKING_HEAD_JOBS),
@@ -1990,15 +2074,182 @@ async def list_talking_head_jobs():
 
 
 # ============================================================
-# 🎚️ AUDIO PROCESSING — FFmpeg
+# MEDIA — VOICEOVER CRUD
 # ============================================================
+
+@router.post("/api/media/upload-voiceover")
+async def upload_voiceover(
+    file: UploadFile = File(...),
+    project_id: str = Form(...),
+    title: str = Form(""),
+    script: str = Form(""),
+    script_segments: str = Form("[]"),
+    source: str = Form("recording"),
+    start: float = Form(0.0),
+    duration: float = Form(0.0),
+    processed: str = Form("false"),
+    processing_options: str = Form("{}"),
+):
+    try:
+        content = await file.read()
+        if not content:
+            return JSONResponse(
+                {"success": False, "error": "الملف فارغ"},
+                status_code=400,
+            )
+        if len(content) > VOICEOVER_MAX_SIZE:
+            return JSONResponse(
+                {"success": False, "error": f"حجم الملف يتجاوز {VOICEOVER_MAX_SIZE // (1024*1024)}MB"},
+                status_code=413,
+            )
+
+        content_type = file.content_type or "audio/webm"
+        suffix = Path(file.filename or "audio.webm").suffix.lower() or ".webm"
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+            tmp.write(content)
+            tmp_path = Path(tmp.name)
+
+        try:
+            if duration <= 0:
+                duration = await _get_audio_duration(tmp_path)
+
+            uploaded = await _upload_voiceover_to_storage(
+                tmp_path, project_id, content_type
+            )
+
+            try:
+                segments = json.loads(script_segments) if script_segments else []
+            except json.JSONDecodeError:
+                segments = []
+
+            try:
+                proc_opts = json.loads(processing_options) if processing_options else {}
+            except json.JSONDecodeError:
+                proc_opts = {}
+
+            return {
+                "success": True,
+                "url": uploaded["url"],
+                "path": uploaded["path"],
+                "media_id": uploaded["media_id"],
+                "duration": duration,
+                "title": title,
+                "script": script,
+                "script_segments": segments,
+                "source": source,
+                "start": start,
+                "processed": processed.lower() == "true",
+                "processing_options": proc_opts,
+            }
+        finally:
+            tmp_path.unlink(missing_ok=True)
+
+    except Exception as e:
+        logger.exception("Voiceover upload failed")
+        return JSONResponse(
+            {"success": False, "error": str(e)},
+            status_code=500,
+        )
+
+
+@router.post("/api/media/transcribe")
+async def transcribe_voiceover(
+    file: UploadFile = File(...),
+    language: str = Form("ar"),
+    with_timestamps: str = Form("true"),
+    model_size: str = Form("base"),
+):
+    """استخراج النص من ملف صوتي (Whisper)."""
+    tmp_path = None
+    try:
+        content = await file.read()
+        if not content:
+            return JSONResponse(
+                {"success": False, "error": "الملف فارغ"},
+                status_code=400,
+            )
+
+        suffix = Path(file.filename or "audio.webm").suffix.lower() or ".webm"
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+            tmp.write(content)
+            tmp_path = Path(tmp.name)
+
+        segments: List[Dict[str, Any]] = []
+        full_text = ""
+        detected_lang = language
+
+        try:
+            from faster_whisper import WhisperModel
+            model = WhisperModel(model_size, device="cpu", compute_type="int8")
+            segments_gen, info = model.transcribe(
+                str(tmp_path),
+                language=language if language != "auto" else None,
+                beam_size=5,
+                vad_filter=True,
+            )
+            for seg in segments_gen:
+                segments.append({
+                    "text": seg.text.strip(),
+                    "start": round(seg.start, 3),
+                    "end": round(seg.end, 3),
+                })
+            full_text = " ".join(s["text"] for s in segments).strip()
+            detected_lang = getattr(info, "language", language) or language
+
+        except ImportError:
+            import whisper
+            model = whisper.load_model(model_size)
+            result = model.transcribe(
+                str(tmp_path),
+                language=language if language != "auto" else None,
+                verbose=False,
+            )
+            if with_timestamps.lower() == "true":
+                for seg in result.get("segments", []):
+                    segments.append({
+                        "text": seg["text"].strip(),
+                        "start": round(float(seg["start"]), 3),
+                        "end": round(float(seg["end"]), 3),
+                    })
+            full_text = result.get("text", "").strip()
+            detected_lang = result.get("language", language) or language
+
+        duration = segments[-1]["end"] if segments else 0.0
+
+        return {
+            "success": True,
+            "text": full_text,
+            "language": detected_lang,
+            "segments": segments,
+            "duration": duration,
+        }
+
+    except ImportError:
+        return JSONResponse(
+            {
+                "success": False,
+                "error": "Whisper غير مثبّت. شغّل: pip install faster-whisper",
+            },
+            status_code=500,
+        )
+    except Exception as e:
+        logger.exception("Transcription failed")
+        return JSONResponse(
+            {"success": False, "error": str(e)},
+            status_code=500,
+        )
+    finally:
+        if tmp_path:
+            tmp_path.unlink(missing_ok=True)
+
 
 @router.post("/api/media/process-audio")
 async def process_audio_endpoint(
     file: UploadFile = File(...),
     options: str = Form("{}"),
 ):
-    """معالجة الصوت باستخدام ffmpeg."""
+    """معالجة الصوت بـ ffmpeg."""
     tmp_in = None
     tmp_out = None
     try:
@@ -2044,18 +2295,10 @@ async def process_audio_endpoint(
         if normalize:
             filters.append(f"loudnorm=I={target_lufs}:TP=-1.5:LRA=11")
 
-        cmd = [
-            "ffmpeg", "-y",
-            "-i", str(tmp_in),
-            "-vn",
-            "-c:a", "libopus",
-            "-b:a", "128k",
-        ]
+        cmd = ["ffmpeg", "-y", "-i", str(tmp_in), "-vn", "-c:a", "libopus", "-b:a", "128k"]
         if filters:
             cmd += ["-af", ",".join(filters)]
         cmd.append(str(tmp_out))
-
-        logger.info(f"🎚️ Processing audio with filters: {filters}")
 
         proc = await asyncio.create_subprocess_exec(
             *cmd,
@@ -2065,9 +2308,7 @@ async def process_audio_endpoint(
         stdout, stderr = await proc.communicate()
 
         if proc.returncode != 0:
-            error_msg = stderr.decode()[-800:]
-            logger.error(f"ffmpeg failed: {error_msg}")
-            raise RuntimeError(f"ffmpeg error: {error_msg}")
+            raise RuntimeError(f"ffmpeg error: {stderr.decode()[-500:]}")
 
         if not tmp_out.exists():
             raise RuntimeError("لم يتم إنشاء الملف المعالج")
@@ -2084,10 +2325,7 @@ async def process_audio_endpoint(
 
     except FileNotFoundError:
         return JSONResponse(
-            {
-                "success": False,
-                "error": "ffmpeg غير مثبّت على الخادم.",
-            },
+            {"success": False, "error": "ffmpeg غير مثبّت"},
             status_code=500,
         )
     except Exception as e:
@@ -2102,93 +2340,7 @@ async def process_audio_endpoint(
 
 
 # ============================================================
-# 🎯 ALIGN SCRIPT — Voice Cloning (Backward Compatible)
-# ============================================================
-
-@router.post("/api/media/align-script")
-async def align_script_with_audio(
-    file: UploadFile = File(...),
-    script: str = Form(...),
-    language: str = Form("ar"),
-    voice_id: str = Form(""),
-    project_id: str = Form(""),
-):
-    """🎙️ Voice Cloning — النص المكتوب بصوت المستخدم."""
-    try:
-        if not settings.elevenlabs_configured:
-            return JSONResponse(
-                {
-                    "success": False,
-                    "error": "خدمة استنساخ الصوت غير مهيأة. أضف ELEVENLABS_API_KEY.",
-                },
-                status_code=503,
-            )
-
-        if voice_id:
-            logger.info(f"🎙️ Using existing voice: {voice_id}")
-            return await generate_with_cloned_voice(
-                voice_id=voice_id,
-                script=script,
-                project_id=project_id,
-                stability=0.5,
-                similarity_boost=0.75,
-                style=0.0,
-                speed=1.0,
-                model_id=settings.ELEVENLABS_MODEL_ID,
-            )
-
-        content = await file.read()
-        if not content:
-            return JSONResponse(
-                {"success": False, "error": "الملف فارغ"},
-                status_code=400,
-            )
-
-        if len(content) < 30 * 1024:
-            return JSONResponse(
-                {
-                    "success": False,
-                    "error": "التسجيل قصير جداً. سجّل 30 ثانية على الأقل.",
-                },
-                status_code=400,
-            )
-
-        voice_name = f"AutoVoice_{uuid.uuid4().hex[:6]}"
-
-        logger.info(f"🎙️ Auto-cloning voice from upload ({len(content)} bytes)")
-
-        new_voice_id = await _elevenlabs_create_voice(
-            audio_content=content,
-            voice_name=voice_name,
-            description="Auto-cloned from upload",
-        )
-
-        if project_id:
-            CLONED_VOICE_CACHE[project_id] = new_voice_id
-
-        return await generate_with_cloned_voice(
-            voice_id=new_voice_id,
-            script=script,
-            project_id=project_id,
-            stability=0.5,
-            similarity_boost=0.75,
-            style=0.0,
-            speed=1.0,
-            model_id=settings.ELEVENLABS_MODEL_ID,
-        )
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception("Align script failed")
-        return JSONResponse(
-            {"success": False, "error": str(e)},
-            status_code=500,
-        )
-
-
-# ============================================================
-# 🎙️ VOICEOVER — CRUD
+# VOICEOVER CRUD
 # ============================================================
 
 @router.get("/api/media/voiceover/{project_id}")
@@ -2196,7 +2348,6 @@ async def list_voiceovers(
     project_id: str,
     session: AsyncSession = Depends(get_db),
 ):
-    """اعرض جميع مقاطع الصوت في مشروع."""
     try:
         project_uuid = uuid.UUID(project_id)
     except ValueError:
@@ -2220,12 +2371,8 @@ async def list_voiceovers(
             "script": c.get("script", ""),
             "script_segments": c.get("script_segments", []),
             "source": c.get("source", "unknown"),
-            "tts": c.get("tts"),
-            "fileName": c.get("fileName"),
-            "layerId": c.get("layerId"),
-            "processed": c.get("processed", False),
-            "processingOptions": c.get("processingOptions"),
             "voice_id": c.get("voice_id"),
+            "processed": c.get("processed", False),
         }
         for c in clips
         if isinstance(c, dict) and c.get("type") == "audio"
@@ -2240,7 +2387,6 @@ async def delete_voiceover(
     clip_id: str,
     session: AsyncSession = Depends(get_db),
 ):
-    """احذف مقطع صوتي + ملفه من التخزين."""
     try:
         project_uuid = uuid.UUID(project_id)
     except ValueError:
@@ -2268,7 +2414,7 @@ async def delete_voiceover(
             if hasattr(storage, "delete_file"):
                 await storage.delete_file(path)
         except Exception as e:
-            logger.warning(f"Failed to delete storage file: {e}")
+            logger.warning(f"Failed to delete storage: {e}")
 
     local_path = target.get("path")
     if local_path and isinstance(local_path, str) and local_path.startswith("/"):
@@ -2277,7 +2423,7 @@ async def delete_voiceover(
             if p.exists() and p.is_file():
                 p.unlink()
         except Exception as e:
-            logger.warning(f"Failed to delete local file: {e}")
+            logger.warning(f"Failed to delete local: {e}")
 
     data["clips"] = [c for c in clips if c.get("id") != clip_id]
     if hasattr(project, "data"):
@@ -2298,7 +2444,6 @@ async def update_voiceover(
     payload: Dict[str, Any],
     session: AsyncSession = Depends(get_db),
 ):
-    """حدّث بيانات مقطع صوتي."""
     try:
         project_uuid = uuid.UUID(project_id)
     except ValueError:
@@ -2340,7 +2485,6 @@ async def add_voiceover_clip(
     payload: Dict[str, Any],
     session: AsyncSession = Depends(get_db),
 ):
-    """أضف مقطع صوتي/فيديو جديد إلى المشروع."""
     try:
         project_uuid = uuid.UUID(project_id)
     except ValueError:
@@ -2380,11 +2524,9 @@ async def upload_media(
     file: UploadFile = File(...),
     project_id: str = Form(...),
 ):
-    """رفع ملف وسائط عام إلى Supabase Storage."""
     try:
         from application.services.production_service import (
-            _upload_to_supabase,
-            _build_public_url,
+            _upload_to_supabase, _build_public_url,
         )
 
         storage = SupabaseStorageAdapter()
@@ -2403,19 +2545,15 @@ async def upload_media(
 
         try:
             content_type = file.content_type or "application/octet-stream"
-
-            logger.info(f"📤 Uploading media: {file.filename} → {remote_path}")
-
             await _upload_to_supabase(
                 storage=storage,
                 local_path=tmp_path,
                 remote_path=remote_path,
                 content_type=content_type,
             )
-
             url = await _build_public_url(storage, remote_path)
             if not url:
-                raise RuntimeError("فشل بناء الرابط العام")
+                raise RuntimeError("فشل بناء الرابط")
 
             return {"url": url, "path": remote_path}
         finally:
@@ -2424,6 +2562,42 @@ async def upload_media(
     except Exception as e:
         logger.exception("Failed to upload media")
         return JSONResponse({"error": str(e)}, status_code=500)
+
+
+# ============================================================
+# ALIGN SCRIPT (Backward Compatible)
+# ============================================================
+
+@router.post("/api/media/align-script")
+async def align_script_with_audio(
+    file: UploadFile = File(...),
+    script: str = Form(...),
+    language: str = Form("ar"),
+    voice_id: str = Form(""),
+    project_id: str = Form(""),
+):
+    """🎙️ Voice Cloning — توافق مع الكود القديم."""
+    # إذا voice_id موجود → استخدمه
+    if voice_id:
+        return await generate_with_cloned_voice(
+            voice_id=voice_id,
+            script=script,
+            project_id=project_id,
+            stability=0.5,
+            similarity_boost=0.75,
+            style=0.0,
+            speed=1.0,
+            model_id=settings.ELEVENLABS_MODEL_ID,
+        )
+
+    # وإلا → استخدم Edge TTS
+    return await generate_with_cache(
+        voice_id="ar-SA-HamedNeural",
+        script=script,
+        project_id=project_id,
+        use_cache="true",
+        speed=1.0,
+    )
 
 
 # ============================================================
@@ -2464,7 +2638,7 @@ async def templates_page(request: Request):
         {
             "id": "short_video",
             "name": "فيديو قصير",
-            "description": "قالب مناسب لفيديوهات قصيرة من 30 ثانية إلى 3 دقائق",
+            "description": "قالب مناسب لفيديوهات قصيرة",
             "gradient": "from-blue-900 to-blue-700",
             "ratio": "16:9",
             "tags": ["تعليم", "عروض", "تسويق"],
@@ -2473,7 +2647,7 @@ async def templates_page(request: Request):
         {
             "id": "reel",
             "name": "ريلز / شورتس",
-            "description": "قالب عمودي لمنصات TikTok وInstagram Reels وYouTube Shorts",
+            "description": "قالب عمودي للمنصات القصيرة",
             "gradient": "from-pink-900 to-purple-800",
             "ratio": "9:16",
             "tags": ["ريلز", "شورتس", "سوشيال"],
@@ -2482,7 +2656,7 @@ async def templates_page(request: Request):
         {
             "id": "educational",
             "name": "تعليمي",
-            "description": "قالب طويل للمحتوى التعليمي والشرح التفصيلي",
+            "description": "قالب طويل للمحتوى التعليمي",
             "gradient": "from-emerald-900 to-teal-800",
             "ratio": "16:9",
             "tags": ["تعليم", "شرح", "درس"],
@@ -2491,7 +2665,7 @@ async def templates_page(request: Request):
         {
             "id": "product",
             "name": "مراجعة منتج",
-            "description": "قالب متخصص للمراجعات والعروض التقديمية",
+            "description": "قالب للمراجعات والعروض",
             "gradient": "from-amber-900 to-orange-800",
             "ratio": "16:9",
             "tags": ["مراجعة", "تقنية", "منتج"],
@@ -2500,7 +2674,7 @@ async def templates_page(request: Request):
         {
             "id": "square",
             "name": "مربع",
-            "description": "قالب مربع لمنصات Instagram وLinkedIn",
+            "description": "قالب مربع لـ Instagram/LinkedIn",
             "gradient": "from-slate-700 to-slate-600",
             "ratio": "1:1",
             "tags": ["إنستقرام", "لينكدإن"],
@@ -2523,39 +2697,49 @@ async def templates_page(request: Request):
 async def voices_page(request: Request):
     voice_engines = [
         {
+            "id": "edge_tts",
+            "name": "Edge TTS (مجاني)",
+            "provider": "Microsoft",
+            "description": "أصوات احترافية جاهزة — بدون استنساخ",
+            "languages": ["ar", "en", "fr", "de", "es", "+36"],
+            "quality": 4,
+            "available": settings.EDGE_TTS_ENABLED,
+            "active": True,
+        },
+        {
+            "id": "huggingface",
+            "name": "HuggingFace XTTS",
+            "provider": "HuggingFace Spaces",
+            "description": "استنساخ صوتك — مجاني تماماً",
+            "languages": ["ar", "en", "fr", "de", "es"],
+            "quality": 4,
+            "available": True,
+            "active": False,
+        },
+        {
             "id": "elevenlabs",
-            "name": "ElevenLabs Voice Cloning",
+            "name": "ElevenLabs",
             "provider": "ElevenLabs API",
-            "description": "استنسخ صوتك من تسجيل 30 ثانية، ثم ولّد أي نص بصوتك.",
-            "languages": ["ar", "en", "fr", "de", "es", "it", "pt", "pl", "tr", "ru", "nl", "cs", "zh", "ja", "ko", "hi"],
+            "description": "الأفضل جودة — مدفوع ($5/شهر)",
+            "languages": ["ar", "en", "fr", "de", "es", "+10"],
             "quality": 5,
             "available": settings.elevenlabs_configured,
-            "active": settings.elevenlabs_configured,
+            "active": False,
         },
         {
             "id": "did_talking_head",
             "name": "D-ID Talking Head",
             "provider": "D-ID API",
-            "description": "حوّل صورة شخص إلى فيديو ناطق باستخدام AI.",
+            "description": "تحريك صورة الشخص",
             "languages": ["كل اللغات"],
             "quality": 5,
             "available": settings.did_configured,
             "active": settings.did_configured,
         },
-        {
-            "id": "silent",
-            "name": "Silent",
-            "provider": "Built-in",
-            "description": "لا يولّد صوتاً. مفيد للفيديوهات الصامتة.",
-            "languages": ["كل اللغات"],
-            "quality": 1,
-            "available": True,
-            "active": False,
-        },
     ]
     return templates.TemplateResponse(request, "voices.html", {
         "voice_engines": voice_engines,
-        "active_voice": "ElevenLabs Voice Cloning" if settings.elevenlabs_configured else "Silent",
+        "active_voice": "Edge TTS (مجاني)",
         "active_page": "voices",
         "supabase": get_supabase_config(),
     })
@@ -2615,8 +2799,7 @@ async def platforms_page(request: Request, session: AsyncSession = Depends(get_d
 @router.get("/schedules", response_class=HTMLResponse)
 async def schedules_page(request: Request, session: AsyncSession = Depends(get_db)):
     from infrastructure.repositories.sql_publishing_repository import (
-        SQLPublishingJobRepository,
-        SQLAccountRepository,
+        SQLPublishingJobRepository, SQLAccountRepository,
     )
 
     pub_repo = SQLPublishingJobRepository(session)
@@ -2689,11 +2872,8 @@ async def analytics_page(request: Request, session: AsyncSession = Depends(get_d
     ]
 
     status_colors = {
-        "draft": "bg-slate-500",
-        "in_production": "bg-amber-500",
-        "rendered": "bg-green-500",
-        "published": "bg-blue-500",
-        "failed": "bg-red-500",
+        "draft": "bg-slate-500", "in_production": "bg-amber-500",
+        "rendered": "bg-green-500", "published": "bg-blue-500", "failed": "bg-red-500",
     }
     status_labels = {
         "draft": "مسودة", "in_production": "إنتاج",
@@ -2767,39 +2947,48 @@ async def analytics_page(request: Request, session: AsyncSession = Depends(get_d
 async def logs_page(request: Request):
     now = datetime.utcnow()
     log_entries = [
-        {"level": "INFO",    "source": "main",    "timestamp": now - timedelta(seconds=5),  "message": "Platform started successfully"},
-        {"level": "INFO",    "source": "system",  "timestamp": now - timedelta(seconds=4),  "message": "Database tables ready"},
-        {"level": "INFO",    "source": "plugins", "timestamp": now - timedelta(seconds=3),  "message": "Plugins loaded"},
-        {"level": "INFO",    "source": "main",    "timestamp": now - timedelta(seconds=1),  "message": "Platform ready"},
+        {"level": "INFO", "source": "main", "timestamp": now - timedelta(seconds=5), "message": "Platform started"},
+        {"level": "INFO", "source": "system", "timestamp": now - timedelta(seconds=4), "message": "Database tables ready"},
+        {"level": "INFO", "source": "plugins", "timestamp": now - timedelta(seconds=3), "message": "Plugins loaded"},
+        {"level": "INFO", "source": "main", "timestamp": now - timedelta(seconds=1), "message": "Platform ready"},
     ]
 
     if settings.supabase_configured:
         log_entries.append({
-            "level": "INFO",
-            "source": "supabase",
-            "timestamp": now,
+            "level": "INFO", "source": "supabase", "timestamp": now,
             "message": f"Supabase configured: {settings.SUPABASE_URL}"
         })
+
+    # حالة المزودين
+    edge_ok = settings.EDGE_TTS_ENABLED
+    log_entries.append({
+        "level": "INFO" if edge_ok else "WARNING",
+        "source": "voiceover", "timestamp": now,
+        "message": f"Edge TTS: {'✅ متاح' if edge_ok else '❌ معطّل'}"
+    })
+
+    hf_ok = True
+    log_entries.append({
+        "level": "INFO" if hf_ok else "WARNING",
+        "source": "voiceover", "timestamp": now,
+        "message": f"HuggingFace XTTS: {'✅ متاح' if hf_ok else '❌ معطّل'}"
+    })
 
     elevenlabs_ok = settings.elevenlabs_configured
     log_entries.append({
         "level": "INFO" if elevenlabs_ok else "WARNING",
-        "source": "voiceover",
-        "timestamp": now,
+        "source": "voiceover", "timestamp": now,
         "message": (
-            f"ElevenLabs Voice Cloning: "
-            f"{'✅ متاح' if elevenlabs_ok else '❌ غير مهيأ (ELEVENLABS_API_KEY مفقود)'}"
+            f"ElevenLabs: {'✅ متاح' if elevenlabs_ok else '⚠️ غير مهيأ (سيعمل Edge TTS بدلاً منه)'}"
         )
     })
 
     did_ok = settings.did_configured
     log_entries.append({
         "level": "INFO" if did_ok else "WARNING",
-        "source": "talking_head",
-        "timestamp": now,
+        "source": "talking_head", "timestamp": now,
         "message": (
-            f"D-ID Talking Head: "
-            f"{'✅ متاح' if did_ok else '❌ غير مهيأ (DID_API_KEY مفقود)'}"
+            f"D-ID Talking Head: {'✅ متاح' if did_ok else '❌ غير مهيأ (DID_API_KEY مفقود)'}"
         )
     })
 
@@ -2816,26 +3005,23 @@ async def logs_page(request: Request):
 
     log_entries.append({
         "level": "INFO" if "✅" in whisper_status else "WARNING",
-        "source": "voiceover",
-        "timestamp": now,
-        "message": f"Whisper engine: {whisper_status}"
+        "source": "voiceover", "timestamp": now,
+        "message": f"Whisper: {whisper_status}"
     })
 
     import shutil
     ffmpeg_ok = shutil.which("ffmpeg") is not None
     log_entries.append({
         "level": "INFO" if ffmpeg_ok else "WARNING",
-        "source": "voiceover",
-        "timestamp": now,
+        "source": "voiceover", "timestamp": now,
         "message": f"FFmpeg: {'✅ متاح' if ffmpeg_ok else '❌ غير مثبّت'}"
     })
 
+    # Cache stats
     cache_files = list(CACHE_DIR.glob("*.mp3"))
     cache_size = sum(f.stat().st_size for f in cache_files) / 1024 / 1024
     log_entries.append({
-        "level": "INFO",
-        "source": "voiceover",
-        "timestamp": now,
+        "level": "INFO", "source": "voiceover", "timestamp": now,
         "message": f"Voice Cache: {len(cache_files)} files ({cache_size:.1f} MB)"
     })
 
@@ -2847,7 +3033,7 @@ async def logs_page(request: Request):
 
 
 # ============================================================
-# SYSTEM HEALTH
+# HEALTH
 # ============================================================
 
 @router.get("/health", response_class=HTMLResponse)
@@ -2869,6 +3055,7 @@ async def health_page(request: Request, session: AsyncSession = Depends(get_db))
     supabase_ok = settings.supabase_configured
     elevenlabs_ok = settings.elevenlabs_configured
     did_ok = settings.did_configured
+    edge_ok = settings.EDGE_TTS_ENABLED
 
     whisper_ok = False
     whisper_detail = "غير مثبّت"
@@ -2903,9 +3090,19 @@ async def health_page(request: Request, session: AsyncSession = Depends(get_db))
             "detail": "متصل" if supabase_ok else "غير مهيأ",
         },
         {
-            "name": "ElevenLabs Voice Cloning",
+            "name": "Edge TTS (مجاني)",
+            "status": "ok" if edge_ok else "degraded",
+            "detail": "متاح ✅" if edge_ok else "معطّل",
+        },
+        {
+            "name": "HuggingFace XTTS (مجاني)",
+            "status": "ok",
+            "detail": "متاح ✅ (استنساخ صوتك)",
+        },
+        {
+            "name": "ElevenLabs (مدفوع)",
             "status": "ok" if elevenlabs_ok else "degraded",
-            "detail": "متاح ✅" if elevenlabs_ok else "غير مهيأ — أضف ELEVENLABS_API_KEY",
+            "detail": "متاح ✅" if elevenlabs_ok else "غير مهيأ (سيستخدم Edge TTS)",
         },
         {
             "name": "D-ID Talking Head",
@@ -2925,15 +3122,17 @@ async def health_page(request: Request, session: AsyncSession = Depends(get_db))
     ]
 
     system_info = [
-        {"label": "Python",       "value": sys.version.split()[0]},
-        {"label": "Platform",     "value": platform.system() + " " + platform.release()},
-        {"label": "APP_NAME",     "value": settings.APP_NAME},
-        {"label": "APP_VERSION",  "value": settings.APP_VERSION},
-        {"label": "Supabase",     "value": "✅ مهيأ" if supabase_ok else "❌ غير مهيأ"},
-        {"label": "ElevenLabs",   "value": "✅ متاح" if elevenlabs_ok else "❌ غير مهيأ"},
-        {"label": "D-ID",         "value": "✅ متاح" if did_ok else "❌ غير مهيأ"},
-        {"label": "Whisper",      "value": whisper_detail},
-        {"label": "FFmpeg",       "value": "✅ متاح" if ffmpeg_ok else "❌ غير مثبّت"},
+        {"label": "Python", "value": sys.version.split()[0]},
+        {"label": "Platform", "value": platform.system() + " " + platform.release()},
+        {"label": "APP_NAME", "value": settings.APP_NAME},
+        {"label": "APP_VERSION", "value": settings.APP_VERSION},
+        {"label": "Supabase", "value": "✅ مهيأ" if supabase_ok else "❌ غير مهيأ"},
+        {"label": "Edge TTS", "value": "✅ متاح" if edge_ok else "❌ معطّل"},
+        {"label": "HuggingFace", "value": "✅ متاح"},
+        {"label": "ElevenLabs", "value": "✅ متاح" if elevenlabs_ok else "❌ غير مهيأ"},
+        {"label": "D-ID", "value": "✅ متاح" if did_ok else "❌ غير مهيأ"},
+        {"label": "Whisper", "value": whisper_detail},
+        {"label": "FFmpeg", "value": "✅ متاح" if ffmpeg_ok else "❌ غير مثبّت"},
     ]
 
     return templates.TemplateResponse(request, "health.html", {
@@ -2948,7 +3147,7 @@ async def health_page(request: Request, session: AsyncSession = Depends(get_db))
 
 
 # ============================================================
-# MODEL LIBRARY
+# MODELS
 # ============================================================
 
 @router.get("/models", response_class=HTMLResponse)
@@ -2975,12 +3174,11 @@ async def settings_page(request: Request):
             "app_version": settings.APP_VERSION,
             "debug": settings.DEBUG,
             "media_dir": str(settings.MEDIA_DIR),
-            "exports_dir": str(settings.EXPORTS_DIR),
-            "temp_dir": str(settings.TEMP_DIR),
             "storage_type": settings.STORAGE_TYPE,
             "supabase_configured": settings.supabase_configured,
             "elevenlabs_configured": settings.elevenlabs_configured,
             "did_configured": settings.did_configured,
+            "edge_tts_enabled": settings.EDGE_TTS_ENABLED,
         },
         "active_page": "settings",
         "supabase": get_supabase_config(),
@@ -2988,7 +3186,7 @@ async def settings_page(request: Request):
 
 
 # ============================================================
-# SUPABASE CONFIGURATION API
+# SUPABASE CONFIG
 # ============================================================
 
 @router.get("/api/supabase/config")
@@ -3012,14 +3210,14 @@ async def get_supabase_status():
         return {
             "status": "connected",
             "url": settings.SUPABASE_URL,
-            "bucket": settings.SUPABASE_BUCKET
+            "bucket": settings.SUPABASE_BUCKET,
         }
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
 
 # ============================================================
-# 🔍 DEBUG ENDPOINTS
+# DEBUG ENDPOINTS
 # ============================================================
 
 @router.get("/api/debug/project/{project_id}")
@@ -3045,21 +3243,11 @@ async def debug_project(project_id: str, session: AsyncSession = Depends(get_db)
         "clips_count": len(clips),
         "saved_voices_count": len(saved_voices),
         "saved_voices": saved_voices,
-        "clips_summary": [
-            {
-                "id": c.get("id"),
-                "type": c.get("type"),
-                "source": c.get("source"),
-                "title": c.get("title"),
-            }
-            for c in clips if isinstance(c, dict)
-        ],
     }
 
 
 @router.get("/api/debug/talking-head/jobs")
 async def debug_talking_head_jobs():
-    """اعرض talking head jobs النشطة."""
     return {
         "success": True,
         "count": len(TALKING_HEAD_JOBS),
@@ -3095,6 +3283,8 @@ async def debug_voiceovers(project_id: str, session: AsyncSession = Depends(get_
         "video_clips_count": len(video_clips),
         "saved_voices_count": len(saved_voices),
         "saved_voices": saved_voices,
+        "edge_tts_available": settings.EDGE_TTS_ENABLED,
+        "huggingface_available": True,
         "elevenlabs_available": settings.elevenlabs_configured,
         "did_available": settings.did_configured,
         "cache_stats": {
