@@ -5,6 +5,7 @@ import logging
 import tempfile
 import asyncio
 import subprocess
+import hashlib
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional, List, Dict, Any
@@ -13,7 +14,7 @@ from fastapi import (
     APIRouter, Request, Depends, HTTPException,
     UploadFile, File, Form, BackgroundTasks
 )
-from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
+from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, Response
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -142,6 +143,9 @@ VOICEOVER_DIR.mkdir(parents=True, exist_ok=True)
 CLONED_VOICES_DIR = Path(settings.MEDIA_DIR) / "cloned_voices"
 CLONED_VOICES_DIR.mkdir(parents=True, exist_ok=True)
 
+CACHE_DIR = CLONED_VOICES_DIR / "cache"
+CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
 VOICEOVER_MAX_SIZE = 100 * 1024 * 1024  # 100MB
 ALLOWED_AUDIO_TYPES = {
     "audio/mpeg", "audio/mp3", "audio/wav", "audio/x-wav",
@@ -150,7 +154,7 @@ ALLOWED_AUDIO_TYPES = {
     "video/webm",
 }
 
-# تخزين مؤقت لأصوات ElevenLabs
+# تخزين مؤقت لأصوات ElevenLabs في الذاكرة
 CLONED_VOICE_CACHE: Dict[str, str] = {}
 
 
@@ -229,19 +233,17 @@ async def _elevenlabs_create_voice(
     voice_name: str,
     description: str = "Cloned via dashboard",
 ) -> str:
-    """
-    أنشئ voice clone في ElevenLabs.
-    Returns: voice_id (str)
-    """
+    """أنشئ voice clone في ElevenLabs."""
     import httpx
 
-    if not settings.ELEVENLABS_API_KEY:
+    if not settings.elevenlabs_configured:
         raise HTTPException(
             status_code=503,
             detail="ELEVENLABS_API_KEY غير مُعرّف في الإعدادات",
         )
 
-    headers = {"xi-api-key": settings.ELEVENLABS_API_KEY}
+    api_key = settings.elevenlabs_api_key_value
+    headers = {"xi-api-key": api_key}
 
     files = {
         "files": ("sample.mp3", audio_content, "audio/mpeg"),
@@ -288,20 +290,18 @@ async def _elevenlabs_tts(
     style: float = 0.0,
     speed: float = 1.0,
 ) -> bytes:
-    """
-    حوّل النص إلى صوت باستخدام voice clone.
-    Returns: audio content (bytes)
-    """
+    """حوّل النص إلى صوت باستخدام voice clone."""
     import httpx
 
-    if not settings.ELEVENLABS_API_KEY:
+    if not settings.elevenlabs_configured:
         raise HTTPException(
             status_code=503,
             detail="ELEVENLABS_API_KEY غير مُعرّف",
         )
 
+    api_key = settings.elevenlabs_api_key_value
     headers = {
-        "xi-api-key": settings.ELEVENLABS_API_KEY,
+        "xi-api-key": api_key,
         "Content-Type": "application/json",
     }
 
@@ -341,10 +341,11 @@ async def _elevenlabs_delete_voice(voice_id: str) -> bool:
     """احذف voice clone من ElevenLabs."""
     import httpx
 
-    if not settings.ELEVENLABS_API_KEY:
+    if not settings.elevenlabs_configured:
         return False
 
-    headers = {"xi-api-key": settings.ELEVENLABS_API_KEY}
+    api_key = settings.elevenlabs_api_key_value
+    headers = {"xi-api-key": api_key}
 
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
@@ -356,6 +357,12 @@ async def _elevenlabs_delete_voice(voice_id: str) -> bool:
     except Exception as e:
         logger.warning(f"Failed to delete voice {voice_id}: {e}")
         return False
+
+
+def _compute_text_hash(voice_id: str, text: str, settings_dict: dict) -> str:
+    """احسب hash فريد للنص + الصوت + الإعدادات."""
+    payload = f"{voice_id}|{text}|{json.dumps(settings_dict, sort_keys=True)}"
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:24]
 
 
 # ============================================================
@@ -427,6 +434,7 @@ async def project_timeline(
     if not project:
         return HTMLResponse("Project not found", status_code=404)
 
+    # Build scenes from timeline or script (fallback)
     scenes = []
     try:
         if hasattr(project, "timeline") and project.timeline:
@@ -459,18 +467,23 @@ async def project_timeline(
             })
             t += duration
 
+    # ✅ اجلب مقاطع الصوت
     voiceover_clips = []
+    saved_voices = []
     if hasattr(project, "data") and isinstance(project.data, dict):
         voiceover_clips = [
             c for c in (project.data.get("clips") or [])
             if isinstance(c, dict) and c.get("type") == "audio"
         ]
+        saved_voices = project.data.get("cloned_voices", []) or []
 
     return templates.TemplateResponse(request, "projects/timeline.html", {
         "project": project,
         "scenes": scenes,
         "scenes_json": json.dumps(scenes, ensure_ascii=False),
         "voiceover_clips": voiceover_clips,
+        "saved_voices": saved_voices,
+        "elevenlabs_configured": settings.elevenlabs_configured,
         "active_page": "projects",
         "supabase": get_supabase_config(),
     })
@@ -709,16 +722,9 @@ async def clone_user_voice(
     project_id: str = Form(""),
     description: str = Form(""),
 ):
-    """
-    🎙️ استنسخ صوت المستخدم من تسجيل.
-
-    المتطلبات:
-      - مدة التسجيل: 30 ثانية - 3 دقائق (مثالي 1-2 دقيقة)
-      - جودة عالية (بدون ضوضاء خلفية)
-      - صوت واحد فقط
-    """
+    """🎙️ استنسخ صوت المستخدم من تسجيل."""
     try:
-        if not settings.ELEVENLABS_API_KEY:
+        if not settings.elevenlabs_configured:
             return JSONResponse(
                 {
                     "success": False,
@@ -761,7 +767,6 @@ async def clone_user_voice(
             description=description or "Cloned via Voiceover Studio",
         )
 
-        # خزّن في cache
         cache_key = f"{project_id}:{name}" if project_id else name
         CLONED_VOICE_CACHE[cache_key] = voice_id
 
@@ -795,14 +800,9 @@ async def generate_with_cloned_voice(
     speed: float = Form(1.0),
     model_id: str = Form("eleven_multilingual_v2"),
 ):
-    """
-    🎙️ ولّد الصوت من النص باستخدام voice clone.
-
-    Returns:
-        ملف صوتي MP3 مباشرة + metadata في headers.
-    """
+    """🎙️ ولّد الصوت من النص باستخدام voice clone."""
     try:
-        if not settings.ELEVENLABS_API_KEY:
+        if not settings.elevenlabs_configured:
             return JSONResponse(
                 {"success": False, "error": "خدمة ElevenLabs غير مهيأة"},
                 status_code=503,
@@ -815,11 +815,11 @@ async def generate_with_cloned_voice(
                 status_code=400,
             )
 
-        if len(script) > 5000:
+        if len(script) > settings.ELEVENLABS_MAX_CHARS:
             return JSONResponse(
                 {
                     "success": False,
-                    "error": "النص طويل جداً (الحد 5000 حرف للخطة المجانية)",
+                    "error": f"النص طويل جداً (الحد {settings.ELEVENLABS_MAX_CHARS})",
                 },
                 status_code=400,
             )
@@ -845,7 +845,6 @@ async def generate_with_cloned_voice(
 
         duration = await _get_audio_duration(tmp_out)
 
-        # ارفع لـ Supabase (اختياري)
         url = None
         if project_id and settings.supabase_configured:
             try:
@@ -868,8 +867,7 @@ async def generate_with_cloned_voice(
             url = f"/static/media/cloned_voices/{out_name}"
 
         logger.info(
-            f"✅ Voice generated: {out_name} "
-            f"({len(audio_bytes)} bytes, {duration:.2f}s)"
+            f"✅ Voice generated: {out_name} ({len(audio_bytes)} bytes, {duration:.2f}s)"
         )
 
         return FileResponse(
@@ -896,19 +894,228 @@ async def generate_with_cloned_voice(
         )
 
 
+# ============================================================
+# 💾 MP3 CACHE — تجنّب إعادة التوليد
+# ============================================================
+
+@router.post("/api/voice/generate-cached")
+async def generate_with_cache(
+    voice_id: str = Form(...),
+    script: str = Form(...),
+    project_id: str = Form(""),
+    stability: float = Form(0.5),
+    similarity_boost: float = Form(0.75),
+    style: float = Form(0.0),
+    speed: float = Form(1.0),
+    model_id: str = Form(""),
+    use_cache: str = Form("true"),
+):
+    """
+    توليد الصوت مع Cache:
+      1. احسب hash للنص + الإعدادات
+      2. ابحث في cache
+      3. إذا وُجد → أعد الملف المحفوظ (بدون ElevenLabs)
+      4. إذا لم يوجد → ولّد واحفظ
+    """
+    try:
+        if not settings.elevenlabs_configured:
+            return JSONResponse(
+                {"success": False, "error": "ElevenLabs غير مهيأ"},
+                status_code=503,
+            )
+
+        script = script.strip()
+        if not script:
+            return JSONResponse(
+                {"success": False, "error": "النص فارغ"},
+                status_code=400,
+            )
+
+        if len(script) > settings.ELEVENLABS_MAX_CHARS:
+            return JSONResponse(
+                {
+                    "success": False,
+                    "error": f"النص طويل جداً (الحد {settings.ELEVENLABS_MAX_CHARS})",
+                },
+                status_code=400,
+            )
+
+        model_id = model_id or settings.ELEVENLABS_MODEL_ID
+        settings_dict = {
+            "stability": stability,
+            "similarity_boost": similarity_boost,
+            "style": style,
+            "speed": speed,
+            "model_id": model_id,
+        }
+
+        text_hash = _compute_text_hash(voice_id, script, settings_dict)
+
+        # ── 1. ابحث في Cache ──────────────────────────
+        cached_file = CACHE_DIR / f"{text_hash}.mp3"
+
+        if use_cache.lower() == "true" and cached_file.exists():
+            logger.info(f"💾 Cache HIT: {text_hash}")
+            duration = await _get_audio_duration(cached_file)
+            url = f"/static/media/cloned_voices/cache/{cached_file.name}"
+
+            return FileResponse(
+                path=str(cached_file),
+                media_type="audio/mpeg",
+                filename=f"cached_{text_hash}.mp3",
+                headers={
+                    "X-Cloned-URL": url,
+                    "X-Duration": str(round(duration, 2)),
+                    "X-Voice-ID": voice_id,
+                    "X-Script-Length": str(len(script)),
+                    "X-Cache-Hit": "true",
+                    "X-Text-Hash": text_hash,
+                    "Access-Control-Expose-Headers":
+                        "X-Cloned-URL, X-Duration, X-Voice-ID, X-Script-Length, X-Cache-Hit, X-Text-Hash",
+                },
+            )
+
+        # ── 2. لم يوجد → ولّد عبر ElevenLabs ─────────
+        logger.info(f"🎙️ Cache MISS: {text_hash} → ElevenLabs")
+
+        audio_bytes = await _elevenlabs_tts(
+            text=script,
+            voice_id=voice_id,
+            model_id=model_id,
+            stability=stability,
+            similarity_boost=similarity_boost,
+            style=style,
+            speed=speed,
+        )
+
+        cached_file.write_bytes(audio_bytes)
+
+        out_name = f"cloned_{text_hash}.mp3"
+        tmp_out = CLONED_VOICES_DIR / out_name
+        if not tmp_out.exists():
+            tmp_out.write_bytes(audio_bytes)
+
+        duration = await _get_audio_duration(tmp_out)
+
+        url = None
+        if project_id and settings.supabase_configured:
+            try:
+                from application.services.production_service import (
+                    _upload_to_supabase, _build_public_url,
+                )
+                storage = SupabaseStorageAdapter()
+                remote_path = f"cloned_voices/{project_id}/{out_name}"
+                await _upload_to_supabase(
+                    storage=storage,
+                    local_path=tmp_out,
+                    remote_path=remote_path,
+                    content_type="audio/mpeg",
+                )
+                url = await _build_public_url(storage, remote_path)
+            except Exception as e:
+                logger.warning(f"Supabase upload failed: {e}")
+
+        if not url:
+            url = f"/static/media/cloned_voices/{out_name}"
+
+        return FileResponse(
+            path=str(tmp_out),
+            media_type="audio/mpeg",
+            filename=out_name,
+            headers={
+                "X-Cloned-URL": url,
+                "X-Duration": str(round(duration, 2)),
+                "X-Voice-ID": voice_id,
+                "X-Script-Length": str(len(script)),
+                "X-Cache-Hit": "false",
+                "X-Text-Hash": text_hash,
+                "Access-Control-Expose-Headers":
+                    "X-Cloned-URL, X-Duration, X-Voice-ID, X-Script-Length, X-Cache-Hit, X-Text-Hash",
+            },
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Generate with cache failed")
+        return JSONResponse(
+            {"success": False, "error": str(e)},
+            status_code=500,
+        )
+
+
+# ============================================================
+# ▶️ VOICE PREVIEW — معاينة سريعة
+# ============================================================
+
+@router.post("/api/voice/preview")
+async def preview_saved_voice(
+    voice_id: str = Form(...),
+    text: str = Form("مرحباً، هذا اختبار لصوتي."),
+):
+    """معاينة سريعة لصوت محفوظ."""
+    try:
+        if not settings.elevenlabs_configured:
+            return JSONResponse(
+                {"success": False, "error": "ElevenLabs غير مهيأ"},
+                status_code=503,
+            )
+
+        if len(text) > 200:
+            text = text[:200]
+
+        audio_bytes = await _elevenlabs_tts(
+            text=text,
+            voice_id=voice_id,
+            model_id=settings.ELEVENLABS_MODEL_ID,
+            stability=0.5,
+            similarity_boost=0.75,
+            style=0.0,
+            speed=1.0,
+        )
+
+        out_name = f"preview_{uuid.uuid4().hex[:10]}.mp3"
+        tmp_out = CLONED_VOICES_DIR / out_name
+        tmp_out.write_bytes(audio_bytes)
+
+        return FileResponse(
+            path=str(tmp_out),
+            media_type="audio/mpeg",
+            filename=out_name,
+            headers={
+                "Cache-Control": "public, max-age=3600",
+                "Access-Control-Allow-Origin": "*",
+            },
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Voice preview failed")
+        return JSONResponse(
+            {"success": False, "error": str(e)},
+            status_code=500,
+        )
+
+
+# ============================================================
+# 📋 LIST CLONES from ElevenLabs
+# ============================================================
+
 @router.get("/api/voice/clones")
 async def list_cloned_voices():
-    """اعرض الأصوات المُستنسخة للمستخدم."""
+    """اعرض الأصوات المُستنسخة من ElevenLabs."""
     import httpx
 
-    if not settings.ELEVENLABS_API_KEY:
+    if not settings.elevenlabs_configured:
         return {"success": False, "error": "غير مهيأ", "voices": []}
 
     try:
+        api_key = settings.elevenlabs_api_key_value
         async with httpx.AsyncClient(timeout=30.0) as client:
             r = await client.get(
                 f"{ELEVENLABS_API_BASE}/voices",
-                headers={"xi-api-key": settings.ELEVENLABS_API_KEY},
+                headers={"xi-api-key": api_key},
             )
             if r.status_code != 200:
                 return {"success": False, "voices": []}
@@ -931,7 +1138,7 @@ async def list_cloned_voices():
 
 @router.delete("/api/voice/clones/{voice_id}")
 async def delete_cloned_voice(voice_id: str):
-    """احذف voice clone."""
+    """احذف voice clone من ElevenLabs."""
     success = await _elevenlabs_delete_voice(voice_id)
     if success:
         for k, v in list(CLONED_VOICE_CACHE.items()):
@@ -941,98 +1148,361 @@ async def delete_cloned_voice(voice_id: str):
 
 
 # ============================================================
-# 🎯 ALIGN SCRIPT — Voice Cloning (Backward Compatible)
+# 💾 SAVED VOICES — حفظ أصوات المستخدم في المشروع
 # ============================================================
 
-@router.post("/api/media/align-script")
-async def align_script_with_audio(
-    file: UploadFile = File(...),
-    script: str = Form(...),
-    language: str = Form("ar"),
-    voice_id: str = Form(""),
-    project_id: str = Form(""),
+@router.get("/api/voice/saved/{project_id}")
+async def list_saved_voices(
+    project_id: str,
+    session: AsyncSession = Depends(get_db),
 ):
-    """
-    🎙️ Voice Cloning — النص المكتوب بصوت المستخدم.
-
-    إذا تم تمرير voice_id → استخدمه مباشرة.
-    وإلا → استنسخ الصوت من الملف المرفوع ثم ولّد.
-    """
+    """اعرض الأصوات المحفوظة في المشروع."""
     try:
-        if not settings.ELEVENLABS_API_KEY:
-            return JSONResponse(
-                {
-                    "success": False,
-                    "error": "خدمة استنساخ الصوت غير مهيأة. أضف ELEVENLABS_API_KEY.",
-                },
-                status_code=503,
-            )
+        project_uuid = uuid.UUID(project_id)
+    except ValueError:
+        return JSONResponse({"error": "Invalid project_id"}, status_code=400)
 
-        # ── إذا كان هناك voice_id جاهز، استخدمه ────────
-        if voice_id:
-            logger.info(f"🎙️ Using existing voice: {voice_id}")
-            return await generate_with_cloned_voice(
-                voice_id=voice_id,
-                script=script,
-                project_id=project_id,
-                stability=0.5,
-                similarity_boost=0.75,
-                style=0.0,
-                speed=1.0,
-                model_id="eleven_multilingual_v2",
-            )
+    repo = SQLProjectRepository(session)
+    project = await repo.get(project_uuid)
+    if not project:
+        return JSONResponse({"error": "Project not found"}, status_code=404)
 
-        # ── وإلا: استنسخ من الملف المرفوع ──────────────
-        content = await file.read()
-        if not content:
-            return JSONResponse(
-                {"success": False, "error": "الملف فارغ"},
-                status_code=400,
-            )
+    data = getattr(project, "data", None) or {}
+    saved_voices = data.get("cloned_voices", []) or []
 
-        if len(content) < 30 * 1024:
-            return JSONResponse(
-                {
-                    "success": False,
-                    "error": "التسجيل قصير جداً. سجّل 30 ثانية على الأقل.",
-                },
-                status_code=400,
-            )
+    return {
+        "success": True,
+        "count": len(saved_voices),
+        "voices": saved_voices,
+    }
 
-        voice_name = f"AutoVoice_{uuid.uuid4().hex[:6]}"
 
-        logger.info(f"🎙️ Auto-cloning voice from upload ({len(content)} bytes)")
+@router.post("/api/voice/saved/{project_id}")
+async def save_voice_to_project(
+    project_id: str,
+    payload: Dict[str, Any],
+    session: AsyncSession = Depends(get_db),
+):
+    """احفظ voice_id في المشروع."""
+    try:
+        project_uuid = uuid.UUID(project_id)
+    except ValueError:
+        return JSONResponse({"error": "Invalid project_id"}, status_code=400)
 
-        new_voice_id = await _elevenlabs_create_voice(
-            audio_content=content,
-            voice_name=voice_name,
-            description="Auto-cloned from upload",
-        )
+    repo = SQLProjectRepository(session)
+    project = await repo.get(project_uuid)
+    if not project:
+        return JSONResponse({"error": "Project not found"}, status_code=404)
 
-        # خزّن في cache
-        if project_id:
-            CLONED_VOICE_CACHE[project_id] = new_voice_id
+    voice_id = payload.get("voice_id")
+    if not voice_id:
+        return JSONResponse({"error": "voice_id مطلوب"}, status_code=400)
 
-        # ولّد النص
-        return await generate_with_cloned_voice(
-            voice_id=new_voice_id,
-            script=script,
-            project_id=project_id,
-            stability=0.5,
-            similarity_boost=0.75,
-            style=0.0,
-            speed=1.0,
-            model_id="eleven_multilingual_v2",
-        )
+    data = getattr(project, "data", None) or {}
+    saved_voices = data.get("cloned_voices", []) or []
 
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception("Align script failed")
+    existing = next((v for v in saved_voices if v.get("voice_id") == voice_id), None)
+    if existing:
+        return {
+            "success": True,
+            "voice": existing,
+            "message": "الصوت محفوظ مسبقاً",
+        }
+
+    new_voice = {
+        "id": f"voice-{uuid.uuid4().hex[:12]}",
+        "voice_id": voice_id,
+        "name": payload.get("name", "My Voice"),
+        "display_name": payload.get("display_name", payload.get("name", "صوتي")),
+        "provider": "elevenlabs",
+        "created_at": datetime.utcnow().isoformat(),
+        "preview_url": payload.get("preview_url"),
+        "description": payload.get("description", ""),
+    }
+
+    saved_voices.append(new_voice)
+    data["cloned_voices"] = saved_voices
+
+    if hasattr(project, "data"):
+        project.data = data
+    if hasattr(repo, "update"):
+        await repo.update(project)
+    elif hasattr(repo, "save"):
+        await repo.save(project)
+    await session.commit()
+
+    logger.info(f"✅ Voice saved: {voice_id} → project {project_id}")
+
+    return {
+        "success": True,
+        "voice": new_voice,
+        "message": "✅ تم حفظ الصوت في المشروع",
+    }
+
+
+@router.delete("/api/voice/saved/{project_id}/{voice_record_id}")
+async def delete_saved_voice(
+    project_id: str,
+    voice_record_id: str,
+    session: AsyncSession = Depends(get_db),
+):
+    """احذف صوت محفوظ من المشروع (والـ ElevenLabs)."""
+    try:
+        project_uuid = uuid.UUID(project_id)
+    except ValueError:
+        return JSONResponse({"error": "Invalid project_id"}, status_code=400)
+
+    repo = SQLProjectRepository(session)
+    project = await repo.get(project_uuid)
+    if not project:
+        return JSONResponse({"error": "Project not found"}, status_code=404)
+
+    data = getattr(project, "data", None) or {}
+    saved_voices = data.get("cloned_voices", []) or []
+
+    target = next((v for v in saved_voices if v.get("id") == voice_record_id), None)
+    if not target:
+        return JSONResponse({"error": "Voice not found"}, status_code=404)
+
+    voice_id = target.get("voice_id")
+    if voice_id:
+        try:
+            await _elevenlabs_delete_voice(voice_id)
+        except Exception as e:
+            logger.warning(f"Failed to delete from ElevenLabs: {e}")
+
+    data["cloned_voices"] = [v for v in saved_voices if v.get("id") != voice_record_id]
+    if hasattr(project, "data"):
+        project.data = data
+    if hasattr(repo, "update"):
+        await repo.update(project)
+    elif hasattr(repo, "save"):
+        await repo.save(project)
+    await session.commit()
+
+    return {
+        "success": True,
+        "deleted_id": voice_record_id,
+        "voice_id": voice_id,
+    }
+
+
+@router.patch("/api/voice/saved/{project_id}/{voice_record_id}")
+async def update_saved_voice(
+    project_id: str,
+    voice_record_id: str,
+    payload: Dict[str, Any],
+    session: AsyncSession = Depends(get_db),
+):
+    """حدّث اسم الصوت المحفوظ."""
+    try:
+        project_uuid = uuid.UUID(project_id)
+    except ValueError:
+        return JSONResponse({"error": "Invalid project_id"}, status_code=400)
+
+    repo = SQLProjectRepository(session)
+    project = await repo.get(project_uuid)
+    if not project:
+        return JSONResponse({"error": "Project not found"}, status_code=404)
+
+    data = getattr(project, "data", None) or {}
+    saved_voices = data.get("cloned_voices", []) or []
+
+    target = next((v for v in saved_voices if v.get("id") == voice_record_id), None)
+    if not target:
+        return JSONResponse({"error": "Voice not found"}, status_code=404)
+
+    for field in ("display_name", "description"):
+        if field in payload:
+            target[field] = payload[field]
+
+    if hasattr(project, "data"):
+        project.data = data
+    if hasattr(repo, "update"):
+        await repo.update(project)
+    elif hasattr(repo, "save"):
+        await repo.save(project)
+    await session.commit()
+
+    return {"success": True, "voice": target}
+
+
+# ============================================================
+# 📤 EXPORT / 📥 IMPORT — نسخة احتياطية للأصوات
+# ============================================================
+
+@router.get("/api/voice/export/{project_id}")
+async def export_project_voices(
+    project_id: str,
+    session: AsyncSession = Depends(get_db),
+):
+    """صدّر كل الأصوات المحفوظة في المشروع كملف JSON."""
+    try:
+        project_uuid = uuid.UUID(project_id)
+    except ValueError:
+        return JSONResponse({"error": "Invalid project_id"}, status_code=400)
+
+    repo = SQLProjectRepository(session)
+    project = await repo.get(project_uuid)
+    if not project:
+        return JSONResponse({"error": "Project not found"}, status_code=404)
+
+    data = getattr(project, "data", None) or {}
+    saved_voices = data.get("cloned_voices", []) or []
+
+    export_data = {
+        "version": "1.0",
+        "exported_at": datetime.utcnow().isoformat(),
+        "project_id": project_id,
+        "project_title": project.title,
+        "provider": "elevenlabs",
+        "voices_count": len(saved_voices),
+        "voices": saved_voices,
+        "metadata": {
+            "app": settings.APP_NAME,
+            "app_version": settings.APP_VERSION,
+            "model_id": settings.ELEVENLABS_MODEL_ID,
+        },
+    }
+
+    content = json.dumps(export_data, ensure_ascii=False, indent=2)
+    filename = f"voices_{project_id[:8]}_{int(datetime.utcnow().timestamp())}.json"
+
+    return Response(
+        content=content,
+        media_type="application/json",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+        },
+    )
+
+
+@router.post("/api/voice/import/{project_id}")
+async def import_project_voices(
+    project_id: str,
+    file: UploadFile = File(...),
+    merge: str = Form("true"),
+    session: AsyncSession = Depends(get_db),
+):
+    """استورد الأصوات من ملف JSON."""
+    try:
+        project_uuid = uuid.UUID(project_id)
+    except ValueError:
+        return JSONResponse({"error": "Invalid project_id"}, status_code=400)
+
+    repo = SQLProjectRepository(session)
+    project = await repo.get(project_uuid)
+    if not project:
+        return JSONResponse({"error": "Project not found"}, status_code=404)
+
+    content = await file.read()
+    try:
+        import_data = json.loads(content.decode("utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError) as e:
         return JSONResponse(
-            {"success": False, "error": str(e)},
-            status_code=500,
+            {"success": False, "error": f"ملف JSON غير صالح: {e}"},
+            status_code=400,
         )
+
+    incoming_voices = import_data.get("voices", [])
+    if not isinstance(incoming_voices, list):
+        return JSONResponse(
+            {"success": False, "error": "بنية الملف غير صحيحة"},
+            status_code=400,
+        )
+
+    data = getattr(project, "data", None) or {}
+    existing_voices = data.get("cloned_voices", []) or []
+
+    added = 0
+    skipped = 0
+
+    if merge.lower() == "true":
+        existing_ids = {v.get("voice_id") for v in existing_voices}
+
+        for voice in incoming_voices:
+            if not isinstance(voice, dict):
+                continue
+            v_id = voice.get("voice_id")
+            if not v_id or v_id in existing_ids:
+                skipped += 1
+                continue
+
+            voice.setdefault("id", f"voice-{uuid.uuid4().hex[:12]}")
+            voice.setdefault("provider", "elevenlabs")
+            voice.setdefault("created_at", datetime.utcnow().isoformat())
+            voice.setdefault("imported_at", datetime.utcnow().isoformat())
+            voice["imported"] = True
+
+            existing_voices.append(voice)
+            existing_ids.add(v_id)
+            added += 1
+    else:
+        new_list = []
+        for voice in incoming_voices:
+            if not isinstance(voice, dict):
+                continue
+            voice.setdefault("id", f"voice-{uuid.uuid4().hex[:12]}")
+            voice.setdefault("provider", "elevenlabs")
+            voice.setdefault("created_at", datetime.utcnow().isoformat())
+            voice["imported"] = True
+            new_list.append(voice)
+            added += 1
+
+        existing_voices = new_list
+
+    data["cloned_voices"] = existing_voices
+
+    if hasattr(project, "data"):
+        project.data = data
+    if hasattr(repo, "update"):
+        await repo.update(project)
+    elif hasattr(repo, "save"):
+        await repo.save(project)
+    await session.commit()
+
+    logger.info(f"📥 Imported {added} voices (skipped {skipped})")
+
+    return {
+        "success": True,
+        "added": added,
+        "skipped": skipped,
+        "total": len(existing_voices),
+        "message": f"✅ تم استيراد {added} صوت (تم تخطي {skipped})",
+    }
+
+
+# ============================================================
+# 💾 CACHE MANAGEMENT
+# ============================================================
+
+@router.get("/api/voice/cache/stats")
+async def get_cache_stats():
+    """إحصائيات الـ cache."""
+    files = list(CACHE_DIR.glob("*.mp3"))
+    total_size = sum(f.stat().st_size for f in files)
+
+    return {
+        "success": True,
+        "files": len(files),
+        "total_size": total_size,
+        "total_size_mb": round(total_size / 1024 / 1024, 2),
+        "cache_dir": str(CACHE_DIR),
+    }
+
+
+@router.delete("/api/voice/cache/clear")
+async def clear_cache():
+    """امسح كل الـ cache."""
+    deleted = 0
+    for f in CACHE_DIR.glob("*.mp3"):
+        try:
+            f.unlink()
+            deleted += 1
+        except Exception as e:
+            logger.warning(f"Failed to delete {f}: {e}")
+
+    return {"success": True, "deleted": deleted}
 
 
 # ============================================================
@@ -1064,7 +1534,7 @@ async def process_audio_endpoint(
         denoise = opts.get("denoise", False)
         trim_silence = opts.get("trim_silence", True)
         compress = opts.get("compress", False)
-        target_lufs = float(opts.get("target_lufs", -16))
+        target_lufs = float(opts.get("target_lufs", settings.AUDIO_TARGET_LUFS))
 
         suffix = Path(file.filename or "audio.webm").suffix.lower() or ".webm"
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
@@ -1145,6 +1615,92 @@ async def process_audio_endpoint(
     finally:
         if tmp_in:
             tmp_in.unlink(missing_ok=True)
+
+
+# ============================================================
+# 🎯 ALIGN SCRIPT — Voice Cloning (Backward Compatible)
+# ============================================================
+
+@router.post("/api/media/align-script")
+async def align_script_with_audio(
+    file: UploadFile = File(...),
+    script: str = Form(...),
+    language: str = Form("ar"),
+    voice_id: str = Form(""),
+    project_id: str = Form(""),
+):
+    """🎙️ Voice Cloning — النص المكتوب بصوت المستخدم."""
+    try:
+        if not settings.elevenlabs_configured:
+            return JSONResponse(
+                {
+                    "success": False,
+                    "error": "خدمة استنساخ الصوت غير مهيأة. أضف ELEVENLABS_API_KEY.",
+                },
+                status_code=503,
+            )
+
+        if voice_id:
+            logger.info(f"🎙️ Using existing voice: {voice_id}")
+            return await generate_with_cloned_voice(
+                voice_id=voice_id,
+                script=script,
+                project_id=project_id,
+                stability=0.5,
+                similarity_boost=0.75,
+                style=0.0,
+                speed=1.0,
+                model_id=settings.ELEVENLABS_MODEL_ID,
+            )
+
+        content = await file.read()
+        if not content:
+            return JSONResponse(
+                {"success": False, "error": "الملف فارغ"},
+                status_code=400,
+            )
+
+        if len(content) < 30 * 1024:
+            return JSONResponse(
+                {
+                    "success": False,
+                    "error": "التسجيل قصير جداً. سجّل 30 ثانية على الأقل.",
+                },
+                status_code=400,
+            )
+
+        voice_name = f"AutoVoice_{uuid.uuid4().hex[:6]}"
+
+        logger.info(f"🎙️ Auto-cloning voice from upload ({len(content)} bytes)")
+
+        new_voice_id = await _elevenlabs_create_voice(
+            audio_content=content,
+            voice_name=voice_name,
+            description="Auto-cloned from upload",
+        )
+
+        if project_id:
+            CLONED_VOICE_CACHE[project_id] = new_voice_id
+
+        return await generate_with_cloned_voice(
+            voice_id=new_voice_id,
+            script=script,
+            project_id=project_id,
+            stability=0.5,
+            similarity_boost=0.75,
+            style=0.0,
+            speed=1.0,
+            model_id=settings.ELEVENLABS_MODEL_ID,
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Align script failed")
+        return JSONResponse(
+            {"success": False, "error": str(e)},
+            status_code=500,
+        )
 
 
 # ============================================================
@@ -1489,8 +2045,8 @@ async def voices_page(request: Request):
             "description": "استنسخ صوتك من تسجيل 30 ثانية، ثم ولّد أي نص بصوتك.",
             "languages": ["ar", "en", "fr", "de", "es", "it", "pt", "pl", "tr", "ru", "nl", "cs", "zh", "ja", "ko", "hi"],
             "quality": 5,
-            "available": bool(settings.ELEVENLABS_API_KEY),
-            "active": bool(settings.ELEVENLABS_API_KEY),
+            "available": settings.elevenlabs_configured,
+            "active": settings.elevenlabs_configured,
         },
         {
             "id": "silent",
@@ -1512,20 +2068,10 @@ async def voices_page(request: Request):
             "available": True,
             "active": False,
         },
-        {
-            "id": "openai_tts",
-            "name": "OpenAI TTS",
-            "provider": "OpenAI API",
-            "description": "محرك OpenAI للنص إلى صوت.",
-            "languages": ["ar", "en", "fr", "de", "es", "ja", "zh"],
-            "quality": 5,
-            "available": False,
-            "active": False,
-        },
     ]
     return templates.TemplateResponse(request, "voices.html", {
         "voice_engines": voice_engines,
-        "active_voice": "ElevenLabs Voice Cloning" if settings.ELEVENLABS_API_KEY else "Silent",
+        "active_voice": "ElevenLabs Voice Cloning" if settings.elevenlabs_configured else "Silent",
         "active_page": "voices",
         "supabase": get_supabase_config(),
     })
@@ -1759,8 +2305,7 @@ async def logs_page(request: Request):
             "message": "Supabase not configured"
         })
 
-    # حالة ElevenLabs
-    elevenlabs_ok = bool(getattr(settings, "ELEVENLABS_API_KEY", ""))
+    elevenlabs_ok = settings.elevenlabs_configured
     log_entries.append({
         "level": "INFO" if elevenlabs_ok else "WARNING",
         "source": "voiceover",
@@ -1771,7 +2316,6 @@ async def logs_page(request: Request):
         )
     })
 
-    # حالة Whisper
     whisper_status = "غير مثبّت"
     try:
         import faster_whisper
@@ -1790,7 +2334,6 @@ async def logs_page(request: Request):
         "message": f"Whisper engine: {whisper_status}"
     })
 
-    # حالة ffmpeg
     import shutil
     ffmpeg_ok = shutil.which("ffmpeg") is not None
     log_entries.append({
@@ -1798,6 +2341,15 @@ async def logs_page(request: Request):
         "source": "voiceover",
         "timestamp": now,
         "message": f"FFmpeg: {'✅ متاح' if ffmpeg_ok else '❌ غير مثبّت'}"
+    })
+
+    cache_files = list(CACHE_DIR.glob("*.mp3"))
+    cache_size = sum(f.stat().st_size for f in cache_files) / 1024 / 1024
+    log_entries.append({
+        "level": "INFO",
+        "source": "voiceover",
+        "timestamp": now,
+        "message": f"Voice Cache: {len(cache_files)} files ({cache_size:.1f} MB)"
     })
 
     return templates.TemplateResponse(request, "logs.html", {
@@ -1829,7 +2381,7 @@ async def health_page(request: Request, session: AsyncSession = Depends(get_db))
     media_ok = settings.MEDIA_DIR.exists()
     supabase_ok = settings.supabase_configured
     supabase_detail = "متصل" if supabase_ok else "غير مهيأ"
-    elevenlabs_ok = bool(getattr(settings, "ELEVENLABS_API_KEY", ""))
+    elevenlabs_ok = settings.elevenlabs_configured
 
     whisper_ok = False
     whisper_detail = "غير مثبّت"
@@ -1957,7 +2509,7 @@ async def settings_page(request: Request):
             "supabase_configured": settings.supabase_configured,
             "supabase_url": settings.SUPABASE_URL,
             "supabase_bucket": settings.SUPABASE_BUCKET,
-            "elevenlabs_configured": bool(getattr(settings, "ELEVENLABS_API_KEY", "")),
+            "elevenlabs_configured": settings.elevenlabs_configured,
         },
         "active_page": "settings",
         "supabase": get_supabase_config(),
@@ -2032,7 +2584,7 @@ async def debug_project(project_id: str, session: AsyncSession = Depends(get_db)
         data = {}
 
     clips = data.get("clips", []) or []
-    media_files = data.get("media_files", []) or []
+    saved_voices = data.get("cloned_voices", []) or []
 
     clips_info = []
     for i, c in enumerate(clips):
@@ -2041,7 +2593,6 @@ async def debug_project(project_id: str, session: AsyncSession = Depends(get_db)
             continue
 
         content = c.get("content") or c.get("url") or ""
-        metadata = c.get("metadata") or {}
 
         clips_info.append({
             "index": i,
@@ -2050,8 +2601,6 @@ async def debug_project(project_id: str, session: AsyncSession = Depends(get_db)
             "duration": c.get("duration"),
             "start": c.get("start"),
             "content_preview": (str(content)[:200] if content else None),
-            "content_is_http": str(content).startswith("http") if content else False,
-            "metadata": metadata,
             "script_preview": (c.get("script") or "")[:100] or None,
             "script_segments_count": len(c.get("script_segments") or []),
             "source": c.get("source"),
@@ -2079,6 +2628,8 @@ async def debug_project(project_id: str, session: AsyncSession = Depends(get_db)
         ),
         "data_keys": list(data.keys()),
         "clips_count": len(clips),
+        "saved_voices_count": len(saved_voices),
+        "saved_voices": saved_voices,
         "audio_summary": audio_summary,
         "clips": clips_info,
     }
@@ -2126,6 +2677,7 @@ async def debug_voiceovers(project_id: str, session: AsyncSession = Depends(get_
 
     data = getattr(project, "data", None) or {}
     clips = data.get("clips", []) or []
+    saved_voices = data.get("cloned_voices", []) or []
 
     voiceovers = []
     for c in clips:
@@ -2147,11 +2699,20 @@ async def debug_voiceovers(project_id: str, session: AsyncSession = Depends(get_
             "processed": c.get("processed", False),
         })
 
-    elevenlabs_ok = bool(getattr(settings, "ELEVENLABS_API_KEY", ""))
+    elevenlabs_ok = settings.elevenlabs_configured
+
+    cache_files = list(CACHE_DIR.glob("*.mp3"))
+    cache_size_mb = sum(f.stat().st_size for f in cache_files) / 1024 / 1024
 
     return {
         "project_id": project_id,
         "voiceover_count": len(voiceovers),
+        "saved_voices_count": len(saved_voices),
+        "saved_voices": saved_voices,
         "elevenlabs_available": elevenlabs_ok,
+        "cache_stats": {
+            "files": len(cache_files),
+            "size_mb": round(cache_size_mb, 2),
+        },
         "voiceovers": voiceovers,
     }
