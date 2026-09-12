@@ -57,7 +57,8 @@
     "voiceoverClips": {{ voiceover_clips | tojson | safe if voiceover_clips else '[]' }},
     "savedVoices": {{ saved_voices | tojson | safe if saved_voices else '[]' }},
     "elevenlabsConfigured": {{ 'true' if elevenlabs_configured else 'false' }},
-    "didConfigured": {{ 'true' if did_configured else 'false' }}
+    "didConfigured": {{ 'true' if did_configured else 'false' }},
+    "edgeTtsEnabled": {{ 'true' if edge_tts_enabled else 'false' }}
 }
 </script>
 
@@ -224,7 +225,9 @@
 
 <div class="trash-zone" id="trashZone">🗑️ اسقط هنا للحذف</div>
 
-<!-- ============ نافذة استيراد وسائط ============ -->
+<!-- ============================================================ -->
+<!-- 📥 نافذة استيراد وسائط -->
+<!-- ============================================================ -->
 <div id="importModal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
     <div class="bg-slate-800 rounded-xl p-6 max-w-md w-full border border-slate-700">
         <h3 class="text-white text-lg font-semibold mb-4">📥 استيراد وسائط</h3>
@@ -241,7 +244,9 @@
     </div>
 </div>
 
-<!-- ============ نافذة خصائص المقطع ============ -->
+<!-- ============================================================ -->
+<!-- ⚙️ نافذة خصائص المقطع -->
+<!-- ============================================================ -->
 <div id="clipPropertiesModal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
     <div class="bg-slate-800 rounded-xl p-6 max-w-md w-full border border-slate-700">
         <h3 class="text-white text-lg font-semibold mb-4">⚙️ خصائص المقطع</h3>
@@ -279,7 +284,9 @@
     </div>
 </div>
 
-<!-- ============ نافذة المشاركة ============ -->
+<!-- ============================================================ -->
+<!-- 👥 نافذة المشاركة -->
+<!-- ============================================================ -->
 <div id="shareModal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
     <div class="bg-slate-800 rounded-xl p-6 max-w-md w-full border border-slate-700">
         <h3 class="text-white text-lg font-semibold mb-4">👥 مشاركة المشروع</h3>
@@ -306,7 +313,7 @@
             <button onclick="closeVoiceoverStudio()" class="text-slate-400 hover:text-white text-xl">✕</button>
         </div>
 
-        <!-- اختيار الوضع -->
+        <!-- اختيار الوضع (3 خيارات) -->
         <div class="grid grid-cols-3 gap-2 mb-4">
             <label class="cursor-pointer">
                 <input type="radio" name="voiceoverMode" value="tts" checked class="hidden peer">
@@ -346,7 +353,7 @@
             </div>
         </div>
 
-        <!-- إعدادات TTS -->
+        <!-- ====== إعدادات TTS ====== -->
         <div id="ttsSettings" class="bg-slate-900/50 rounded-lg p-3 mb-3 space-y-2">
             <div class="grid grid-cols-2 gap-3">
                 <div>
@@ -371,7 +378,7 @@
             </div>
         </div>
 
-        <!-- إعدادات التسجيل -->
+        <!-- ====== إعدادات التسجيل ====== -->
         <div id="recordSettings" class="hidden bg-slate-900/50 rounded-lg p-3 mb-3">
             <div class="flex items-center gap-3">
                 <button id="voiceoverRecBtn" onclick="toggleVoiceoverRec()"
@@ -383,7 +390,7 @@
             </div>
         </div>
 
-        <!-- إعدادات الملف الصوتي -->
+        <!-- ====== إعدادات الملف الصوتي ====== -->
         <div id="fileSettings" class="hidden bg-slate-900/50 rounded-lg p-3 mb-3">
             <input type="file" id="voiceoverFileInput" accept="audio/*" class="hidden"
                    onchange="handleAudioFileSelected(event)">
@@ -433,7 +440,7 @@
             </div>
         </div>
 
-        <!-- النص المباشر -->
+        <!-- النص المباشر (أثناء التسجيل) -->
         <div class="mb-3">
             <label class="text-slate-400 text-sm">📝 النص المُكتشف (مباشر)</label>
             <div id="voiceoverTranscript" class="bg-slate-900/50 rounded-lg p-2 mt-1 min-h-[40px] text-sm text-slate-300" dir="auto"></div>
@@ -448,7 +455,7 @@
 </div>
 
 <!-- ============================================================ -->
-<!-- 🎙️ نافذة Voice Cloning -->
+<!-- 🎙️ نافذة Voice Cloning + Edge TTS -->
 <!-- ============================================================ -->
 <div id="voiceCloneModal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
     <div class="bg-slate-800 rounded-xl p-6 max-w-3xl w-full border border-slate-700 max-h-[90vh] overflow-y-auto">
@@ -468,7 +475,7 @@
             <div id="voiceCloneRawAudio" class="sync-audio-container"></div>
         </div>
 
-        <!-- ═══════════ قسم 2: الأصوات المحفوظة ═══════════ -->
+        <!-- ═══════════ قسم 2: الأصوات المحفوظة + Edge TTS ═══════════ -->
         <div class="mb-5">
             <div class="flex items-center justify-between mb-2">
                 <div class="flex items-center gap-2">
@@ -502,7 +509,7 @@
             <div style="margin-top:12px;padding:12px;background:rgba(124,58,237,0.1);
                         border:1px solid rgba(124,58,237,0.3);border-radius:8px;">
                 <div style="color:#a78bfa;font-size:12px;font-weight:600;margin-bottom:8px;">
-                    ✨ استنساخ صوت جديد
+                    ✨ استنساخ صوت جديد (مجاني عبر HuggingFace)
                 </div>
                 <div style="display:flex;gap:8px;align-items:center;">
                     <input type="text" id="newVoiceName"
@@ -515,7 +522,26 @@
                     </button>
                 </div>
                 <div style="color:#64748b;font-size:10px;margin-top:6px;">
-                    💡 يستغرق 20-60 ثانية (المرة الأولى فقط)
+                    💡 يستغرق 20-60 ثانية (المرة الأولى فقط)<br>
+                    💡 إذا فشل ElevenLabs (يحتاج خطة مدفوعة) → سيتحول تلقائياً إلى HuggingFace
+                </div>
+            </div>
+
+            <!-- Edge TTS (أصوات جاهزة) -->
+            <div style="margin-top:12px;padding:12px;background:rgba(16,185,129,0.1);
+                        border:1px solid rgba(16,185,129,0.3);border-radius:8px;">
+                <div style="color:#34d399;font-size:12px;font-weight:600;margin-bottom:8px;">
+                    🔊 أو استخدم صوتاً جاهزاً (Edge TTS — مجاني تماماً)
+                </div>
+                <select id="edgeVoiceSelect"
+                        style="width:100%;background:rgba(15,23,42,0.6);border:1px solid #334155;
+                               border-radius:6px;padding:8px 12px;color:#f1f5f9;font-size:12px;"
+                        onchange="selectEdgeVoice(this.value)">
+                    <option value="">— اختر صوتاً جاهزاً —</option>
+                </select>
+                <div style="color:#64748b;font-size:10px;margin-top:6px;">
+                    💡 أصوات احترافية عربية (سعودي، مصري، إماراتي، مغربي)<br>
+                    💡 بدون استنساخ — لكن سريع جداً ومجاني بالكامل
                 </div>
             </div>
         </div>
@@ -528,11 +554,11 @@
             </div>
 
             <textarea id="voiceCloneScript" rows="4" dir="auto"
-                      placeholder="اكتب النص الذي تريد نطقه بصوتك..."
+                      placeholder="اكتب النص الذي تريد نطقه..."
                       style="width:100%;background:rgba(15,23,42,0.6);border:1px solid #334155;
                              border-radius:8px;padding:10px;color:#f1f5f9;font-size:13px;
                              resize:vertical;font-family:inherit;"
-                      maxlength="5000"></textarea>
+                      maxlength="10000"></textarea>
 
             <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px;">
                 <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
@@ -551,7 +577,7 @@
             <button id="btnGenerateWithVoice" onclick="generateWithCache()"
                     class="btn-primary btn-sm w-full"
                     disabled>
-                🎙️ توليد النص بصوتي
+                🎙️ توليد النص بالصوت المُختار
             </button>
 
             <div id="voiceCloneStatus" class="mt-3 text-xs"></div>
@@ -579,15 +605,18 @@
             <button onclick="closeTalkingHeadModal()" class="text-slate-400 hover:text-white text-xl">✕</button>
         </div>
 
-        <!-- شرح -->
+        <!-- الشرح -->
         <div class="voice-clone-tip">
             <div class="voice-clone-tip-title">✨ كيف تعمل الميزة؟</div>
             <div class="voice-clone-tip-text">
                 <strong>1.</strong> ارفع صورة شخص (وجه واضح، نظرة للأمام)<br>
-                <strong>2.</strong> اختر صوتاً من أصواتك المحفوظة<br>
+                <strong>2.</strong> اختر صوتاً من أصواتك المحفوظة (Edge TTS أو Cloned)<br>
                 <strong>3.</strong> اكتب النص المطلوب<br>
-                <strong>4.</strong> الذكاء الاصطناعي يُنتج فيديو:
-                <span class="highlight">الصورة تنطق النص بصوتك!</span>
+                <strong>4.</strong> الذكاء الاصطناعي 🎭 يُنتج فيديو:
+                <span class="highlight">الصورة تنطق النص!</span>
+                <br><small style="color:#94a3b8;margin-top:6px;display:block;">
+                    💡 يتطلب مفتاح D-ID API (5 دقائق مجاناً/شهر)
+                </small>
             </div>
         </div>
 
@@ -620,14 +649,16 @@
                 <h4 class="text-white font-semibold text-sm">🎙️ الصوت</h4>
             </div>
 
-            <label class="text-slate-400 text-xs">اختر صوتاً من أصواتك المحفوظة</label>
+            <label class="text-slate-400 text-xs">اختر صوتاً (Edge TTS أو Cloned)</label>
             <select id="talkingHeadVoice"
                     class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-white text-sm mt-1"
                     onchange="updateTalkingHeadGenerateBtn()">
+                <option value="">— اختر صوتاً —</option>
             </select>
 
             <div class="text-xs text-slate-500 mt-2">
                 💡 إذا لم يكن لديك صوت، استنسخ صوتك من <strong>🎙️ Voice Cloning</strong>
+                <br>💡 أو اختر صوتاً جاهزاً من Edge TTS
             </div>
         </div>
 
@@ -674,7 +705,7 @@
 </div>
 
 <!-- ============================================================ -->
-<!-- 🎚️ نافذة معالجة الصوت (اختياري) -->
+<!-- 🎚️ نافذة معالجة الصوت -->
 <!-- ============================================================ -->
 <div id="syncProcessModal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
     <div class="bg-slate-800 rounded-xl p-6 max-w-4xl w-full border border-slate-700 max-h-[90vh] overflow-y-auto">
@@ -797,14 +828,30 @@ document.querySelectorAll('input[name="voiceoverMode"]').forEach(radio => {
 });
 
 // ─────────────────────────────────────────────────────────
-// ربط شريط LUFS
+// تهيئة عند التحميل
 // ─────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
+    // ربط شريط LUFS
     const lufs = document.getElementById('optTargetLufs');
     if (lufs) {
         lufs.addEventListener('input', () => {
             document.getElementById('lufsVal').textContent = lufs.value;
         });
+    }
+
+    // فحص الإعدادات
+    try {
+        const configEl = document.getElementById('timeline-config');
+        if (configEl) {
+            const config = JSON.parse(configEl.textContent);
+            console.log('📡 Voice Providers:', {
+                'Edge TTS': config.edgeTtsEnabled ? '✅' : '❌',
+                'ElevenLabs': config.elevenlabsConfigured ? '✅' : '⚠️ (سيستخدم HuggingFace/Edge)',
+                'D-ID (Talking Head)': config.didConfigured ? '✅' : '❌',
+            });
+        }
+    } catch (e) {
+        console.warn('Failed to parse timeline-config:', e);
     }
 });
 </script>
