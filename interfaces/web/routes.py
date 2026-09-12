@@ -35,44 +35,23 @@ logger = logging.getLogger(__name__)
 # ============================================================
 
 def _format_duration(seconds) -> str:
-    """
-    Format a duration in seconds to a human-readable string.
-
-    Examples:
-        0        -> "0:00"
-        5        -> "0:05"
-        65       -> "1:05"
-        3665     -> "1:01:05"
-        None     -> "—"
-    """
     if seconds is None:
         return "—"
     try:
         total = int(float(seconds))
     except (TypeError, ValueError):
         return "—"
-
     if total < 0:
         total = 0
-
     hours = total // 3600
     minutes = (total % 3600) // 60
     secs = total % 60
-
     if hours > 0:
         return f"{hours}:{minutes:02d}:{secs:02d}"
     return f"{minutes}:{secs:02d}"
 
 
 def _format_number(value) -> str:
-    """
-    Format a number with thousands separators.
-
-    Examples:
-        1000      -> "1,000"
-        1234567   -> "1,234,567"
-        None      -> "0"
-    """
     if value is None:
         return "0"
     try:
@@ -81,7 +60,6 @@ def _format_number(value) -> str:
         return str(value)
 
 
-# Register the filters on the Jinja2 environment
 templates.env.filters["format_duration"] = _format_duration
 templates.env.filters["format_number"] = _format_number
 
@@ -91,7 +69,6 @@ templates.env.filters["format_number"] = _format_number
 # ============================================================
 
 def get_supabase_config() -> dict:
-    """Get Supabase configuration for frontend."""
     return {
         "url": settings.SUPABASE_URL,
         "public_key": settings.supabase_public_key_value,
@@ -102,16 +79,6 @@ def get_supabase_config() -> dict:
 
 
 async def _resolve_video_url(project) -> Optional[str]:
-    """
-    محاولة استخراج رابط الفيديو العام من المشروع.
-    يحاول بالترتيب:
-      1. project.video_url إن كان رابطاً كاملاً
-      2. project.data.video_url كـ fallback
-      3. project.storage_path عبر SupabaseStorageAdapter
-      4. project.output_path عبر SupabaseStorageAdapter
-      5. project.result_url / output_url إن وُجدت
-    """
-    # 1) video_url مباشر (من property أو من data)
     video_url = getattr(project, "video_url", None)
     if not video_url:
         data = getattr(project, "data", None)
@@ -121,35 +88,29 @@ async def _resolve_video_url(project) -> Optional[str]:
     if video_url and isinstance(video_url, str) and video_url.startswith("http"):
         return video_url
 
-    # 2) storage_path
     storage_path = getattr(project, "storage_path", None)
     if not storage_path:
-        # 3) output_path
         storage_path = getattr(project, "output_path", None)
 
-    # من data أيضاً
     if not storage_path:
         data = getattr(project, "data", None)
         if isinstance(data, dict):
             storage_path = data.get("video_path") or data.get("storage_path")
 
-    # 4) result_url / output_url مباشر
     if not storage_path:
         alt = getattr(project, "result_url", None) or getattr(project, "output_url", None)
         if alt and isinstance(alt, str) and alt.startswith("http"):
             return alt
 
     if not storage_path:
-        return video_url  # قد يكون None
+        return video_url
 
-    # محاولة بناء الرابط العام
     try:
         storage = SupabaseStorageAdapter()
         if hasattr(storage, "get_public_url"):
-            public = await storage.get_public_url(storage_path)  # type: ignore
+            public = await storage.get_public_url(storage_path)
             if public:
                 return public
-        # fallback: بناؤه يدوياً
         if settings.supabase_configured:
             bucket = settings.SUPABASE_BUCKET
             base = settings.SUPABASE_URL.rstrip("/")
@@ -161,13 +122,11 @@ async def _resolve_video_url(project) -> Optional[str]:
 
 
 async def _resolve_thumbnail_url(project) -> Optional[str]:
-    """استخراج رابط الصورة المصغرة من المشروع."""
     thumb_url = getattr(project, "thumbnail_url", None)
     if not thumb_url:
         data = getattr(project, "data", None)
         if isinstance(data, dict):
             thumb_url = data.get("thumbnail")
-
     if thumb_url and isinstance(thumb_url, str) and thumb_url.startswith("http"):
         return thumb_url
     return thumb_url
@@ -177,17 +136,22 @@ async def _resolve_thumbnail_url(project) -> Optional[str]:
 # 🎙️ VOICEOVER HELPERS
 # ============================================================
 
-# مجلد التخزين المحلي للتسجيلات الصوتية
 VOICEOVER_DIR = Path(settings.MEDIA_DIR) / "voiceovers"
 VOICEOVER_DIR.mkdir(parents=True, exist_ok=True)
+
+CLONED_VOICES_DIR = Path(settings.MEDIA_DIR) / "cloned_voices"
+CLONED_VOICES_DIR.mkdir(parents=True, exist_ok=True)
 
 VOICEOVER_MAX_SIZE = 100 * 1024 * 1024  # 100MB
 ALLOWED_AUDIO_TYPES = {
     "audio/mpeg", "audio/mp3", "audio/wav", "audio/x-wav",
     "audio/webm", "audio/ogg", "audio/mp4", "audio/m4a",
     "audio/x-m4a", "audio/aac", "audio/flac",
-    "video/webm",  # بعض المتصفحات ترسل webm كـ video
+    "video/webm",
 }
+
+# تخزين مؤقت لأصوات ElevenLabs
+CLONED_VOICE_CACHE: Dict[str, str] = {}
 
 
 async def _get_audio_duration(file_path: Path) -> float:
@@ -213,10 +177,7 @@ async def _upload_voiceover_to_storage(
     project_id: str,
     content_type: str = "audio/webm",
 ) -> Dict[str, str]:
-    """
-    ارفع ملف التسجيل إلى Supabase Storage (مع fallback محلي).
-    يعيد: {"url": ..., "path": ..., "media_id": ...}
-    """
+    """ارفع ملف التسجيل إلى Supabase Storage (مع fallback محلي)."""
     storage = SupabaseStorageAdapter()
     unique = f"{uuid.uuid4().hex}{local_path.suffix}"
     remote_path = f"voiceovers/{project_id}/{unique}"
@@ -242,7 +203,6 @@ async def _upload_voiceover_to_storage(
     except Exception as e:
         logger.warning(f"Supabase upload failed, keeping local: {e}")
 
-    # fallback: احفظ محلياً
     local_dest = VOICEOVER_DIR / f"{project_id}_{unique}"
     try:
         local_dest.write_bytes(local_path.read_bytes())
@@ -255,6 +215,147 @@ async def _upload_voiceover_to_storage(
     except Exception as e:
         logger.exception(f"Local voiceover save failed: {e}")
         raise
+
+
+# ============================================================
+# 🎙️ ELEVENLABS — Voice Cloning Helpers
+# ============================================================
+
+ELEVENLABS_API_BASE = "https://api.elevenlabs.io/v1"
+
+
+async def _elevenlabs_create_voice(
+    audio_content: bytes,
+    voice_name: str,
+    description: str = "Cloned via dashboard",
+) -> str:
+    """
+    أنشئ voice clone في ElevenLabs.
+    Returns: voice_id (str)
+    """
+    import httpx
+
+    if not settings.ELEVENLABS_API_KEY:
+        raise HTTPException(
+            status_code=503,
+            detail="ELEVENLABS_API_KEY غير مُعرّف في الإعدادات",
+        )
+
+    headers = {"xi-api-key": settings.ELEVENLABS_API_KEY}
+
+    files = {
+        "files": ("sample.mp3", audio_content, "audio/mpeg"),
+    }
+    data = {
+        "name": voice_name,
+        "description": description,
+    }
+
+    async with httpx.AsyncClient(timeout=180.0) as client:
+        r = await client.post(
+            f"{ELEVENLABS_API_BASE}/voices/add",
+            headers=headers,
+            files=files,
+            data=data,
+        )
+
+        if r.status_code != 200:
+            error_text = r.text[:400]
+            logger.error(f"ElevenLabs voice creation failed: {error_text}")
+            raise HTTPException(
+                status_code=r.status_code,
+                detail=f"فشل إنشاء الصوت: {error_text}",
+            )
+
+        result = r.json()
+        voice_id = result.get("voice_id")
+        if not voice_id:
+            raise HTTPException(
+                status_code=500,
+                detail="لم يتم إرجاع voice_id من ElevenLabs",
+            )
+
+        logger.info(f"✅ ElevenLabs voice created: {voice_id}")
+        return voice_id
+
+
+async def _elevenlabs_tts(
+    text: str,
+    voice_id: str,
+    model_id: str = "eleven_multilingual_v2",
+    stability: float = 0.5,
+    similarity_boost: float = 0.75,
+    style: float = 0.0,
+    speed: float = 1.0,
+) -> bytes:
+    """
+    حوّل النص إلى صوت باستخدام voice clone.
+    Returns: audio content (bytes)
+    """
+    import httpx
+
+    if not settings.ELEVENLABS_API_KEY:
+        raise HTTPException(
+            status_code=503,
+            detail="ELEVENLABS_API_KEY غير مُعرّف",
+        )
+
+    headers = {
+        "xi-api-key": settings.ELEVENLABS_API_KEY,
+        "Content-Type": "application/json",
+    }
+
+    payload = {
+        "text": text,
+        "model_id": model_id,
+        "voice_settings": {
+            "stability": stability,
+            "similarity_boost": similarity_boost,
+            "style": style,
+            "use_speaker_boost": True,
+        },
+    }
+
+    if speed != 1.0:
+        payload["voice_settings"]["speed"] = speed
+
+    async with httpx.AsyncClient(timeout=240.0) as client:
+        r = await client.post(
+            f"{ELEVENLABS_API_BASE}/text-to-speech/{voice_id}",
+            headers=headers,
+            json=payload,
+        )
+
+        if r.status_code != 200:
+            error_text = r.text[:400]
+            logger.error(f"ElevenLabs TTS failed: {error_text}")
+            raise HTTPException(
+                status_code=r.status_code,
+                detail=f"فشل توليد الصوت: {error_text}",
+            )
+
+        return r.content
+
+
+async def _elevenlabs_delete_voice(voice_id: str) -> bool:
+    """احذف voice clone من ElevenLabs."""
+    import httpx
+
+    if not settings.ELEVENLABS_API_KEY:
+        return False
+
+    headers = {"xi-api-key": settings.ELEVENLABS_API_KEY}
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            r = await client.delete(
+                f"{ELEVENLABS_API_BASE}/voices/{voice_id}",
+                headers=headers,
+            )
+            return r.status_code == 200
+    except Exception as e:
+        logger.warning(f"Failed to delete voice {voice_id}: {e}")
+        return False
 
 
 # ============================================================
@@ -326,7 +427,6 @@ async def project_timeline(
     if not project:
         return HTMLResponse("Project not found", status_code=404)
 
-    # Build scenes from timeline or script (fallback)
     scenes = []
     try:
         if hasattr(project, "timeline") and project.timeline:
@@ -343,7 +443,6 @@ async def project_timeline(
     except Exception:
         pass
 
-    # Fallback: generate approximate scenes from script paragraphs
     if not scenes and project.script:
         paragraphs = [p.strip() for p in project.script.split("\n\n") if p.strip()]
         t = 0.0
@@ -360,7 +459,6 @@ async def project_timeline(
             })
             t += duration
 
-    # ✅ اجلب مقاطع الصوت مع النصوص المُزامنة
     voiceover_clips = []
     if hasattr(project, "data") and isinstance(project.data, dict):
         voiceover_clips = [
@@ -391,8 +489,6 @@ async def project_detail(
         return HTMLResponse("Project not found", status_code=404)
 
     render_jobs = await job_repo.list_for_project(project.id)
-
-    # ✅ حلّ رابط الفيديو والصورة المصغرة
     video_url = await _resolve_video_url(project)
     thumbnail_url = await _resolve_thumbnail_url(project)
 
@@ -417,19 +513,14 @@ async def upload_voiceover(
     title: str = Form(""),
     script: str = Form(""),
     script_segments: str = Form("[]"),
-    source: str = Form("recording"),  # recording | file | tts
+    source: str = Form("recording"),
     start: float = Form(0.0),
     duration: float = Form(0.0),
     processed: str = Form("false"),
     processing_options: str = Form("{}"),
 ):
-    """
-    رفع تسجيل صوتي مخصص + النص المُزامن.
-
-    يقبل: webm, mp3, wav, m4a, ogg (حتى 100MB)
-    """
+    """رفع تسجيل صوتي مخصص + النص المُزامن."""
     try:
-        # ── تحقق من الحجم ────────────────────────────────
         content = await file.read()
         if not content:
             return JSONResponse(
@@ -445,34 +536,28 @@ async def upload_voiceover(
                 status_code=413,
             )
 
-        # ── تحقق من النوع ────────────────────────────────
         content_type = file.content_type or "audio/webm"
         suffix = Path(file.filename or "audio.webm").suffix.lower() or ".webm"
         if content_type not in ALLOWED_AUDIO_TYPES:
             logger.warning(f"Unexpected audio type: {content_type}, suffix={suffix}")
 
-        # ── احفظ مؤقتاً ──────────────────────────────────
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
             tmp.write(content)
             tmp_path = Path(tmp.name)
 
         try:
-            # ── احسب المدة إن لم تُعطَ ────────────────────
             if duration <= 0:
                 duration = await _get_audio_duration(tmp_path)
 
-            # ── ارفع للخادم ──────────────────────────────
             uploaded = await _upload_voiceover_to_storage(
                 tmp_path, project_id, content_type
             )
 
-            # ── حلّل المقاطع ─────────────────────────────
             try:
                 segments = json.loads(script_segments) if script_segments else []
             except json.JSONDecodeError:
                 segments = []
 
-            # ── حلّل خيارات المعالجة ────────────────────
             try:
                 proc_opts = json.loads(processing_options) if processing_options else {}
             except json.JSONDecodeError:
@@ -480,8 +565,7 @@ async def upload_voiceover(
 
             logger.info(
                 f"✅ Voiceover uploaded: {uploaded['url']} "
-                f"(duration={duration:.2f}s, segments={len(segments)}, "
-                f"processed={processed})"
+                f"(duration={duration:.2f}s, segments={len(segments)})"
             )
 
             return {
@@ -514,27 +598,11 @@ async def transcribe_voiceover(
     file: UploadFile = File(...),
     language: str = Form("ar"),
     with_timestamps: str = Form("true"),
-    model_size: str = Form("base"),  # tiny | base | small | medium | large
+    model_size: str = Form("base"),
 ):
-    """
-    استخراج النص من ملف صوتي باستخدام Whisper.
-
-    يحتاج:
-        pip install faster-whisper
-        (أو pip install openai-whisper)
-
-    يعيد:
-        {
-            "success": true,
-            "text": "...",
-            "language": "ar",
-            "segments": [{"text", "start", "end"}, ...],
-            "duration": 12.5
-        }
-    """
+    """استخراج النص من ملف صوتي باستخدام Whisper."""
     tmp_path = None
     try:
-        # ── احفظ الملف مؤقتاً ────────────────────────────
         content = await file.read()
         if not content:
             return JSONResponse(
@@ -548,18 +616,15 @@ async def transcribe_voiceover(
             tmp_path = Path(tmp.name)
 
         logger.info(
-            f"🎬 Transcribing {file.filename} "
-            f"({len(content)} bytes, lang={language}, model={model_size})"
+            f"🎬 Transcribing {file.filename} (lang={language}, model={model_size})"
         )
 
         segments: List[Dict[str, Any]] = []
         full_text = ""
         detected_lang = language
 
-        # ── جرّب faster-whisper أولاً (أسرع) ────────────
         try:
             from faster_whisper import WhisperModel
-
             model = WhisperModel(model_size, device="cpu", compute_type="int8")
             segments_gen, info = model.transcribe(
                 str(tmp_path),
@@ -567,28 +632,23 @@ async def transcribe_voiceover(
                 beam_size=5,
                 vad_filter=True,
             )
-
             for seg in segments_gen:
                 segments.append({
                     "text": seg.text.strip(),
                     "start": round(seg.start, 3),
                     "end": round(seg.end, 3),
                 })
-
             full_text = " ".join(s["text"] for s in segments).strip()
             detected_lang = getattr(info, "language", language) or language
 
         except ImportError:
-            # ── fallback: openai-whisper الأصلي ─────────
             import whisper
-
             model = whisper.load_model(model_size)
             result = model.transcribe(
                 str(tmp_path),
                 language=language if language != "auto" else None,
                 verbose=False,
             )
-
             if with_timestamps.lower() == "true":
                 for seg in result.get("segments", []):
                     segments.append({
@@ -596,7 +656,6 @@ async def transcribe_voiceover(
                         "start": round(float(seg["start"]), 3),
                         "end": round(float(seg["end"]), 3),
                     })
-
             full_text = result.get("text", "").strip()
             detected_lang = result.get("language", language) or language
 
@@ -615,8 +674,7 @@ async def transcribe_voiceover(
             "duration": duration,
         }
 
-    except ImportError as e:
-        logger.error(f"Whisper not installed: {e}")
+    except ImportError:
         return JSONResponse(
             {
                 "success": False,
@@ -641,27 +699,34 @@ async def transcribe_voiceover(
 
 
 # ============================================================
-# 🎯 SCRIPT ALIGNMENT — Force Alignment
+# 🎙️ VOICE CLONING — ElevenLabs
 # ============================================================
 
-@router.post("/api/media/align-script")
-async def align_script_with_audio(
+@router.post("/api/voice/clone")
+async def clone_user_voice(
     file: UploadFile = File(...),
-    script: str = Form(...),
-    language: str = Form("ar"),
+    name: str = Form("MyVoice"),
+    project_id: str = Form(""),
+    description: str = Form(""),
 ):
     """
-    مزامنة دقيقة للنص مع الصوت.
+    🎙️ استنسخ صوت المستخدم من تسجيل.
 
-    الاستراتيجية:
-      1. احسب مدة الصوت (ffprobe)
-      2. قسّم النص إلى جمل
-      3. وزّع المدة على الجمل حسب طول كل جملة
-
-    يمكن تحسينها لاحقاً باستخدام Whisper word_timestamps.
+    المتطلبات:
+      - مدة التسجيل: 30 ثانية - 3 دقائق (مثالي 1-2 دقيقة)
+      - جودة عالية (بدون ضوضاء خلفية)
+      - صوت واحد فقط
     """
-    tmp_path = None
     try:
+        if not settings.ELEVENLABS_API_KEY:
+            return JSONResponse(
+                {
+                    "success": False,
+                    "error": "خدمة استنساخ الصوت غير مهيأة. أضف ELEVENLABS_API_KEY.",
+                },
+                status_code=503,
+            )
+
         content = await file.read()
         if not content:
             return JSONResponse(
@@ -669,97 +734,309 @@ async def align_script_with_audio(
                 status_code=400,
             )
 
-        suffix = Path(file.filename or "audio.webm").suffix.lower() or ".webm"
-        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-            tmp.write(content)
-            tmp_path = Path(tmp.name)
-
-        logger.info(f"🎯 Aligning script ({len(script)} chars) with audio")
-
-        # ── احسب مدة الصوت ──────────────────────────────
-        audio_duration = await _get_audio_duration(tmp_path)
-
-        # إذا فشل ffprobe، جرّب Whisper
-        if audio_duration <= 0:
-            try:
-                from faster_whisper import WhisperModel
-                model = WhisperModel("tiny", device="cpu", compute_type="int8")
-                segs_gen, info = model.transcribe(
-                    str(tmp_path),
-                    language=language if language != "auto" else None,
-                )
-                segs_list = list(segs_gen)
-                if segs_list:
-                    audio_duration = segs_list[-1].end
-            except Exception as e:
-                logger.warning(f"Could not determine duration via Whisper: {e}")
-
-        if audio_duration <= 0:
+        if len(content) < 30 * 1024:
             return JSONResponse(
-                {"success": False, "error": "لا يمكن قراءة مدة الصوت"},
+                {
+                    "success": False,
+                    "error": "التسجيل قصير جداً. الحد الأدنى ~30 ثانية.",
+                },
                 status_code=400,
             )
 
-        # ── قسّم النص إلى جمل ───────────────────────────
-        import re
-        sentences = [
-            s.strip() for s in
-            re.split(r'[.!?؟।\n]+', script)
-            if s.strip()
-        ]
+        if len(content) > 25 * 1024 * 1024:
+            return JSONResponse(
+                {"success": False, "error": "الملف كبير جداً (الحد 25MB)"},
+                status_code=413,
+            )
 
-        if not sentences:
+        voice_name = f"{name}_{uuid.uuid4().hex[:6]}"
+
+        logger.info(
+            f"🎙️ Creating voice clone: {voice_name} ({len(content)} bytes)"
+        )
+
+        voice_id = await _elevenlabs_create_voice(
+            audio_content=content,
+            voice_name=voice_name,
+            description=description or "Cloned via Voiceover Studio",
+        )
+
+        # خزّن في cache
+        cache_key = f"{project_id}:{name}" if project_id else name
+        CLONED_VOICE_CACHE[cache_key] = voice_id
+
+        return {
+            "success": True,
+            "voice_id": voice_id,
+            "name": voice_name,
+            "original_name": name,
+            "project_id": project_id,
+            "message": "✅ تم استنساخ الصوت بنجاح. يمكنك الآن توليد النص بصوتك.",
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Voice cloning failed")
+        return JSONResponse(
+            {"success": False, "error": str(e)},
+            status_code=500,
+        )
+
+
+@router.post("/api/voice/generate")
+async def generate_with_cloned_voice(
+    voice_id: str = Form(...),
+    script: str = Form(...),
+    project_id: str = Form(""),
+    stability: float = Form(0.5),
+    similarity_boost: float = Form(0.75),
+    style: float = Form(0.0),
+    speed: float = Form(1.0),
+    model_id: str = Form("eleven_multilingual_v2"),
+):
+    """
+    🎙️ ولّد الصوت من النص باستخدام voice clone.
+
+    Returns:
+        ملف صوتي MP3 مباشرة + metadata في headers.
+    """
+    try:
+        if not settings.ELEVENLABS_API_KEY:
+            return JSONResponse(
+                {"success": False, "error": "خدمة ElevenLabs غير مهيأة"},
+                status_code=503,
+            )
+
+        script = script.strip()
+        if not script:
             return JSONResponse(
                 {"success": False, "error": "النص فارغ"},
                 status_code=400,
             )
 
-        # ── وزّع المدة على الجمل حسب طول كل جملة ────────
-        total_chars = sum(len(s) for s in sentences)
-        segments = []
-        cursor = 0.0
-
-        for sentence in sentences:
-            ratio = len(sentence) / total_chars
-            duration = audio_duration * ratio
-            segments.append({
-                "text": sentence,
-                "start": round(cursor, 3),
-                "end": round(min(cursor + duration, audio_duration), 3),
-                "confidence": 0.8,
-            })
-            cursor += duration
-
-        # تأكد أن آخر مقطع ينتهي عند نهاية الصوت
-        if segments:
-            segments[-1]["end"] = round(audio_duration, 3)
+        if len(script) > 5000:
+            return JSONResponse(
+                {
+                    "success": False,
+                    "error": "النص طويل جداً (الحد 5000 حرف للخطة المجانية)",
+                },
+                status_code=400,
+            )
 
         logger.info(
-            f"✅ Aligned {len(segments)} segments over "
-            f"{audio_duration:.2f}s"
+            f"🎙️ TTS: voice_id={voice_id[:12]}..., "
+            f"chars={len(script)}, speed={speed}"
         )
 
-        return {
-            "success": True,
-            "method": "proportional-distribution",
-            "language": language,
-            "audio_duration": round(audio_duration, 3),
-            "segments": segments,
-        }
+        audio_bytes = await _elevenlabs_tts(
+            text=script,
+            voice_id=voice_id,
+            model_id=model_id,
+            stability=stability,
+            similarity_boost=similarity_boost,
+            style=style,
+            speed=speed,
+        )
 
+        out_name = f"cloned_{uuid.uuid4().hex[:12]}.mp3"
+        tmp_out = CLONED_VOICES_DIR / out_name
+        tmp_out.write_bytes(audio_bytes)
+
+        duration = await _get_audio_duration(tmp_out)
+
+        # ارفع لـ Supabase (اختياري)
+        url = None
+        if project_id and settings.supabase_configured:
+            try:
+                from application.services.production_service import (
+                    _upload_to_supabase, _build_public_url,
+                )
+                storage = SupabaseStorageAdapter()
+                remote_path = f"cloned_voices/{project_id}/{out_name}"
+                await _upload_to_supabase(
+                    storage=storage,
+                    local_path=tmp_out,
+                    remote_path=remote_path,
+                    content_type="audio/mpeg",
+                )
+                url = await _build_public_url(storage, remote_path)
+            except Exception as e:
+                logger.warning(f"Supabase upload failed: {e}")
+
+        if not url:
+            url = f"/static/media/cloned_voices/{out_name}"
+
+        logger.info(
+            f"✅ Voice generated: {out_name} "
+            f"({len(audio_bytes)} bytes, {duration:.2f}s)"
+        )
+
+        return FileResponse(
+            path=str(tmp_out),
+            media_type="audio/mpeg",
+            filename=out_name,
+            headers={
+                "X-Cloned-URL": url,
+                "X-Duration": str(round(duration, 2)),
+                "X-Voice-ID": voice_id,
+                "X-Script-Length": str(len(script)),
+                "Access-Control-Expose-Headers":
+                    "X-Cloned-URL, X-Duration, X-Voice-ID, X-Script-Length",
+            },
+        )
+
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.exception("Alignment failed")
+        logger.exception("Voice generation failed")
         return JSONResponse(
             {"success": False, "error": str(e)},
             status_code=500,
         )
-    finally:
-        if tmp_path:
-            tmp_path.unlink(missing_ok=True)
+
+
+@router.get("/api/voice/clones")
+async def list_cloned_voices():
+    """اعرض الأصوات المُستنسخة للمستخدم."""
+    import httpx
+
+    if not settings.ELEVENLABS_API_KEY:
+        return {"success": False, "error": "غير مهيأ", "voices": []}
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            r = await client.get(
+                f"{ELEVENLABS_API_BASE}/voices",
+                headers={"xi-api-key": settings.ELEVENLABS_API_KEY},
+            )
+            if r.status_code != 200:
+                return {"success": False, "voices": []}
+
+            data = r.json()
+            voices = [
+                {
+                    "voice_id": v["voice_id"],
+                    "name": v["name"],
+                    "category": v.get("category", ""),
+                    "description": v.get("description", ""),
+                }
+                for v in data.get("voices", [])
+                if v.get("category") == "cloned"
+            ]
+            return {"success": True, "count": len(voices), "voices": voices}
+    except Exception as e:
+        return {"success": False, "error": str(e), "voices": []}
+
+
+@router.delete("/api/voice/clones/{voice_id}")
+async def delete_cloned_voice(voice_id: str):
+    """احذف voice clone."""
+    success = await _elevenlabs_delete_voice(voice_id)
+    if success:
+        for k, v in list(CLONED_VOICE_CACHE.items()):
+            if v == voice_id:
+                del CLONED_VOICE_CACHE[k]
+    return {"success": success}
 
 
 # ============================================================
-# 🎚️ AUDIO PROCESSING — FFmpeg Filters
+# 🎯 ALIGN SCRIPT — Voice Cloning (Backward Compatible)
+# ============================================================
+
+@router.post("/api/media/align-script")
+async def align_script_with_audio(
+    file: UploadFile = File(...),
+    script: str = Form(...),
+    language: str = Form("ar"),
+    voice_id: str = Form(""),
+    project_id: str = Form(""),
+):
+    """
+    🎙️ Voice Cloning — النص المكتوب بصوت المستخدم.
+
+    إذا تم تمرير voice_id → استخدمه مباشرة.
+    وإلا → استنسخ الصوت من الملف المرفوع ثم ولّد.
+    """
+    try:
+        if not settings.ELEVENLABS_API_KEY:
+            return JSONResponse(
+                {
+                    "success": False,
+                    "error": "خدمة استنساخ الصوت غير مهيأة. أضف ELEVENLABS_API_KEY.",
+                },
+                status_code=503,
+            )
+
+        # ── إذا كان هناك voice_id جاهز، استخدمه ────────
+        if voice_id:
+            logger.info(f"🎙️ Using existing voice: {voice_id}")
+            return await generate_with_cloned_voice(
+                voice_id=voice_id,
+                script=script,
+                project_id=project_id,
+                stability=0.5,
+                similarity_boost=0.75,
+                style=0.0,
+                speed=1.0,
+                model_id="eleven_multilingual_v2",
+            )
+
+        # ── وإلا: استنسخ من الملف المرفوع ──────────────
+        content = await file.read()
+        if not content:
+            return JSONResponse(
+                {"success": False, "error": "الملف فارغ"},
+                status_code=400,
+            )
+
+        if len(content) < 30 * 1024:
+            return JSONResponse(
+                {
+                    "success": False,
+                    "error": "التسجيل قصير جداً. سجّل 30 ثانية على الأقل.",
+                },
+                status_code=400,
+            )
+
+        voice_name = f"AutoVoice_{uuid.uuid4().hex[:6]}"
+
+        logger.info(f"🎙️ Auto-cloning voice from upload ({len(content)} bytes)")
+
+        new_voice_id = await _elevenlabs_create_voice(
+            audio_content=content,
+            voice_name=voice_name,
+            description="Auto-cloned from upload",
+        )
+
+        # خزّن في cache
+        if project_id:
+            CLONED_VOICE_CACHE[project_id] = new_voice_id
+
+        # ولّد النص
+        return await generate_with_cloned_voice(
+            voice_id=new_voice_id,
+            script=script,
+            project_id=project_id,
+            stability=0.5,
+            similarity_boost=0.75,
+            style=0.0,
+            speed=1.0,
+            model_id="eleven_multilingual_v2",
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Align script failed")
+        return JSONResponse(
+            {"success": False, "error": str(e)},
+            status_code=500,
+        )
+
+
+# ============================================================
+# 🎚️ AUDIO PROCESSING — FFmpeg
 # ============================================================
 
 @router.post("/api/media/process-audio")
@@ -767,16 +1044,7 @@ async def process_audio_endpoint(
     file: UploadFile = File(...),
     options: str = Form("{}"),
 ):
-    """
-    معالجة الصوت باستخدام ffmpeg:
-      - normalize: تطبيع مستوى الصوت (loudnorm)
-      - denoise: إزالة ضوضاء (afftdn)
-      - trim_silence: قص الصمت (silenceremove)
-      - compress: ضغط ديناميكي (acompressor)
-      - target_lufs: مستوى الاستهداف (افتراضي -16)
-
-    يعيد الملف المعالج مباشرة كـ audio/webm.
-    """
+    """معالجة الصوت باستخدام ffmpeg."""
     tmp_in = None
     tmp_out = None
     try:
@@ -787,7 +1055,6 @@ async def process_audio_endpoint(
                 status_code=400,
             )
 
-        # ── حلّل الخيارات ────────────────────────────────
         try:
             opts = json.loads(options) if options else {}
         except json.JSONDecodeError:
@@ -799,21 +1066,16 @@ async def process_audio_endpoint(
         compress = opts.get("compress", False)
         target_lufs = float(opts.get("target_lufs", -16))
 
-        # ── احفظ الملف المدخل ────────────────────────────
         suffix = Path(file.filename or "audio.webm").suffix.lower() or ".webm"
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
             tmp.write(content)
             tmp_in = Path(tmp.name)
 
-        # ── ملف الإخراج (webm/opus) ─────────────────────
         tmp_out = tmp_in.with_name(f"processed_{uuid.uuid4().hex[:8]}.webm")
 
-        # ── ابنِ فلتر ffmpeg ─────────────────────────────
         filters = []
-
         if denoise:
             filters.append("afftdn=nf=-25")
-
         if trim_silence:
             filters.append(
                 "silenceremove=start_periods=1:start_duration=0.1:"
@@ -823,18 +1085,11 @@ async def process_audio_endpoint(
                 "start_threshold=-45dB:detection=peak,"
                 "areverse"
             )
-
         if compress:
-            filters.append(
-                "acompressor=threshold=-18dB:ratio=3:attack=5:release=50"
-            )
-
+            filters.append("acompressor=threshold=-18dB:ratio=3:attack=5:release=50")
         if normalize:
-            filters.append(
-                f"loudnorm=I={target_lufs}:TP=-1.5:LRA=11"
-            )
+            filters.append(f"loudnorm=I={target_lufs}:TP=-1.5:LRA=11")
 
-        # ── نفّذ ffmpeg ──────────────────────────────────
         cmd = [
             "ffmpeg", "-y",
             "-i", str(tmp_in),
@@ -842,16 +1097,11 @@ async def process_audio_endpoint(
             "-c:a", "libopus",
             "-b:a", "128k",
         ]
-
         if filters:
             cmd += ["-af", ",".join(filters)]
-
         cmd.append(str(tmp_out))
 
-        logger.info(
-            f"🎚️ Processing audio with filters: "
-            f"{' | '.join(filters) if filters else 'passthrough'}"
-        )
+        logger.info(f"🎚️ Processing audio with filters: {filters}")
 
         proc = await asyncio.create_subprocess_exec(
             *cmd,
@@ -862,17 +1112,12 @@ async def process_audio_endpoint(
 
         if proc.returncode != 0:
             error_msg = stderr.decode()[-800:]
-            logger.error(f"ffmpeg failed (rc={proc.returncode}): {error_msg}")
+            logger.error(f"ffmpeg failed: {error_msg}")
             raise RuntimeError(f"ffmpeg error: {error_msg}")
 
         if not tmp_out.exists():
             raise RuntimeError("لم يتم إنشاء الملف المعالج")
 
-        logger.info(
-            f"✅ Audio processed: {tmp_out.stat().st_size} bytes"
-        )
-
-        # ── أعد الملف ────────────────────────────────────
         return FileResponse(
             path=str(tmp_out),
             media_type="audio/webm",
@@ -887,7 +1132,7 @@ async def process_audio_endpoint(
         return JSONResponse(
             {
                 "success": False,
-                "error": "ffmpeg غير مثبّت على الخادم. تأكد من تثبيته.",
+                "error": "ffmpeg غير مثبّت على الخادم.",
             },
             status_code=500,
         )
@@ -900,17 +1145,18 @@ async def process_audio_endpoint(
     finally:
         if tmp_in:
             tmp_in.unlink(missing_ok=True)
-        # لا تحذف tmp_out — FileResponse يحتاجه
 
+
+# ============================================================
+# 🎙️ VOICEOVER — CRUD
+# ============================================================
 
 @router.get("/api/media/voiceover/{project_id}")
 async def list_voiceovers(
     project_id: str,
     session: AsyncSession = Depends(get_db),
 ):
-    """
-    اعرض جميع مقاطع الصوت في مشروع (مع النصوص المُزامنة).
-    """
+    """اعرض جميع مقاطع الصوت في مشروع."""
     try:
         project_uuid = uuid.UUID(project_id)
     except ValueError:
@@ -939,6 +1185,7 @@ async def list_voiceovers(
             "layerId": c.get("layerId"),
             "processed": c.get("processed", False),
             "processingOptions": c.get("processingOptions"),
+            "voice_id": c.get("voice_id"),
         }
         for c in clips
         if isinstance(c, dict) and c.get("type") == "audio"
@@ -953,9 +1200,7 @@ async def delete_voiceover(
     clip_id: str,
     session: AsyncSession = Depends(get_db),
 ):
-    """
-    احذف مقطع صوتي + ملفه من التخزين.
-    """
+    """احذف مقطع صوتي + ملفه من التخزين."""
     try:
         project_uuid = uuid.UUID(project_id)
     except ValueError:
@@ -976,7 +1221,6 @@ async def delete_voiceover(
     if not target:
         return JSONResponse({"error": "Clip not found"}, status_code=404)
 
-    # احذف الملف من التخزين إن أمكن
     path = target.get("path") or target.get("mediaId")
     if path and settings.supabase_configured:
         try:
@@ -986,7 +1230,6 @@ async def delete_voiceover(
         except Exception as e:
             logger.warning(f"Failed to delete storage file: {e}")
 
-    # احذف الملف المحلي إن وُجد
     local_path = target.get("path")
     if local_path and isinstance(local_path, str) and local_path.startswith("/"):
         try:
@@ -996,7 +1239,6 @@ async def delete_voiceover(
         except Exception as e:
             logger.warning(f"Failed to delete local file: {e}")
 
-    # احذف المقطع من DB
     data["clips"] = [c for c in clips if c.get("id") != clip_id]
     if hasattr(project, "data"):
         project.data = data
@@ -1016,9 +1258,7 @@ async def update_voiceover(
     payload: Dict[str, Any],
     session: AsyncSession = Depends(get_db),
 ):
-    """
-    حدّث بيانات مقطع صوتي (العنوان، النص، المقاطع المُزامنة، التوقيت).
-    """
+    """حدّث بيانات مقطع صوتي."""
     try:
         project_uuid = uuid.UUID(project_id)
     except ValueError:
@@ -1039,8 +1279,7 @@ async def update_voiceover(
     if not target:
         return JSONResponse({"error": "Clip not found"}, status_code=404)
 
-    # حقول قابلة للتحديث
-    for field in ("title", "script", "script_segments", "start", "duration", "tts"):
+    for field in ("title", "script", "script_segments", "start", "duration", "tts", "voice_id"):
         if field in payload:
             target[field] = payload[field]
 
@@ -1061,9 +1300,7 @@ async def add_voiceover_clip(
     payload: Dict[str, Any],
     session: AsyncSession = Depends(get_db),
 ):
-    """
-    أضف مقطع صوتي جديد إلى المشروع (يُستخدم من الواجهة).
-    """
+    """أضف مقطع صوتي جديد إلى المشروع."""
     try:
         project_uuid = uuid.UUID(project_id)
     except ValueError:
@@ -1077,7 +1314,6 @@ async def add_voiceover_clip(
     data = getattr(project, "data", None) or {}
     clips = data.get("clips", []) or []
 
-    # أنشئ ID إن لم يُعطَ
     clip_id = payload.get("id") or f"clip-{uuid.uuid4().hex[:12]}"
     payload["id"] = clip_id
     payload.setdefault("type", "audio")
@@ -1104,12 +1340,7 @@ async def upload_media(
     file: UploadFile = File(...),
     project_id: str = Form(...),
 ):
-    """
-    رفع ملف وسائط (صورة/فيديو/صوت) إلى Supabase Storage.
-
-    Returns:
-        {"url": "https://...supabase.co/...", "path": "media/..."}
-    """
+    """رفع ملف وسائط عام إلى Supabase Storage."""
     try:
         from application.services.production_service import (
             _upload_to_supabase,
@@ -1133,10 +1364,7 @@ async def upload_media(
         try:
             content_type = file.content_type or "application/octet-stream"
 
-            logger.info(
-                f"📤 Uploading media: {file.filename} "
-                f"({len(content)} bytes) → {remote_path}"
-            )
+            logger.info(f"📤 Uploading media: {file.filename} → {remote_path}")
 
             await _upload_to_supabase(
                 storage=storage,
@@ -1146,13 +1374,10 @@ async def upload_media(
             )
 
             url = await _build_public_url(storage, remote_path)
-
             if not url:
                 raise RuntimeError("فشل بناء الرابط العام")
 
-            logger.info(f"✅ Media uploaded: {url}")
             return {"url": url, "path": remote_path}
-
         finally:
             tmp_path.unlink(missing_ok=True)
 
@@ -1162,7 +1387,7 @@ async def upload_media(
 
 
 # ============================================================
-# ASSETS - WITH SUPABASE STORAGE
+# ASSETS
 # ============================================================
 
 @router.get("/assets", response_class=HTMLResponse)
@@ -1258,69 +1483,49 @@ async def templates_page(request: Request):
 async def voices_page(request: Request):
     voice_engines = [
         {
+            "id": "elevenlabs",
+            "name": "ElevenLabs Voice Cloning",
+            "provider": "ElevenLabs API",
+            "description": "استنسخ صوتك من تسجيل 30 ثانية، ثم ولّد أي نص بصوتك.",
+            "languages": ["ar", "en", "fr", "de", "es", "it", "pt", "pl", "tr", "ru", "nl", "cs", "zh", "ja", "ko", "hi"],
+            "quality": 5,
+            "available": bool(settings.ELEVENLABS_API_KEY),
+            "active": bool(settings.ELEVENLABS_API_KEY),
+        },
+        {
             "id": "silent",
             "name": "Silent",
             "provider": "Built-in",
-            "description": "لا يولّد صوتاً. مفيد لمشاريع الفيديو الصامتة أو عند توفير صوت يدوياً.",
+            "description": "لا يولّد صوتاً. مفيد للفيديوهات الصامتة.",
             "languages": ["كل اللغات"],
             "quality": 1,
             "available": True,
-            "active": True,
+            "active": False,
         },
         {
             "id": "default",
             "name": "Default TTS",
             "provider": "Built-in",
-            "description": "محرك افتراضي بسيط. مناسب للاختبار السريع.",
+            "description": "محرك افتراضي بسيط.",
             "languages": ["en", "ar"],
             "quality": 2,
             "available": True,
             "active": False,
         },
         {
-            "id": "elevenlabs",
-            "name": "ElevenLabs",
-            "provider": "ElevenLabs API",
-            "description": "صوت بجودة عالية يدعم العربية والإنجليزية مع مجموعة متنوعة من الأصوات.",
-            "languages": ["ar", "en", "fr", "de", "es"],
-            "quality": 5,
-            "available": False,
-            "active": False,
-        },
-        {
             "id": "openai_tts",
             "name": "OpenAI TTS",
             "provider": "OpenAI API",
-            "description": "محرك OpenAI للنص إلى صوت بنماذج متعددة (tts-1, tts-1-hd).",
+            "description": "محرك OpenAI للنص إلى صوت.",
             "languages": ["ar", "en", "fr", "de", "es", "ja", "zh"],
             "quality": 5,
-            "available": False,
-            "active": False,
-        },
-        {
-            "id": "piper",
-            "name": "Piper",
-            "provider": "Open Source",
-            "description": "محرك مفتوح المصدر يعمل محلياً بدون إنترنت. يتطلب تثبيت إضافياً.",
-            "languages": ["ar", "en"],
-            "quality": 3,
-            "available": False,
-            "active": False,
-        },
-        {
-            "id": "kokoro",
-            "name": "Kokoro",
-            "provider": "Open Source",
-            "description": "محرك محلي خفيف الوزن عالي الجودة. يتطلب تثبيت إضافياً.",
-            "languages": ["en"],
-            "quality": 4,
             "available": False,
             "active": False,
         },
     ]
     return templates.TemplateResponse(request, "voices.html", {
         "voice_engines": voice_engines,
-        "active_voice": "Silent",
+        "active_voice": "ElevenLabs Voice Cloning" if settings.ELEVENLABS_API_KEY else "Silent",
         "active_page": "voices",
         "supabase": get_supabase_config(),
     })
@@ -1536,7 +1741,7 @@ async def logs_page(request: Request):
         {"level": "INFO",    "source": "system",  "timestamp": now - timedelta(seconds=4),  "message": "Database tables ready"},
         {"level": "INFO",    "source": "plugins", "timestamp": now - timedelta(seconds=3),  "message": "Plugins loaded: voice, renderer, exporter, publisher"},
         {"level": "INFO",    "source": "system",  "timestamp": now - timedelta(seconds=2),  "message": "Seeded default YouTube platform"},
-        {"level": "INFO",    "source": "main",    "timestamp": now - timedelta(seconds=1),  "message": "Platform ready at http://0.0.0.0:5000"},
+        {"level": "INFO",    "source": "main",    "timestamp": now - timedelta(seconds=1),  "message": "Platform ready"},
     ]
 
     if settings.supabase_configured:
@@ -1544,24 +1749,36 @@ async def logs_page(request: Request):
             "level": "INFO",
             "source": "supabase",
             "timestamp": now,
-            "message": f"Supabase configured: {settings.SUPABASE_URL} (bucket: {settings.SUPABASE_BUCKET})"
+            "message": f"Supabase configured: {settings.SUPABASE_URL}"
         })
     else:
         log_entries.append({
             "level": "WARNING",
             "source": "supabase",
             "timestamp": now,
-            "message": "Supabase not configured. Set SUPABASE_URL, SUPABASE_PUBLIC_KEY, SUPABASE_SECRET_KEY"
+            "message": "Supabase not configured"
         })
 
-    # سجّل حالة Whisper
+    # حالة ElevenLabs
+    elevenlabs_ok = bool(getattr(settings, "ELEVENLABS_API_KEY", ""))
+    log_entries.append({
+        "level": "INFO" if elevenlabs_ok else "WARNING",
+        "source": "voiceover",
+        "timestamp": now,
+        "message": (
+            f"ElevenLabs Voice Cloning: "
+            f"{'✅ متاح' if elevenlabs_ok else '❌ غير مهيأ (ELEVENLABS_API_KEY مفقود)'}"
+        )
+    })
+
+    # حالة Whisper
     whisper_status = "غير مثبّت"
     try:
-        import faster_whisper  # noqa
+        import faster_whisper
         whisper_status = "faster-whisper ✅"
     except ImportError:
         try:
-            import whisper  # noqa
+            import whisper
             whisper_status = "openai-whisper ✅"
         except ImportError:
             whisper_status = "❌ غير مثبّت (pip install faster-whisper)"
@@ -1573,14 +1790,14 @@ async def logs_page(request: Request):
         "message": f"Whisper engine: {whisper_status}"
     })
 
-    # سجّل حالة ffmpeg
+    # حالة ffmpeg
     import shutil
     ffmpeg_ok = shutil.which("ffmpeg") is not None
     log_entries.append({
         "level": "INFO" if ffmpeg_ok else "WARNING",
         "source": "voiceover",
         "timestamp": now,
-        "message": f"FFmpeg: {'✅ متاح' if ffmpeg_ok else '❌ غير مثبّت (المعالجة لن تعمل)'}"
+        "message": f"FFmpeg: {'✅ متاح' if ffmpeg_ok else '❌ غير مثبّت'}"
     })
 
     return templates.TemplateResponse(request, "logs.html", {
@@ -1612,17 +1829,17 @@ async def health_page(request: Request, session: AsyncSession = Depends(get_db))
     media_ok = settings.MEDIA_DIR.exists()
     supabase_ok = settings.supabase_configured
     supabase_detail = "متصل" if supabase_ok else "غير مهيأ"
+    elevenlabs_ok = bool(getattr(settings, "ELEVENLABS_API_KEY", ""))
 
-    # فحص Whisper
     whisper_ok = False
     whisper_detail = "غير مثبّت"
     try:
-        import faster_whisper  # noqa
+        import faster_whisper
         whisper_ok = True
         whisper_detail = "faster-whisper ✅"
     except ImportError:
         try:
-            import whisper  # noqa
+            import whisper
             whisper_ok = True
             whisper_detail = "openai-whisper ✅"
         except ImportError:
@@ -1650,9 +1867,15 @@ async def health_page(request: Request, session: AsyncSession = Depends(get_db))
             "icon": '<svg class="w-4 h-4 text-slate-300" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"/></svg>',
         },
         {
+            "name": "ElevenLabs Voice Cloning",
+            "status": "ok" if elevenlabs_ok else "degraded",
+            "detail": "متاح ✅" if elevenlabs_ok else "غير مهيأ — أضف ELEVENLABS_API_KEY",
+            "icon": '<svg class="w-4 h-4 text-slate-300" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"/></svg>',
+        },
+        {
             "name": "FFmpeg",
             "status": "ok" if ffmpeg_ok else "degraded",
-            "detail": "متاح" if ffmpeg_ok else "غير مثبت — الرندر والمعالجة لن يعملان",
+            "detail": "متاح" if ffmpeg_ok else "غير مثبت",
             "icon": '<svg class="w-4 h-4 text-slate-300" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.069A1 1 0 0121 8.87v6.26a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>',
         },
         {
@@ -1667,12 +1890,6 @@ async def health_page(request: Request, session: AsyncSession = Depends(get_db))
             "detail": "محملة بنجاح",
             "icon": '<svg class="w-4 h-4 text-slate-300" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/></svg>',
         },
-        {
-            "name": "WebSocket",
-            "status": "ok",
-            "detail": "/ws/render/{job_id}",
-            "icon": '<svg class="w-4 h-4 text-slate-300" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.111 16.404a5.5 5.5 0 017.778 0M12 20h.01m-7.08-7.071c3.904-3.905 10.236-3.905 14.14 0M1.394 9.393c5.857-5.857 15.355-5.857 21.213 0"/></svg>',
-        },
     ]
 
     plugins = {}
@@ -1683,16 +1900,15 @@ async def health_page(request: Request, session: AsyncSession = Depends(get_db))
         pass
 
     system_info = [
-        {"label": "Python",       "value": sys.version.split()[0]},
-        {"label": "Platform",     "value": platform.system() + " " + platform.release()},
-        {"label": "APP_NAME",     "value": settings.APP_NAME},
-        {"label": "APP_VERSION",  "value": settings.APP_VERSION},
-        {"label": "Supabase",     "value": "✅ مهيأ" if supabase_ok else "❌ غير مهيأ"},
-        {"label": "Public Key",   "value": "✅ موجود" if settings.supabase_public_key_value else "❌ مفقود"},
-        {"label": "Secret Key",   "value": "✅ موجود" if settings.supabase_secret_key_value else "❌ مفقود"},
-        {"label": "Storage Type", "value": settings.STORAGE_TYPE},
-        {"label": "Whisper",      "value": whisper_detail},
-        {"label": "FFmpeg",       "value": "✅ متاح" if ffmpeg_ok else "❌ غير مثبّت"},
+        {"label": "Python",          "value": sys.version.split()[0]},
+        {"label": "Platform",        "value": platform.system() + " " + platform.release()},
+        {"label": "APP_NAME",        "value": settings.APP_NAME},
+        {"label": "APP_VERSION",     "value": settings.APP_VERSION},
+        {"label": "Supabase",        "value": "✅ مهيأ" if supabase_ok else "❌ غير مهيأ"},
+        {"label": "Storage Type",    "value": settings.STORAGE_TYPE},
+        {"label": "ElevenLabs",      "value": "✅ متاح" if elevenlabs_ok else "❌ غير مهيأ"},
+        {"label": "Whisper",         "value": whisper_detail},
+        {"label": "FFmpeg",          "value": "✅ متاح" if ffmpeg_ok else "❌ غير مثبّت"},
     ]
 
     return templates.TemplateResponse(request, "health.html", {
@@ -1741,6 +1957,7 @@ async def settings_page(request: Request):
             "supabase_configured": settings.supabase_configured,
             "supabase_url": settings.SUPABASE_URL,
             "supabase_bucket": settings.SUPABASE_BUCKET,
+            "elevenlabs_configured": bool(getattr(settings, "ELEVENLABS_API_KEY", "")),
         },
         "active_page": "settings",
         "supabase": get_supabase_config(),
@@ -1748,12 +1965,11 @@ async def settings_page(request: Request):
 
 
 # ============================================================
-# SUPABASE CONFIGURATION API (for frontend)
+# SUPABASE CONFIGURATION API
 # ============================================================
 
 @router.get("/api/supabase/config")
 async def get_supabase_config_api():
-    """API endpoint for frontend to get Supabase configuration."""
     return {
         "url": settings.SUPABASE_URL,
         "public_key": settings.supabase_public_key_value,
@@ -1771,20 +1987,17 @@ async def get_supabase_config_api():
 
 @router.get("/api/supabase/status")
 async def get_supabase_status():
-    """Check Supabase connection status."""
     try:
         if not settings.supabase_configured:
             return {
                 "status": "not_configured",
-                "message": "Supabase is not configured. Set SUPABASE_URL, SUPABASE_PUBLIC_KEY, SUPABASE_SECRET_KEY"
+                "message": "Supabase is not configured."
             }
-
         storage = SupabaseStorageAdapter()
         await storage.list_files(prefix="", limit=1)
-
         return {
             "status": "connected",
-            "message": "Supabase is connected and working",
+            "message": "Supabase is connected",
             "url": settings.SUPABASE_URL,
             "bucket": settings.SUPABASE_BUCKET
         }
@@ -1796,17 +2009,11 @@ async def get_supabase_status():
 
 
 # ============================================================
-# 🔍 DEBUG ENDPOINTS (temporary — للتشخيص فقط)
+# 🔍 DEBUG ENDPOINTS
 # ============================================================
 
 @router.get("/api/debug/project/{project_id}")
 async def debug_project(project_id: str, session: AsyncSession = Depends(get_db)):
-    """
-    Endpoint تشخيصي مؤقت — يعرض بنية clips في DB.
-
-    مثال:
-        GET /api/debug/project/fe2d7c15-a8ff-46c7-96a8-a7b7b43104c1
-    """
     try:
         project_uuid = uuid.UUID(project_id)
     except ValueError:
@@ -1818,10 +2025,7 @@ async def debug_project(project_id: str, session: AsyncSession = Depends(get_db)
     repo = SQLProjectRepository(session)
     project = await repo.get(project_uuid)
     if not project:
-        return JSONResponse(
-            {"error": "Project not found"},
-            status_code=404,
-        )
+        return JSONResponse({"error": "Project not found"}, status_code=404)
 
     data = getattr(project, "data", None) or {}
     if not isinstance(data, dict):
@@ -1830,7 +2034,6 @@ async def debug_project(project_id: str, session: AsyncSession = Depends(get_db)
     clips = data.get("clips", []) or []
     media_files = data.get("media_files", []) or []
 
-    # ── تشخيص كل clip ────────────────────────────────────────
     clips_info = []
     for i, c in enumerate(clips):
         if not isinstance(c, dict):
@@ -1840,47 +2043,29 @@ async def debug_project(project_id: str, session: AsyncSession = Depends(get_db)
         content = c.get("content") or c.get("url") or ""
         metadata = c.get("metadata") or {}
 
-        url_candidates = {
-            "content": c.get("content"),
-            "url": c.get("url"),
-            "metadata.url": metadata.get("url") if isinstance(metadata, dict) else None,
-        }
-
         clips_info.append({
             "index": i,
             "type": c.get("type"),
             "title": c.get("title"),
             "duration": c.get("duration"),
-            "layer": c.get("layer"),
             "start": c.get("start"),
             "content_preview": (str(content)[:200] if content else None),
             "content_is_http": str(content).startswith("http") if content else False,
-            "content_is_blob": str(content).startswith("blob:") if content else False,
-            "content_is_empty": not bool(content),
             "metadata": metadata,
-            "url_candidates": {
-                k: (str(v)[:120] if v else None)
-                for k, v in url_candidates.items()
-            },
-            # حقول الصوت
             "script_preview": (c.get("script") or "")[:100] or None,
             "script_segments_count": len(c.get("script_segments") or []),
             "source": c.get("source"),
             "processed": c.get("processed"),
+            "voice_id": c.get("voice_id"),
         })
 
-    video_url_direct = getattr(project, "video_url", None)
-    thumbnail_url_direct = getattr(project, "thumbnail_url", None)
-    data_video_url = data.get("video_url")
-    data_thumb_url = data.get("thumbnail")
-
-    # ── ملخص التسجيلات الصوتية ────────────────────────────────
     audio_clips = [c for c in clips if isinstance(c, dict) and c.get("type") == "audio"]
     audio_summary = {
         "count": len(audio_clips),
         "with_script": sum(1 for c in audio_clips if c.get("script")),
         "with_segments": sum(1 for c in audio_clips if c.get("script_segments")),
         "processed": sum(1 for c in audio_clips if c.get("processed")),
+        "with_voice_id": sum(1 for c in audio_clips if c.get("voice_id")),
         "sources": list({c.get("source", "unknown") for c in audio_clips}),
     }
 
@@ -1892,44 +2077,19 @@ async def debug_project(project_id: str, session: AsyncSession = Depends(get_db)
             if hasattr(project.status, "value")
             else str(project.status)
         ),
-        "outputs": {
-            "video_url_property": video_url_direct,
-            "video_url_in_data": data_video_url,
-            "thumbnail_url_property": thumbnail_url_direct,
-            "thumbnail_url_in_data": data_thumb_url,
-        },
         "data_keys": list(data.keys()),
         "clips_count": len(clips),
-        "media_files_count": len(media_files),
         "audio_summary": audio_summary,
         "clips": clips_info,
-        "media_files_sample": [
-            {
-                "name": mf.get("name") if isinstance(mf, dict) else str(mf),
-                "type": mf.get("type") if isinstance(mf, dict) else None,
-                "size": mf.get("size") if isinstance(mf, dict) else None,
-                "url": (str(mf.get("url"))[:120] if isinstance(mf, dict) and mf.get("url") else None),
-            }
-            for mf in media_files[:10]
-        ],
     }
 
 
 @router.get("/api/debug/render-jobs/{project_id}")
 async def debug_render_jobs(project_id: str, session: AsyncSession = Depends(get_db)):
-    """
-    تشخيص مهام الرندر لمشروع معيّن.
-
-    مثال:
-        GET /api/debug/render-jobs/fe2d7c15-a8ff-46c7-96a8-a7b7b43104c1
-    """
     try:
         project_uuid = uuid.UUID(project_id)
     except ValueError:
-        return JSONResponse(
-            {"error": f"Invalid project_id: {project_id}"},
-            status_code=400,
-        )
+        return JSONResponse({"error": "Invalid project_id"}, status_code=400)
 
     job_repo = SQLRenderJobRepository(session)
     jobs = await job_repo.list_for_project(project_uuid)
@@ -1944,16 +2104,7 @@ async def debug_render_jobs(project_id: str, session: AsyncSession = Depends(get
                     j.status.value if hasattr(j.status, "value") else str(j.status)
                 ),
                 "progress": getattr(j, "progress", None),
-                "current_stage": getattr(j, "current_stage", None),
                 "error_message": getattr(j, "error_message", None),
-                "created_at": (
-                    j.created_at.isoformat()
-                    if getattr(j, "created_at", None) else None
-                ),
-                "completed_at": (
-                    j.completed_at.isoformat()
-                    if getattr(j, "completed_at", None) else None
-                ),
                 "output_path": getattr(j, "output_path", None),
             }
             for j in jobs
@@ -1961,25 +2112,12 @@ async def debug_render_jobs(project_id: str, session: AsyncSession = Depends(get
     }
 
 
-# ============================================================
-# 🎙️ DEBUG — VOICEOVER SPECIFIC
-# ============================================================
-
 @router.get("/api/debug/voiceovers/{project_id}")
 async def debug_voiceovers(project_id: str, session: AsyncSession = Depends(get_db)):
-    """
-    تشخيص مقاطع الصوت في مشروع — مع النصوص والمقاطع المُزامنة.
-
-    مثال:
-        GET /api/debug/voiceovers/fe2d7c15-a8ff-46c7-96a8-a7b7b43104c1
-    """
     try:
         project_uuid = uuid.UUID(project_id)
     except ValueError:
-        return JSONResponse(
-            {"error": f"Invalid project_id: {project_id}"},
-            status_code=400,
-        )
+        return JSONResponse({"error": f"Invalid project_id: {project_id}"}, status_code=400)
 
     repo = SQLProjectRepository(session)
     project = await repo.get(project_uuid)
@@ -2003,36 +2141,17 @@ async def debug_voiceovers(project_id: str, session: AsyncSession = Depends(get_
             "start": c.get("start"),
             "duration": c.get("duration"),
             "script_length": len(c.get("script") or ""),
-            "script_preview": (c.get("script") or "")[:150],
             "segments_count": len(segments),
-            "segments_sample": segments[:3],
             "has_tts": bool(c.get("tts")),
-            "tts": c.get("tts"),
-            "fileName": c.get("fileName"),
+            "voice_id": c.get("voice_id"),
             "processed": c.get("processed", False),
         })
 
-    # حالة Whisper
-    whisper_engine = None
-    try:
-        import faster_whisper  # noqa
-        whisper_engine = "faster-whisper"
-    except ImportError:
-        try:
-            import whisper  # noqa
-            whisper_engine = "openai-whisper"
-        except ImportError:
-            whisper_engine = None
-
-    # حالة FFmpeg
-    import shutil
-    ffmpeg_ok = shutil.which("ffmpeg") is not None
+    elevenlabs_ok = bool(getattr(settings, "ELEVENLABS_API_KEY", ""))
 
     return {
         "project_id": project_id,
         "voiceover_count": len(voiceovers),
-        "whisper_available": whisper_engine is not None,
-        "whisper_engine": whisper_engine,
-        "ffmpeg_available": ffmpeg_ok,
+        "elevenlabs_available": elevenlabs_ok,
         "voiceovers": voiceovers,
     }
