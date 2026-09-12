@@ -386,7 +386,7 @@
         flex: 1;
         overflow: auto;
         position: relative;
-        direction: ltr; /* ✅ من اليسار لليمين */
+        direction: ltr;
     }
 
     #timeline-inner {
@@ -394,7 +394,7 @@
         min-width: max-content;
         --cell-w: var(--cell-base);
         padding-bottom: 8px;
-        direction: ltr; /* ✅ من اليسار لليمين */
+        direction: ltr;
     }
 
     .ruler {
@@ -406,7 +406,7 @@
         top: 0;
         z-index: 5;
         overflow: hidden;
-        direction: ltr; /* ✅ */
+        direction: ltr;
     }
 
     .ruler .track-label {
@@ -425,7 +425,7 @@
         display: flex;
         flex: 1;
         position: relative;
-        direction: ltr; /* ✅ */
+        direction: ltr;
         background: repeating-linear-gradient(
             90deg,
             transparent,
@@ -443,7 +443,7 @@
         padding: 2px 0 0 2px;
         font-family: monospace;
         position: relative;
-        direction: ltr; /* ✅ */
+        direction: ltr;
     }
     .ruler-mark.major { border-left-color: #64748b; }
     .ruler-mark .label {
@@ -452,7 +452,7 @@
         left: 4px;
         font-size: 9px;
         color: #475569;
-        direction: ltr; /* ✅ */
+        direction: ltr;
         font-family: monospace;
     }
 
@@ -461,7 +461,7 @@
         min-height: var(--track-height);
         border-bottom: 1px solid var(--border-color);
         position: relative;
-        direction: ltr; /* ✅ */
+        direction: ltr;
     }
     .track-row:last-child { border-bottom: none; }
 
@@ -480,7 +480,7 @@
         flex-direction: column;
         line-height: 1.2;
         text-align: center;
-        direction: rtl; /* النصوص العربية تبقى RTL */
+        direction: rtl;
     }
     .track-label .track-icon { font-size: 14px; }
 
@@ -488,7 +488,7 @@
         flex: 1;
         position: relative;
         overflow: hidden;
-        direction: ltr; /* ✅ */
+        direction: ltr;
         background: 
             repeating-linear-gradient(
                 90deg,
@@ -520,7 +520,7 @@
         min-width: 20px;
         z-index: 2;
         gap: 2px;
-        direction: ltr; /* ✅ */
+        direction: ltr;
     }
 
     .clip-block:hover {
@@ -569,7 +569,7 @@
         font-size: 9px;
         flex: 1;
         opacity: 0.8;
-        direction: rtl; /* النص العربي يبقى RTL */
+        direction: rtl;
         text-align: right;
     }
 
@@ -578,7 +578,7 @@
         opacity: 0.6;
         font-family: monospace;
         flex-shrink: 0;
-        direction: ltr; /* الأرقام LTR */
+        direction: ltr;
     }
 
     .clip-block .clip-delete-btn {
@@ -596,6 +596,27 @@
     .clip-block:hover .clip-delete-btn { opacity: 1; }
     .clip-block .clip-delete-btn:hover { background: #ef4444; }
 
+    /* شريط التسجيلات المرتبطة داخل الكليب */
+    .clip-block .clip-audio-track {
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        height: 4px;
+        background: rgba(5,150,105,0.7);
+        border-radius: 0 0 3px 3px;
+        box-shadow: 0 0 6px rgba(5,150,105,0.5);
+    }
+    .clip-block .clip-audio-track::after {
+        content: '♪';
+        position: absolute;
+        right: 4px;
+        bottom: 2px;
+        font-size: 8px;
+        color: white;
+        text-shadow: 0 0 3px black;
+    }
+
     /* ====== ألوان الكليبات ====== */
     .clip-type-video { background: rgba(37,99,235,0.3); border-color: rgba(37,99,235,0.5); color: #60a5fa; }
     .clip-type-audio { background: rgba(5,150,105,0.2); border-color: rgba(5,150,105,0.3); color: #34d399; }
@@ -603,6 +624,7 @@
     .clip-type-text { background: rgba(217,119,6,0.3); border-color: rgba(217,119,6,0.5); color: #f59e0b; }
     .clip-type-music { background: rgba(124,58,237,0.3); border-color: rgba(124,58,237,0.5); color: #a78bfa; }
 
+    /* ====== المؤشر المرن ====== */
     .playhead {
         position: absolute;
         top: 0;
@@ -610,22 +632,65 @@
         width: 2px;
         background: #ef4444;
         z-index: 10;
-        pointer-events: none;
-        transition: left 0.05s linear;
+        cursor: ew-resize;
+        pointer-events: auto;
+        transition: background 0.15s;
     }
     .playhead::before {
         content: '';
         position: absolute;
-        top: -6px;
-        left: -5px;
-        border-left: 6px solid transparent;
-        border-right: 6px solid transparent;
-        border-top: 8px solid #ef4444;
+        top: -2px;
+        left: -8px;
+        width: 18px;
+        height: 18px;
+        background: #ef4444;
+        border-radius: 50% 50% 50% 0;
+        transform: rotate(-45deg);
+        border: 2px solid white;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+        cursor: ew-resize;
+        transition: transform 0.15s, background 0.15s;
+    }
+    .playhead:hover::before {
+        transform: rotate(-45deg) scale(1.15);
+        background: #dc2626;
+    }
+    .playhead.dragging::before {
+        transform: rotate(-45deg) scale(1.25);
+        background: #b91c1c;
     }
     .playhead.active { background: #22c55e; }
-    .playhead.active::before { border-top-color: #22c55e; }
+    .playhead.active::before { background: #22c55e; }
     .playhead.recording { background: #ef4444; }
-    .playhead.recording::before { border-top-color: #ef4444; }
+    .playhead.recording::before {
+        background: #ef4444;
+        animation: pulse-record 1s infinite;
+    }
+    .playhead.locked {
+        cursor: not-allowed;
+        opacity: 0.5;
+    }
+    .playhead.locked::before { cursor: not-allowed; }
+
+    /* إبراز منطقة التسجيل الصالحة */
+    .record-zone-highlight {
+        position: absolute;
+        top: 0;
+        height: 100%;
+        background: rgba(34,197,94,0.08);
+        border-left: 2px dashed rgba(34,197,94,0.4);
+        border-right: 2px dashed rgba(34,197,94,0.4);
+        pointer-events: none;
+        z-index: 1;
+        display: none;
+    }
+    .record-zone-highlight.active { display: block; }
+
+    @keyframes shake {
+        0%, 100% { transform: translateX(0); }
+        25% { transform: translateX(-4px); }
+        75% { transform: translateX(4px); }
+    }
 
     .drop-zone {
         border: 2px dashed var(--border-color);
@@ -651,7 +716,7 @@
         color: var(--text-muted);
         flex-shrink: 0;
         min-height: 28px;
-        direction: ltr; /* ✅ */
+        direction: ltr;
     }
 
     .status-bar .status-info {
@@ -712,6 +777,12 @@
     }
     .record-btn:hover { background: #dc2626; transform: scale(1.02); }
     .record-btn.recording { animation: pulse-record 1s infinite; }
+    .record-btn:disabled {
+        background: #64748b;
+        cursor: not-allowed;
+        opacity: 0.5;
+        transform: none;
+    }
 
     @keyframes pulse-record {
         0%, 100% { opacity: 1; }
@@ -806,20 +877,6 @@
         padding: 1px 4px;
         border-radius: 8px;
         font-weight: bold;
-    }
-
-    .media-item.uploading {
-        opacity: 0.6;
-        pointer-events: none;
-    }
-
-    .media-item.uploading::after {
-        content: '⏳';
-        position: absolute;
-        top: -5px;
-        right: -5px;
-        font-size: 12px;
-        animation: spin 1s linear infinite;
     }
 
     .media-gallery-label {
@@ -1061,13 +1118,13 @@
 
         <div class="preview-toolbar">
             <button class="tool-btn" onclick="toggleFullscreen()" title="شاشة كاملة">⛶</button>
-            <button class="record-btn" id="recordBtn" onclick="toggleRecording()" title="تسجيل الصوت من موضع المؤشر">🎙️</button>
+            <button class="record-btn" id="recordBtn" onclick="toggleRecording()" title="تسجيل الصوت من موضع المؤشر (مرتبط بالشريحة النشطة)">🎙️</button>
         </div>
 
         <!-- ✅ مؤشر التسجيل النشط -->
         <div class="recording-indicator" id="recordingIndicator">
             <span class="dot"></span>
-            <span>🔴 جاري التسجيل من <span id="recordingStartLabel">00:00</span></span>
+            <span>🔴 التسجيل من <span id="recordingStartLabel">00:00</span></span>
         </div>
 
         <div class="playback-info" id="playbackInfo">
@@ -1171,6 +1228,7 @@
                     <div class="ruler-marks" id="rulerMarks"></div>
                 </div>
                 <div id="tracksContainer"></div>
+                <div class="record-zone-highlight" id="recordZoneHighlight"></div>
                 <div class="playhead" id="playhead" style="left:0;"></div>
             </div>
         </div>
@@ -1297,6 +1355,8 @@ let recordingStartTime = 0;
 let recordingTimerInterval = null;
 let recordingStream = null;
 let recordingWallStart = 0;
+let recordingBoundClipId = null;   // ✅ المقطع المرتبط بالتسجيل
+let recordingMaxEnd = 0;            // ✅ أقصى نهاية مسموحة للتسجيل
 let clipIdCounter = 0;
 let currentClipAtTime = null;
 let renderPollInterval = null;
@@ -1351,9 +1411,7 @@ async function uploadFileToSupabase(file, projectId) {
         }
 
         const data = await resp.json();
-        if (!data.url) {
-            throw new Error("لا يوجد رابط في الاستجابة");
-        }
+        if (!data.url) throw new Error("لا يوجد رابط في الاستجابة");
         return data.url;
 
     } catch (e) {
@@ -1588,9 +1646,7 @@ function renderPreview(time) {
         document.getElementById('statusCurrentClip').textContent = '⏸️';
         currentClipAtTime = null;
 
-        if (audioPlayer && !audioPlayer.paused) {
-            audioPlayer.pause();
-        }
+        if (audioPlayer && !audioPlayer.paused) audioPlayer.pause();
     }
 
     ctx.fillStyle = 'rgba(0,0,0,0.5)';
@@ -1679,11 +1735,8 @@ function drawVideoFrame(ctx, clip, x, y, w, h, time) {
             ctx.drawImage(video, x - drawW/2, y - drawH/2, drawW, drawH);
             ctx.restore();
 
-            if (isPlaying && video.paused) {
-                video.play().catch(() => {});
-            } else if (!isPlaying && !video.paused) {
-                video.pause();
-            }
+            if (isPlaying && video.paused) video.play().catch(() => {});
+            else if (!isPlaying && !video.paused) video.pause();
 
             video.muted = isMuted;
             video.playbackRate = playbackSpeed;
@@ -1776,21 +1829,127 @@ function drawTextOnly(ctx, text, x, y, w, h) {
 }
 
 // ============================================================
+//  RECORDING BOUNDS — حدود التسجيل المسموح
+// ============================================================
+function getActiveClipAt(time) {
+    /**
+     * يُرجع المقطع الأساسي (video/image/text) النشط عند زمن معين.
+     * يُرجع null إذا لم تكن هناك شريحة مرئية.
+     */
+    const activeClips = projectData.clips.filter(c => {
+        const layer = projectData.layers[c.layer];
+        if (!layer || !layer.visible) return false;
+        if (c.type === 'audio') return false;
+        return time >= c.start && time < c.start + c.duration;
+    });
+
+    if (activeClips.length === 0) return null;
+
+    // اختر المقطع الأعلى طبقة
+    activeClips.sort((a, b) => b.layer - a.layer);
+    return activeClips[0];
+}
+
+function getRecordingBounds(startTime) {
+    /**
+     * يُرجع { start, end, clip, maxDuration } لمساحة التسجيل.
+     * يُرجع null إذا لم تكن هناك شريحة نشطة.
+     */
+    const activeClip = getActiveClipAt(startTime);
+    if (!activeClip) return null;
+
+    return {
+        start: startTime,
+        end: activeClip.start + activeClip.duration,
+        clip: activeClip,
+        maxDuration: (activeClip.start + activeClip.duration) - startTime
+    };
+}
+
+function updateRecordZoneHighlight() {
+    const highlight = document.getElementById('recordZoneHighlight');
+    if (!highlight) return;
+
+    const bounds = getRecordingBounds(currentTime);
+    if (!bounds) {
+        highlight.classList.remove('active');
+        return;
+    }
+
+    const pxPerSec = projectData.cellWidth / 2;
+    const left = bounds.start * pxPerSec + 60;
+    const width = bounds.maxDuration * pxPerSec;
+
+    highlight.style.left = left + 'px';
+    highlight.style.width = width + 'px';
+    highlight.classList.add('active');
+}
+
+function updatePlayheadLock() {
+    const playhead = document.getElementById('playhead');
+    if (!playhead) return;
+
+    if (isRecording) {
+        playhead.classList.add('locked');
+        playhead.classList.add('recording');
+        return;
+    }
+
+    playhead.classList.remove('recording');
+
+    const bounds = getRecordingBounds(currentTime);
+    if (!bounds) {
+        playhead.classList.add('locked');
+    } else {
+        playhead.classList.remove('locked');
+    }
+
+    // تحديث زر التسجيل
+    const recordBtn = document.getElementById('recordBtn');
+    if (recordBtn && !isRecording) {
+        if (!bounds || bounds.maxDuration < 0.5) {
+            recordBtn.disabled = true;
+            recordBtn.title = 'لا توجد شريحة نشطة عند المؤشر';
+        } else {
+            recordBtn.disabled = false;
+            recordBtn.title = `تسجيل من ${formatTime(currentTime)} (متاح ${bounds.maxDuration.toFixed(1)}ث)`;
+        }
+    }
+}
+
+// ============================================================
 //  SYNC AUDIO
 // ============================================================
 function syncAudio(time) {
     if (Math.abs(time - lastAudioSyncTime) < 0.03) return;
     lastAudioSyncTime = time;
 
-    const activeAudios = projectData.clips.filter(c => {
-        const layer = projectData.layers[c.layer];
-        return layer && layer.visible &&
-               c.type === 'audio' &&
-               time >= c.start &&
-               time < c.start + c.duration;
+    // ✅ اجمع التسجيلات النشطة من داخل المقاطع الأساسية
+    const activeRecordings = [];
+
+    projectData.clips.forEach(clip => {
+        const layer = projectData.layers[clip.layer];
+        if (!layer || !layer.visible) return;
+        if (!clip.metadata || !clip.metadata.audioRecordings) return;
+
+        const clipActive = time >= clip.start && time < clip.start + clip.duration;
+        if (!clipActive) return;
+
+        clip.metadata.audioRecordings.forEach((rec, idx) => {
+            const recStart = rec.start;
+            const recEnd = rec.start + rec.duration;
+            if (time >= recStart && time < recEnd) {
+                activeRecordings.push({
+                    id: `${clip.id}-${idx}`,
+                    url: rec.url,
+                    start: recStart,
+                    duration: rec.duration
+                });
+            }
+        });
     });
 
-    const activeIds = new Set(activeAudios.map(c => c.id));
+    const activeIds = new Set(activeRecordings.map(r => r.id));
 
     audioNodes.forEach(node => {
         if (!activeIds.has(node.clipId)) {
@@ -1800,7 +1959,7 @@ function syncAudio(time) {
     });
     audioNodes = audioNodes.filter(n => n.isPlaying);
 
-    if (activeAudios.length === 0) {
+    if (activeRecordings.length === 0) {
         if (audioPlayer && !audioPlayer.paused) audioPlayer.pause();
         return;
     }
@@ -1812,12 +1971,12 @@ function syncAudio(time) {
         audioContext.resume();
     }
 
-    activeAudios.forEach(audioClip => {
-        const src = audioClip.content;
+    activeRecordings.forEach(rec => {
+        const src = rec.url;
         if (!src || src.startsWith('blob:')) return;
 
-        const existing = audioNodes.find(n => n.clipId === audioClip.id && n.isPlaying);
-        const localTime = time - audioClip.start;
+        const existing = audioNodes.find(n => n.clipId === rec.id && n.isPlaying);
+        const localTime = time - rec.start;
 
         if (existing) {
             const drift = Math.abs(
@@ -1827,7 +1986,7 @@ function syncAudio(time) {
                 try { existing.source.stop(); } catch(e) {}
                 existing.isPlaying = false;
                 audioNodes = audioNodes.filter(n => n !== existing);
-                if (audioBuffers[src]) playAudioBuffer(src, audioBuffers[src], audioClip, time);
+                if (audioBuffers[src]) playAudioBuffer(src, audioBuffers[src], rec, time);
             }
             return;
         }
@@ -1838,20 +1997,20 @@ function syncAudio(time) {
                 .then(buf => audioContext.decodeAudioData(buf))
                 .then(decoded => {
                     audioBuffers[src] = decoded;
-                    if (isPlaying) playAudioBuffer(src, decoded, audioClip, currentTime);
+                    if (isPlaying) playAudioBuffer(src, decoded, rec, currentTime);
                 })
                 .catch(() => {});
             return;
         }
 
-        playAudioBuffer(src, audioBuffers[src], audioClip, time);
+        playAudioBuffer(src, audioBuffers[src], rec, time);
     });
 }
 
-function playAudioBuffer(src, buffer, clip, time) {
+function playAudioBuffer(src, buffer, rec, time) {
     if (!buffer || !audioContext) return;
-    const localTime = time - clip.start;
-    if (localTime < 0 || localTime > clip.duration) return;
+    const localTime = time - rec.start;
+    if (localTime < 0 || localTime > rec.duration) return;
 
     try {
         const source = audioContext.createBufferSource();
@@ -1866,7 +2025,7 @@ function playAudioBuffer(src, buffer, clip, time) {
         source.start(0, localTime);
 
         const node = {
-            clipId: clip.id,
+            clipId: rec.id,
             source: source,
             gain: gain,
             startTime: localTime,
@@ -1941,7 +2100,7 @@ function addMediaToTimeline(index) {
     const file = projectData.mediaFiles[index];
     if (!file) return;
 
-    let startTime = currentTime; // ✅ يبدأ من المؤشر الحالي
+    let startTime = currentTime;
     const type = file.type.split('/')[0];
     const duration = type === 'image' ? 3 : (type === 'video' ? 3 : 2);
 
@@ -2232,6 +2391,14 @@ function renderTimeline() {
                 <button class="clip-delete-btn" onclick="event.stopPropagation();deleteClip(${clip.id})">✕</button>
             `;
 
+            // ✅ شريط التسجيلات المرتبطة
+            if (clip.metadata && clip.metadata.audioRecordings && clip.metadata.audioRecordings.length > 0) {
+                const audioTrack = document.createElement('div');
+                audioTrack.className = 'clip-audio-track';
+                audioTrack.title = `${clip.metadata.audioRecordings.length} تسجيل صوتي مرتبط`;
+                block.appendChild(audioTrack);
+            }
+
             block.onclick = (e) => {
                 e.stopPropagation();
                 selectClip(clip.id);
@@ -2349,6 +2516,9 @@ function updatePlayhead() {
     const pxPerSec = projectData.cellWidth / 2;
     const pos = currentTime * pxPerSec + 60;
     playhead.style.left = pos + 'px';
+
+    updateRecordZoneHighlight();
+    updatePlayheadLock();
 }
 
 function updateStatus() {
@@ -2361,7 +2531,15 @@ function updateStatus() {
 //  CLIP OPERATIONS
 // ============================================================
 function deleteClip(id) {
-    if (!confirm('حذف المقطع؟')) return;
+    const clip = projectData.clips.find(c => c.id === id);
+    const recCount = (clip && clip.metadata && clip.metadata.audioRecordings)
+        ? clip.metadata.audioRecordings.length
+        : 0;
+    const msg = recCount > 0
+        ? `حذف المقطع و${recCount} تسجيل صوتي مرتبط؟`
+        : 'حذف المقطع؟';
+    if (!confirm(msg)) return;
+
     projectData.clips = projectData.clips.filter(c => c.id !== id);
     if (selectedClipId === id) selectedClipId = null;
     updateTotalDuration();
@@ -2397,7 +2575,7 @@ function addClip(type) {
             id: clipIdCounter++,
             type: 'text',
             layer: selectedLayerIndex,
-            start: currentTime, // ✅ من المؤشر
+            start: currentTime,
             duration: 2,
             title: text.slice(0, 18),
             content: text,
@@ -2433,8 +2611,14 @@ function splitClip() {
         id: clipIdCounter++,
         start: clip.start + splitTime,
         duration: clip.duration - splitTime,
-        title: `${clip.title} (2)`
+        title: `${clip.title} (2)`,
+        metadata: JSON.parse(JSON.stringify(clip.metadata || {})) // نسخ عميق
     };
+    // نظّف التسجيلات من النسخة الجديدة (يمكن توزيعها لاحقاً)
+    if (newClip.metadata.audioRecordings) {
+        delete newClip.metadata.audioRecordings;
+    }
+
     clip.duration = splitTime;
     clip.title = `${clip.title} (1)`;
 
@@ -2458,7 +2642,8 @@ function duplicateClip() {
         ...clip,
         id: clipIdCounter++,
         start: startTime,
-        title: `${clip.title} (نسخة)`
+        title: `${clip.title} (نسخة)`,
+        metadata: JSON.parse(JSON.stringify(clip.metadata || {}))
     };
     projectData.clips.push(newClip);
     updateTotalDuration();
@@ -2545,6 +2730,10 @@ function togglePlay() {
 }
 
 function startPlay() {
+    if (isRecording) {
+        showToast('⚠️ لا يمكن التشغيل أثناء التسجيل', 'warning');
+        return;
+    }
     if (currentTime >= projectData.totalDuration) currentTime = 0;
 
     isPlaying = true;
@@ -2566,7 +2755,7 @@ function startPlay() {
 
     const intervalMs = 40;
     playInterval = setInterval(() => {
-        if (isRecording) return; // لا تتقدم أثناء التسجيل (المؤقت الخاص بذلك)
+        if (isRecording) return;
         currentTime += (intervalMs / 1000) * playbackSpeed;
 
         if (currentTime >= projectData.totalDuration) {
@@ -2689,7 +2878,75 @@ document.getElementById('seekSlider').addEventListener('input', function() {
 });
 
 // ============================================================
-//  RECORDING — يبدأ من المؤشر ويمتد تلقائياً
+//  PLAYHEAD DRAGGING — سحب المؤشر والنقر على الرولر
+// ============================================================
+function setupPlayheadDragging() {
+    const playhead = document.getElementById('playhead');
+    let isDragging = false;
+
+    playhead.addEventListener('mousedown', (e) => {
+        if (isRecording) {
+            showToast('⚠️ لا يمكن تحريك المؤشر أثناء التسجيل', 'warning');
+            return;
+        }
+        isDragging = true;
+        playhead.classList.add('dragging');
+        e.preventDefault();
+        e.stopPropagation();
+    });
+
+    document.addEventListener('mousemove', (e) => {
+        if (!isDragging) return;
+
+        const inner = document.getElementById('timeline-inner');
+        const rect = inner.getBoundingClientRect();
+        const pxPerSec = projectData.cellWidth / 2;
+        const x = e.clientX - rect.left - 60;
+        const time = Math.max(0, Math.min(x / pxPerSec, projectData.totalDuration));
+
+        currentTime = time;
+        updatePlayhead();
+        renderPreview(currentTime);
+    });
+
+    document.addEventListener('mouseup', () => {
+        if (isDragging) {
+            isDragging = false;
+            playhead.classList.remove('dragging');
+        }
+    });
+
+    // ===== النقر على الرولر =====
+    const rulerMarks = document.getElementById('rulerMarks');
+    if (rulerMarks) {
+        rulerMarks.style.cursor = 'ew-resize';
+        rulerMarks.addEventListener('mousedown', (e) => {
+            if (isRecording) return;
+            const inner = document.getElementById('timeline-inner');
+            const rect = inner.getBoundingClientRect();
+            const pxPerSec = projectData.cellWidth / 2;
+            const x = e.clientX - rect.left - 60;
+            const time = Math.max(0, Math.min(x / pxPerSec, projectData.totalDuration));
+            seekTo(time);
+        });
+    }
+
+    // ===== النقر على خلفية المسارات =====
+    document.addEventListener('mousedown', (e) => {
+        if (isRecording) return;
+        if (e.target.classList.contains('track-body')) {
+            const inner = document.getElementById('timeline-inner');
+            const rect = inner.getBoundingClientRect();
+            const pxPerSec = projectData.cellWidth / 2;
+            const x = e.clientX - rect.left - 60;
+            const time = Math.max(0, Math.min(x / pxPerSec, projectData.totalDuration));
+            seekTo(time);
+        }
+    });
+}
+
+// ============================================================
+//  RECORDING — مرتبط بمقطع أساسي، لا ينشئ شرائح
 // ============================================================
 async function toggleRecording() {
     const btn = document.getElementById('recordBtn');
@@ -2709,7 +2966,24 @@ async function toggleRecording() {
         btn.classList.remove('recording');
         indicator.classList.remove('active');
         document.getElementById('playhead').classList.remove('recording');
+        updatePlayheadLock();
         showToast('⏹️ تم إيقاف التسجيل', 'info');
+        return;
+    }
+
+    // ===== التحقق من صلاحية الموقع =====
+    const bounds = getRecordingBounds(currentTime);
+
+    if (!bounds) {
+        showToast('⚠️ لا يمكن التسجيل: لا توجد شريحة (صورة/فيديو/نص) عند المؤشر', 'warning');
+        const playhead = document.getElementById('playhead');
+        playhead.style.animation = 'shake 0.4s';
+        setTimeout(() => playhead.style.animation = '', 400);
+        return;
+    }
+
+    if (bounds.maxDuration < 0.5) {
+        showToast('⚠️ المساحة المتاحة للتسجيل أقل من 0.5 ثانية', 'warning');
         return;
     }
 
@@ -2722,6 +2996,8 @@ async function toggleRecording() {
         recordedChunks = [];
 
         recordingStartTime = currentTime;
+        recordingBoundClipId = bounds.clip.id;
+        recordingMaxEnd = bounds.end;
 
         if (isPlaying) pausePlay();
 
@@ -2733,11 +3009,12 @@ async function toggleRecording() {
 
         mediaRecorder.onstop = async () => {
             const wallElapsed = (performance.now() - recordingWallStart) / 1000;
-            const duration = Math.max(0.5, wallElapsed);
+            const duration = Math.max(0.3, Math.min(wallElapsed, recordingMaxEnd - recordingStartTime));
 
             if (recordedChunks.length === 0) {
                 stream.getTracks().forEach(t => t.stop());
                 recordingStream = null;
+                updatePlayheadLock();
                 return;
             }
 
@@ -2752,6 +3029,7 @@ async function toggleRecording() {
                 showToast('❌ فشل رفع التسجيل', 'error');
                 stream.getTracks().forEach(t => t.stop());
                 recordingStream = null;
+                updatePlayheadLock();
                 return;
             }
 
@@ -2762,37 +3040,32 @@ async function toggleRecording() {
                 url: supabaseUrl,
             });
 
-            const clip = {
-                id: clipIdCounter++,
-                type: 'audio',
-                layer: selectedLayerIndex,
-                start: recordingStartTime,
-                duration: duration,
-                title: `تسجيل ${new Date().toLocaleTimeString()}`,
-                content: supabaseUrl,
-                color: COLORS.audio,
-                icon: '🎤',
-                metadata: {
-                    recorded: true,
+            // ✅ اربط التسجيل بالمقطع الأساسي
+            const parentClip = projectData.clips.find(c => c.id === recordingBoundClipId);
+            if (parentClip) {
+                if (!parentClip.metadata) parentClip.metadata = {};
+                if (!parentClip.metadata.audioRecordings) {
+                    parentClip.metadata.audioRecordings = [];
+                }
+                parentClip.metadata.audioRecordings.push({
+                    url: supabaseUrl,
+                    start: recordingStartTime,
                     duration: duration,
                     file: fileName,
-                    type: 'audio/webm',
-                    recordingStart: recordingStartTime
-                }
-            };
+                    createdAt: new Date().toISOString()
+                });
+            }
 
-            projectData.clips.push(clip);
             updateTotalDuration();
             renderTimeline();
             renderMediaGallery();
             updateStatus();
             saveProjectData();
 
-            showToast(`✅ تم التسجيل (${duration.toFixed(1)}ث)`, 'success');
+            showToast(`✅ تم حفظ التسجيل (${duration.toFixed(1)}ث) مرتبطاً بالمقطع`, 'success');
             stream.getTracks().forEach(t => t.stop());
             recordingStream = null;
 
-            // إعادة المؤشر إلى نهاية التسجيل
             currentTime = recordingStartTime + duration;
             updatePlayhead();
             renderPreview(currentTime);
@@ -2805,26 +3078,42 @@ async function toggleRecording() {
         indicator.classList.add('active');
         document.getElementById('recordingStartLabel').textContent = formatTime(recordingStartTime);
         document.getElementById('playhead').classList.add('recording');
+        updatePlayheadLock();
 
-        showToast(`🔴 بدء التسجيل من ${formatTime(recordingStartTime)}`, 'info');
+        showToast(`🔴 التسجيل من ${formatTime(recordingStartTime)} (متاح ${bounds.maxDuration.toFixed(1)}ث)`, 'info');
 
-        // ===== تحريك المؤشر تلقائياً =====
+        // ===== تحريك المؤشر تلقائياً مع التوقف عند الحد =====
         recordingTimerInterval = setInterval(() => {
             if (!isRecording) return;
             const elapsed = (performance.now() - recordingWallStart) / 1000;
-            const newTime = recordingStartTime + elapsed;
+            let newTime = recordingStartTime + elapsed;
 
-            currentTime = newTime;
+            if (newTime >= recordingMaxEnd) {
+                newTime = recordingMaxEnd;
+                currentTime = newTime;
+                updatePlayhead();
 
-            // ✅ وسّع totalDuration أثناء التسجيل حتى لا يتوقف المؤشر
-            const neededDuration = currentTime + 2;
-            if (neededDuration > projectData.totalDuration) {
-                projectData.totalDuration = neededDuration;
+                // إيقاف تلقائي
+                if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                    mediaRecorder.stop();
+                }
+                if (recordingTimerInterval) {
+                    clearInterval(recordingTimerInterval);
+                    recordingTimerInterval = null;
+                }
+                isRecording = false;
+                btn.textContent = '🎙️';
+                btn.classList.remove('recording');
+                indicator.classList.remove('active');
+                document.getElementById('playhead').classList.remove('recording');
+                updatePlayheadLock();
+                showToast('⏹️ توقف التسجيل تلقائياً عند نهاية المقطع', 'info');
+                return;
             }
 
+            currentTime = newTime;
             updatePlayhead();
 
-            // ✅ مرّر تلقائياً
             const scroll = document.getElementById('timelineContainer');
             const pxPerSec = projectData.cellWidth / 2;
             const playheadX = currentTime * pxPerSec + 60;
@@ -2832,13 +3121,15 @@ async function toggleRecording() {
                 scroll.scrollLeft = playheadX - scroll.clientWidth + 120;
             }
 
-            // ✅ تحديث العدادات
             document.getElementById('currentTimeDisplay').textContent = formatTime(currentTime);
-            document.getElementById('totalTimeDisplay').textContent = formatTime(projectData.totalDuration);
             const slider = document.getElementById('seekSlider');
             if (projectData.totalDuration > 0) {
                 slider.value = Math.min(100, (currentTime / projectData.totalDuration) * 100);
             }
+
+            const recordProgress = Math.min(100, (elapsed / bounds.maxDuration) * 100);
+            indicator.querySelector('span:last-child').textContent =
+                `🔴 التسجيل من ${formatTime(recordingStartTime)} (${recordProgress.toFixed(0)}%)`;
         }, 50);
 
     } catch (err) {
@@ -3331,6 +3622,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
     setupDragDrop();
     setupKeyboardShortcuts();
+    setupPlayheadDragging();
 
     loadProjectData();
 });
@@ -3418,6 +3710,6 @@ window.addEventListener('beforeunload', function() {
     });
 });
 
-console.log('🎬 المحرر جاهز - LTR + تسجيل من المؤشر ✅');
+console.log('🎬 المحرر جاهز - مؤشر مرن + تسجيل مرتبط بالمقطع ✅');
 </script>
 {% endblock %}
