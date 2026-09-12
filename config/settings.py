@@ -35,7 +35,7 @@ class Settings(BaseSettings):
     )
 
     # ============================================
-    # SUPABASE - MODERN CONFIGURATION (ONLY)
+    # SUPABASE - MODERN CONFIGURATION
     # ============================================
     SUPABASE_URL: Optional[str] = Field(
         default=None,
@@ -91,14 +91,12 @@ class Settings(BaseSettings):
 
     @property
     def supabase_database_url(self) -> Optional[str]:
-        """Construct Supabase database connection URL using the REST API"""
         if not self.SUPABASE_URL:
             return None
         return f"{self.SUPABASE_URL}/rest/v1"
 
     @property
     def supabase_configured(self) -> bool:
-        """Check if Supabase is properly configured with modern keys ONLY"""
         has_url = bool(
             self.SUPABASE_URL and
             self.SUPABASE_URL not in [None, "", "https://your-project.supabase.co"]
@@ -125,26 +123,91 @@ class Settings(BaseSettings):
 
     @property
     def supabase_public_key_value(self) -> Optional[str]:
-        """Get the public key value"""
         if self.SUPABASE_PUBLIC_KEY:
             return self.SUPABASE_PUBLIC_KEY.get_secret_value()
         return None
 
     @property
     def supabase_secret_key_value(self) -> Optional[str]:
-        """Get the secret key value"""
         if self.SUPABASE_SECRET_KEY:
             return self.SUPABASE_SECRET_KEY.get_secret_value()
         return None
 
     # ============================================
-    # 🎙️ ELEVENLABS — VOICE CLONING
+    # 🎙️ VOICE CLONING — Multi-Provider Configuration
     # ============================================
+
+    # ── المزوّد الافتراضي ──
+    VOICE_CLONING_PROVIDER: str = Field(
+        default="huggingface",
+        description="Default voice cloning provider: huggingface | elevenlabs | edge_tts"
+    )
+
+    # ── 🔊 Edge TTS (مجاني 100% — بدون API key) ──
+    EDGE_TTS_ENABLED: bool = Field(
+        default=True,
+        description="Enable Edge TTS (Microsoft — free, high quality)"
+    )
+    EDGE_TTS_MAX_CHARS: int = Field(
+        default=10000,
+        description="Max characters per Edge TTS request"
+    )
+    EDGE_TTS_DEFAULT_VOICE: str = Field(
+        default="ar-SA-HamedNeural",
+        description="Default Edge TTS voice"
+    )
+    EDGE_TTS_TIMEOUT: int = Field(
+        default=60,
+        description="Edge TTS request timeout (seconds)"
+    )
+
+    # أصوات Edge TTS العربية (مُضمَّنة)
+    EDGE_TTS_ARABIC_VOICES: List[dict] = [
+        {"id": "ar-SA-HamedNeural", "name": "حامد (سعودي)", "lang": "ar-SA", "gender": "male"},
+        {"id": "ar-SA-ZariyahNeural", "name": "زارية (سعودية)", "lang": "ar-SA", "gender": "female"},
+        {"id": "ar-EG-ShakirNeural", "name": "شاكر (مصري)", "lang": "ar-EG", "gender": "male"},
+        {"id": "ar-EG-SalmaNeural", "name": "سلمى (مصرية)", "lang": "ar-EG", "gender": "female"},
+        {"id": "ar-AE-HamdanNeural", "name": "حمدان (إماراتي)", "lang": "ar-AE", "gender": "male"},
+        {"id": "ar-AE-FatimaNeural", "name": "فاطمة (إماراتية)", "lang": "ar-AE", "gender": "female"},
+        {"id": "ar-MA-JamalNeural", "name": "جمال (مغربي)", "lang": "ar-MA", "gender": "male"},
+        {"id": "ar-MA-MounaNeural", "name": "منى (مغربية)", "lang": "ar-MA", "gender": "female"},
+        {"id": "ar-SY-AmanyNeural", "name": "أماني (سورية)", "lang": "ar-SY", "gender": "female"},
+        {"id": "ar-SY-LaithNeural", "name": "ليث (سوري)", "lang": "ar-SY", "gender": "male"},
+    ]
+
+    # ── 🤗 HuggingFace Spaces (مجاني — XTTS v2) ──
+    HUGGINGFACE_SPACE_URL: str = Field(
+        default="https://coqui-xtts.hf.space",
+        description="HuggingFace Space URL for XTTS v2"
+    )
+    HUGGINGFACE_SPACE_URL_FALLBACK: str = Field(
+        default="https://openvoice.hf.space",
+        description="Fallback HuggingFace Space URL"
+    )
+    HUGGINGFACE_TIMEOUT: int = Field(
+        default=300,
+        description="Timeout for HuggingFace requests (seconds)"
+    )
+    HUGGINGFACE_MAX_CHARS: int = Field(
+        default=500,
+        description="Max chars per HuggingFace request"
+    )
+    HUGGINGFACE_ENABLED: bool = Field(
+        default=True,
+        description="Enable HuggingFace voice cloning"
+    )
+
+    @property
+    def huggingface_configured(self) -> bool:
+        """HuggingFace يعمل دائماً (بدون مفتاح API)"""
+        return self.HUGGINGFACE_ENABLED
+
+    # ── 💎 ElevenLabs (اختياري — مدفوع) ──
     ELEVENLABS_API_KEY: Optional[SecretStr] = Field(
         default=None,
         description=(
-            "ElevenLabs API key for voice cloning "
-            "(starts with sk_...). Get it from https://elevenlabs.io"
+            "ElevenLabs API key (starts with sk_...). "
+            "Requires Starter plan ($5/month) or higher for voice cloning."
         )
     )
     ELEVENLABS_MODEL_ID: str = Field(
@@ -163,19 +226,17 @@ class Settings(BaseSettings):
     )
     ELEVENLABS_MAX_CHARS: int = Field(
         default=5000,
-        description="Max characters per TTS request (free tier = 5000)"
+        description="Max characters per TTS request"
     )
 
     @property
     def elevenlabs_api_key_value(self) -> Optional[str]:
-        """Get the ElevenLabs API key value"""
         if self.ELEVENLABS_API_KEY:
             return self.ELEVENLABS_API_KEY.get_secret_value()
         return None
 
     @property
     def elevenlabs_configured(self) -> bool:
-        """Check if ElevenLabs is properly configured"""
         key = self.elevenlabs_api_key_value
         return bool(
             key and
@@ -188,9 +249,7 @@ class Settings(BaseSettings):
             key.startswith("sk_")
         )
 
-    # ============================================
-    # 🎭 TALKING HEAD — D-ID API
-    # ============================================
+    # ── 🎭 D-ID (Talking Head) ──
     DID_API_KEY: Optional[SecretStr] = Field(
         default=None,
         description=(
@@ -205,11 +264,11 @@ class Settings(BaseSettings):
     )
     DID_DEFAULT_PRESENTER: str = Field(
         default="amy-jcwCkr1grs",
-        description="Default D-ID presenter ID (for text-to-video without image)"
+        description="Default D-ID presenter ID"
     )
     DID_MAX_TEXT_CHARS: int = Field(
         default=1000,
-        description="Max text characters for talking head (D-ID limit)"
+        description="Max text characters for talking head"
     )
     DID_DEFAULT_LANGUAGE: str = Field(
         default="ar",
@@ -226,14 +285,12 @@ class Settings(BaseSettings):
 
     @property
     def did_api_key_value(self) -> Optional[str]:
-        """Get the D-ID API key value"""
         if self.DID_API_KEY:
             return self.DID_API_KEY.get_secret_value()
         return None
 
     @property
     def did_configured(self) -> bool:
-        """Check if D-ID is properly configured"""
         key = self.did_api_key_value
         return bool(
             key and
@@ -247,9 +304,7 @@ class Settings(BaseSettings):
             len(key) > 20
         )
 
-    # ============================================
-    # 🎙️ WHISPER — SPEECH TO TEXT (اختياري)
-    # ============================================
+    # ── 🎙️ Whisper (STT) ──
     WHISPER_ENABLED: bool = Field(
         default=True,
         description="Enable Whisper transcription (requires faster-whisper)"
@@ -278,13 +333,11 @@ class Settings(BaseSettings):
 
     @property
     def POSTGRES_URL(self) -> str:
-        """Construct PostgreSQL connection URL"""
         ssl_param = f"?sslmode={self.POSTGRES_SSL_MODE}" if self.POSTGRES_SSL_MODE else ""
         return f"postgresql+asyncpg://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}{ssl_param}"
 
     @property
     def SYNC_POSTGRES_URL(self) -> str:
-        """Construct sync PostgreSQL connection URL (for migrations)"""
         ssl_param = f"?sslmode={self.POSTGRES_SSL_MODE}" if self.POSTGRES_SSL_MODE else ""
         return f"postgresql://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}{ssl_param}"
 
@@ -316,6 +369,7 @@ class Settings(BaseSettings):
     MAX_THUMBNAIL_SIZE: int = 5 * 1024 * 1024  # 5MB
     MAX_VOICEOVER_SIZE: int = 100 * 1024 * 1024  # 100MB
     MAX_TALKING_HEAD_IMAGE_SIZE: int = 10 * 1024 * 1024  # 10MB
+
     ALLOWED_VIDEO_EXTENSIONS: List[str] = [".mp4", ".mov", ".avi", ".mkv", ".webm", ".flv", ".wmv"]
     ALLOWED_IMAGE_EXTENSIONS: List[str] = [".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"]
     ALLOWED_AUDIO_EXTENSIONS: List[str] = [".mp3", ".wav", ".m4a", ".ogg", ".webm", ".aac", ".flac"]
@@ -403,13 +457,27 @@ class Settings(BaseSettings):
 
     @property
     def using_supabase_db(self) -> bool:
-        """Check if using Supabase as database"""
         return self.DATABASE_TYPE.lower() == "supabase"
 
     @property
     def voice_features_available(self) -> bool:
-        """Check if any voice features are available"""
-        return self.elevenlabs_configured or self.did_configured
+        """هل توجد أي ميزة صوت متاحة؟"""
+        return (
+            self.EDGE_TTS_ENABLED or
+            self.huggingface_configured or
+            self.elevenlabs_configured
+        )
+
+    @property
+    def best_voice_provider(self) -> str:
+        """أفضل مزود متاح تلقائياً."""
+        if self.elevenlabs_configured:
+            return "elevenlabs"
+        if self.huggingface_configured:
+            return "huggingface"
+        if self.EDGE_TTS_ENABLED:
+            return "edge_tts"
+        return "none"
 
     # ============================================
     # VALIDATORS
@@ -545,21 +613,26 @@ settings = get_settings()
 def ensure_dirs() -> None:
     """Create necessary directories."""
     directories = [
+        # الأساسية
         settings.MEDIA_DIR,
         settings.TEMP_DIR,
         settings.EXPORTS_DIR,
         settings.THUMBNAILS_DIR,
         settings.CACHE_DIR,
-        # مجلدات الصوت
+
+        # 🎙️ مجلدات الصوت
         settings.MEDIA_DIR / "voiceovers",
         settings.MEDIA_DIR / "cloned_voices",
         settings.MEDIA_DIR / "cloned_voices" / "cache",
         settings.MEDIA_DIR / "tts",
+        settings.MEDIA_DIR / "hf_voices",
+
         # 🎭 مجلدات Talking Head
         settings.MEDIA_DIR / "talking_heads",
         settings.MEDIA_DIR / "talking_heads" / "images",
         settings.MEDIA_DIR / "talking_heads" / "videos",
         settings.MEDIA_DIR / "talking_heads" / "temp",
+
         # عامة
         BASE_DIR / "data",
         BASE_DIR / "logs",
@@ -608,18 +681,25 @@ def validate_config() -> bool:
         if settings.MAX_FILE_SIZE <= 0:
             raise ValueError("MAX_FILE_SIZE must be greater than 0")
 
-        # تحذيرات الميزات الاختيارية
+        # ── تحذيرات الميزات الاختيارية ──
+        if not settings.EDGE_TTS_ENABLED and not settings.huggingface_configured:
+            warnings.warn(
+                "⚠️ لا يوجد مزود TTS مجاني مُفعَّل! "
+                "فعّل EDGE_TTS_ENABLED أو HUGGINGFACE_ENABLED.",
+                UserWarning
+            )
+
         if not settings.elevenlabs_configured:
             warnings.warn(
-                "ELEVENLABS_API_KEY not configured — Voice Cloning feature will be disabled. "
-                "Get a free key from https://elevenlabs.io",
+                "ℹ️ ELEVENLABS_API_KEY غير مُعرّف — "
+                "سيُستخدم HuggingFace/Edge TTS بدلاً منه (مجاني).",
                 UserWarning
             )
 
         if not settings.did_configured:
             warnings.warn(
-                "DID_API_KEY not configured — Talking Head feature will be disabled. "
-                "Get a free key from https://studio.d-id.com",
+                "ℹ️ DID_API_KEY غير مُعرّف — "
+                "ميزة Talking Head معطّلة (اختيارية).",
                 UserWarning
             )
 
@@ -635,16 +715,25 @@ def validate_config() -> bool:
 
 
 # ============================================
-# FEATURE AVAILABILITY CHECK
+# FEATURE AVAILABILITY
 # ============================================
 def get_available_features() -> dict:
     """Get a summary of available features based on configuration."""
     return {
-        "voice_cloning": settings.elevenlabs_configured,
+        # الصوت
+        "voice_cloning": settings.huggingface_configured or settings.elevenlabs_configured,
+        "voice_cloning_free": settings.huggingface_configured,
+        "voice_cloning_paid": settings.elevenlabs_configured,
+        "edge_tts": settings.EDGE_TTS_ENABLED,
         "talking_head": settings.did_configured,
         "transcription": settings.WHISPER_ENABLED,
+
+        # التخزين
         "supabase_storage": settings.supabase_configured,
-        "audio_processing": True,  # ffmpeg assumed available
+        "audio_processing": True,  # ffmpeg
+
+        # المزود الموصى به
+        "recommended_voice_provider": settings.best_voice_provider,
     }
 
 
