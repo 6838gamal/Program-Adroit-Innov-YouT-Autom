@@ -4,11 +4,11 @@
  *
  * ✅ إصلاح: state is not defined
  * ✅ إصلاح: إضافة المقطع للخط الزمني
- * ✅ إصلاح: توافق كامل مع timeline-core.js و timeline-timeline.js
+ * ✅ جديد: تشغيل مقاطع الصوت في الـ timeline
  */
 
 // ============================================================
-// Safe Accessors — الوصول الآمن لمتغيرات timeline-core.js
+// Safe Accessors
 // ============================================================
 
 function safeGetProjectData() {
@@ -105,6 +105,18 @@ const TalkingHeadState = {
     pollingInterval: null,
     resultUrl: null,
     isGenerating: false,
+};
+
+
+// ============================================================
+// 🔊 Audio Playback State — تشغيل الصوت في الـ timeline
+// ============================================================
+const AudioPlaybackState = {
+    activeAudios: {},        // { clipId: HTMLAudioElement }
+    lastSyncTime: -1,
+    isMuted: false,
+    playbackRate: 1,
+    syncIntervalId: null,
 };
 
 
@@ -889,10 +901,9 @@ async function saveAudioFileToTimeline() {
 
 
 // ============================================================
-// ✅ إضافة مقطع للخط الزمني — متوافق مع timeline-core.js
+// ✅ إضافة مقطع للخط الزمني
 // ============================================================
 async function addVoiceoverClip(clipData) {
-    // ── 1. التحقق من projectData ─────────────────────
     if (typeof projectData === 'undefined') {
         console.error('❌ projectData غير معرّف');
         showToast('❌ خطأ في النظام — أعد تحميل الصفحة', 'error');
@@ -904,7 +915,6 @@ async function addVoiceoverClip(clipData) {
         projectData.layers = [{ name: 'طبقة 1', visible: true, locked: false }];
     }
 
-    // ── 2. تحديد الطبقة كرقم ────────────────────────
     let layerIndex = 0;
     if (typeof selectedLayerIndex !== 'undefined' && selectedLayerIndex != null) {
         layerIndex = selectedLayerIndex;
@@ -913,7 +923,6 @@ async function addVoiceoverClip(clipData) {
         layerIndex = clipData.layer;
     }
 
-    // ── 3. توليد ID رقمي ────────────────────────────
     let newId;
     if (typeof clipIdCounter !== 'undefined') {
         newId = clipIdCounter++;
@@ -925,7 +934,6 @@ async function addVoiceoverClip(clipData) {
         window.clipIdCounter = newId + 1;
     }
 
-    // ── 4. حساب البداية والمدة ──────────────────────
     const startTime = (typeof clipData.start === 'number' && clipData.start >= 0)
         ? clipData.start
         : safeGetCurrentTime();
@@ -936,9 +944,8 @@ async function addVoiceoverClip(clipData) {
     }
     if (duration <= 0) duration = 3;
 
-    // ── 5. بناء المقطع ──────────────────────────────
     const clip = {
-        // حقول أساسية (مطلوبة)
+        // حقول أساسية
         id: newId,
         type: clipData.type || 'audio',
         layer: layerIndex,
@@ -964,27 +971,18 @@ async function addVoiceoverClip(clipData) {
         metadata: clipData.metadata || {},
     };
 
-    // ── 6. أضف المقطع ──────────────────────────────
     projectData.clips.push(clip);
-    console.log(`✅ [addVoiceoverClip] مقطع جديد id=${newId}`, clip);
+    console.log(`✅ [addVoiceoverClip] id=${newId}`, clip);
 
-    // ── 7. حدّث المدة الإجمالية ─────────────────────
     const endTime = clip.start + clip.duration;
     if (endTime > (projectData.totalDuration || 0)) {
         projectData.totalDuration = endTime + 2;
     }
 
-    // ── 8. إعادة الرسم ─────────────────────────────
+    // إعادة الرسم
     try {
-        if (typeof renderTimeline === 'function') {
-            renderTimeline();
-            console.log('🔄 [addVoiceoverClip] renderTimeline() نُفِّذ');
-        } else {
-            console.warn('⚠️ renderTimeline غير معرّفة');
-        }
-    } catch (e) {
-        console.error('❌ خطأ في renderTimeline:', e);
-    }
+        if (typeof renderTimeline === 'function') renderTimeline();
+    } catch (e) { console.error('renderTimeline:', e); }
 
     try {
         if (typeof renderLayers === 'function') renderLayers();
@@ -998,17 +996,12 @@ async function addVoiceoverClip(clipData) {
         if (typeof renderPreview === 'function') renderPreview(safeGetCurrentTime());
     } catch (e) { console.warn('renderPreview:', e); }
 
-    // ── 9. احفظ في السحابة ─────────────────────────
+    // حفظ
     if (typeof saveProjectData === 'function') {
-        try {
-            await saveProjectData();
-            console.log('✅ [addVoiceoverClip] تم الحفظ');
-        } catch (e) {
-            console.warn('⚠️ فشل الحفظ:', e);
-        }
+        try { await saveProjectData(); } catch (e) { console.warn('save:', e); }
     }
 
-    // ── 10. Scroll للمقطع الجديد ────────────────────
+    // Scroll للمقطع
     setTimeout(() => {
         try { scrollToClipById(newId); } catch (e) { }
     }, 300);
@@ -1017,17 +1010,11 @@ async function addVoiceoverClip(clipData) {
 }
 
 
-/**
- * تمرير الخط الزمني لمقطع + وميض
- */
 function scrollToClipById(clipId) {
     const clipEl = document.querySelector(`.clip-block[data-id="${clipId}"]`) ||
                    document.querySelector(`[data-clip-id="${clipId}"]`);
 
-    if (!clipEl) {
-        console.log(`ℹ️ لم يُعثر على clip-block للمقطع ${clipId}`);
-        return;
-    }
+    if (!clipEl) return;
 
     clipEl.scrollIntoView({
         behavior: 'smooth',
@@ -1038,6 +1025,304 @@ function scrollToClipById(clipId) {
     clipEl.style.transition = 'box-shadow 0.5s';
     clipEl.style.boxShadow = '0 0 20px 4px rgba(59, 130, 246, 0.8)';
     setTimeout(() => { clipEl.style.boxShadow = ''; }, 1500);
+}
+
+
+// ============================================================
+// 🔊 AUDIO PLAYBACK — تشغيل الأصوات في الـ timeline
+// ============================================================
+
+/**
+ * إيقاف كل الأصوات النشطة
+ */
+function stopAllAudioClips() {
+    Object.values(AudioPlaybackState.activeAudios).forEach(audio => {
+        try {
+            audio.pause();
+            audio.currentTime = 0;
+        } catch (e) { }
+    });
+    AudioPlaybackState.activeAudios = {};
+    AudioPlaybackState.lastSyncTime = -1;
+}
+
+
+/**
+ * مزامنة تشغيل مقاطع الصوت مع الوقت الحالي
+ * تُستدعى من playback loop كل 100ms
+ */
+function syncAudioClipsPlayback(time) {
+    if (typeof projectData === 'undefined' || !projectData.clips) return;
+
+    const audioClips = projectData.clips.filter(c =>
+        c.type === 'audio' && (c.url || c.content)
+    );
+
+    if (!audioClips.length) return;
+
+    const activeIds = new Set();
+
+    // ── 1. عالج كل مقطع صوتي ──
+    audioClips.forEach(clip => {
+        const url = clip.url || clip.content;
+        if (!url) return;
+
+        const clipEnd = clip.start + clip.duration;
+        const isActive = time >= clip.start && time <= clipEnd;
+
+        if (isActive) {
+            activeIds.add(clip.id);
+            _ensureAudioPlaying(clip, url, time);
+        } else {
+            _stopAudioForClip(clip.id);
+        }
+    });
+
+    // ── 2. نظّف المقاطع غير النشطة ──
+    Object.keys(AudioPlaybackState.activeAudios).forEach(key => {
+        const idNum = parseInt(key, 10);
+        const idStr = String(key);
+        if (!activeIds.has(idNum) && !activeIds.has(idStr) && !activeIds.has(key)) {
+            _stopAudioForClip(key);
+        }
+    });
+
+    AudioPlaybackState.lastSyncTime = time;
+}
+
+
+/**
+ * تأكد من تشغيل الصوت مع المزامنة الصحيحة
+ */
+function _ensureAudioPlaying(clip, url, time) {
+    let audio = AudioPlaybackState.activeAudios[clip.id];
+
+    // ── أنشئ عنصر الصوت إذا لم يكن موجوداً ──
+    if (!audio) {
+        audio = new Audio();
+        audio.preload = 'auto';
+        audio.src = url;
+
+        audio.addEventListener('loadedmetadata', () => {
+            console.log(`✅ تحميل صوت [${clip.id}]: ${audio.duration.toFixed(1)}s`);
+        });
+
+        audio.addEventListener('error', (e) => {
+            console.error(`❌ فشل تحميل صوت [${clip.id}]:`, url, e);
+            showToast(`⚠️ فشل تشغيل الصوت: ${clip.title}`, 'warning');
+        });
+
+        audio.addEventListener('ended', () => {
+            console.log(`⏹ انتهى صوت [${clip.id}]`);
+        });
+
+        AudioPlaybackState.activeAudios[clip.id] = audio;
+    }
+
+    // ── احسب الموضع داخل المقطع ──
+    const localTime = Math.max(0, time - clip.start);
+
+    // ── اضبط currentTime إذا انحرف ──
+    const drift = Math.abs(audio.currentTime - localTime);
+    if (drift > 0.5 && audio.readyState >= 2) {
+        try {
+            audio.currentTime = localTime;
+        } catch (e) { }
+    }
+
+    // ── اضبط السرعة والصوت ──
+    audio.playbackRate = AudioPlaybackState.playbackRate || 1;
+    audio.muted = AudioPlaybackState.isMuted || false;
+    audio.volume = AudioPlaybackState.isMuted ? 0 : 1;
+
+    // ── شغّل ──
+    if (audio.paused) {
+        const playPromise = audio.play();
+        if (playPromise) {
+            playPromise
+                .then(() => console.log(`▶️ تشغيل صوت [${clip.id}]`))
+                .catch(err => {
+                    if (err.name !== 'AbortError') {
+                        console.warn(`⚠️ فشل تشغيل [${clip.id}]:`, err.message);
+                    }
+                });
+        }
+    }
+}
+
+
+/**
+ * إيقاف صوت مقطع محدد
+ */
+function _stopAudioForClip(clipId) {
+    const audio = AudioPlaybackState.activeAudios[clipId];
+    if (!audio) return;
+
+    try {
+        if (!audio.paused) {
+            audio.pause();
+        }
+    } catch (e) { }
+}
+
+
+/**
+ * مزامنة مع كتم الصوت
+ */
+function syncAudioMute(isMuted) {
+    AudioPlaybackState.isMuted = isMuted;
+    Object.values(AudioPlaybackState.activeAudios).forEach(audio => {
+        audio.muted = isMuted;
+        audio.volume = isMuted ? 0 : 1;
+    });
+}
+
+
+/**
+ * مزامنة مع السرعة
+ */
+function syncAudioSpeed(speed) {
+    AudioPlaybackState.playbackRate = speed || 1;
+    Object.values(AudioPlaybackState.activeAudios).forEach(audio => {
+        audio.playbackRate = speed || 1;
+    });
+}
+
+
+/**
+ * 🎯 بدء حلقة المزامنة — الأهم!
+ * تعمل كل 100ms وتشغّل/توقف الأصوات بناءً على الوقت الحالي
+ */
+function startAudioSyncLoop() {
+    if (AudioPlaybackState.syncIntervalId) {
+        clearInterval(AudioPlaybackState.syncIntervalId);
+    }
+
+    AudioPlaybackState.syncIntervalId = setInterval(() => {
+        // إذا كنا في وضع التشغيل، زامن الأصوات
+        if (typeof isPlaying !== 'undefined' && isPlaying) {
+            const t = typeof currentTime !== 'undefined' ? currentTime : 0;
+            syncAudioClipsPlayback(t);
+        } else {
+            // إذا توقف التشغيل، أوقف كل الأصوات
+            if (Object.keys(AudioPlaybackState.activeAudios).length > 0) {
+                Object.values(AudioPlaybackState.activeAudios).forEach(audio => {
+                    try {
+                        if (!audio.paused) audio.pause();
+                    } catch (e) { }
+                });
+            }
+        }
+    }, 100);
+
+    console.log('🎧 Audio sync loop started');
+}
+
+
+/**
+ * 🎯 التقاط أحداث togglePlay / seekTo / toggleMute / changeSpeed
+ * عبر MutationObserver / Wrapping
+ */
+function patchPlaybackFunctions() {
+    // ── seekTo ──
+    if (typeof window.seekTo === 'function' && !window._seekToPatched) {
+        const originalSeekTo = window.seekTo;
+        window.seekTo = function (t) {
+            originalSeekTo(t);
+            // مزامنة فورية بعد الانتقال
+            setTimeout(() => {
+                const nt = typeof currentTime !== 'undefined' ? currentTime : t;
+                if (typeof isPlaying !== 'undefined' && isPlaying) {
+                    syncAudioClipsPlayback(nt);
+                } else {
+                    // انتقال بدون تشغيل — أوقف الأصوات
+                    stopAllAudioClips();
+                }
+            }, 50);
+        };
+        window._seekToPatched = true;
+        console.log('✅ seekTo patched');
+    }
+
+    // ── togglePlay ──
+    if (typeof window.togglePlay === 'function' && !window._togglePlayPatched) {
+        const originalTogglePlay = window.togglePlay;
+        window.togglePlay = function () {
+            originalTogglePlay();
+            setTimeout(() => {
+                const np = typeof isPlaying !== 'undefined' ? isPlaying : false;
+                if (np) {
+                    // بدأ التشغيل — زامن الأصوات
+                    const t = typeof currentTime !== 'undefined' ? currentTime : 0;
+                    syncAudioClipsPlayback(t);
+                    console.log('▶️ Playback started — audio sync');
+                } else {
+                    // توقف — أوقف الأصوات
+                    stopAllAudioClips();
+                    console.log('⏸ Playback paused — audio stopped');
+                }
+            }, 50);
+        };
+        window._togglePlayPatched = true;
+        console.log('✅ togglePlay patched');
+    }
+
+    // ── toggleMute ──
+    if (typeof window.toggleMute === 'function' && !window._toggleMutePatched) {
+        const originalToggleMute = window.toggleMute;
+        window.toggleMute = function () {
+            originalToggleMute();
+            setTimeout(() => {
+                const m = typeof isMuted !== 'undefined' ? isMuted : false;
+                syncAudioMute(m);
+            }, 50);
+        };
+        window._toggleMutePatched = true;
+        console.log('✅ toggleMute patched');
+    }
+
+    // ── changeSpeed ──
+    if (typeof window.changeSpeed === 'function' && !window._changeSpeedPatched) {
+        const originalChangeSpeed = window.changeSpeed;
+        window.changeSpeed = function () {
+            originalChangeSpeed();
+            setTimeout(() => {
+                const s = typeof playbackSpeed !== 'undefined' ? playbackSpeed : 1;
+                syncAudioSpeed(s);
+            }, 50);
+        };
+        window._changeSpeedPatched = true;
+        console.log('✅ changeSpeed patched');
+    }
+}
+
+
+/**
+ * تهيئة نظام تشغيل الصوت
+ */
+function initAudioPlayback() {
+    patchPlaybackFunctions();
+    startAudioSyncLoop();
+
+    console.log('🎧 Audio playback initialized');
+
+    // ── إضافة مراقب للنقر على المقاطع ──
+    document.addEventListener('click', (e) => {
+        const clipEl = e.target.closest('.clip-block');
+        if (!clipEl) return;
+
+        const clipId = clipEl.dataset.id || clipEl.dataset.clipId;
+        if (!clipId) return;
+
+        const pd = safeGetProjectData();
+        const clip = pd.clips.find(c =>
+            String(c.id) === String(clipId) && c.type === 'audio'
+        );
+
+        if (clip && clip.url) {
+            console.log(`🎧 كتم/تشغيل معاينة [${clipId}]: ${clip.title}`);
+        }
+    });
 }
 
 
@@ -1218,9 +1503,6 @@ function updateCharCounter() {
 }
 
 
-// ============================================================
-// 🎙️ قائمة الأصوات المحفوظة
-// ============================================================
 function renderSavedVoicesList() {
     const el = document.getElementById('savedVoicesList');
     if (!el) return;
@@ -1231,14 +1513,9 @@ function renderSavedVoicesList() {
         el.innerHTML = `
             <div class="voice-empty-state">
                 <div style="font-size:32px;margin-bottom:8px;">🎙️</div>
-                <div style="color:#94a3b8;font-size:12px;">
-                    لا توجد أصوات محفوظة بعد
-                </div>
+                <div style="color:#94a3b8;font-size:12px;">لا توجد أصوات محفوظة بعد</div>
                 <div style="color:#64748b;font-size:10px;margin-top:4px;">
-                    اضغط "استنسخ صوتي" لإنشاء صوتك الأول
-                </div>
-                <div style="color:#64748b;font-size:10px;margin-top:4px;">
-                    أو اختر صوتاً جاهزاً من الأسفل
+                    اضغط "استنسخ صوتي" أو اختر صوتاً جاهزاً
                 </div>
             </div>
         `;
@@ -1265,33 +1542,26 @@ function renderSavedVoicesList() {
             <div class="saved-voice-item ${isSelected ? 'selected' : ''} ${voice.imported ? 'imported' : ''}"
                  data-voice-id="${voice.voice_id}"
                  onclick="selectSavedVoice('${voice.voice_id}')">
-
                 <div class="saved-voice-icon">🎙️</div>
-
                 <div class="saved-voice-info">
-                    <div class="saved-voice-name">
-                        ${providerBadge}
-                        ${escapeHtml(displayName)}
-                    </div>
+                    <div class="saved-voice-name">${providerBadge}${escapeHtml(displayName)}</div>
                     <div class="saved-voice-meta">
                         ${dateStr}
                         ${voice.imported ? ' • 📥 مستورد' : ''}
                         ${voice.temporary ? ' • ⏱️ مؤقت' : ''}
                     </div>
                 </div>
-
                 <div class="saved-voice-actions">
                     <button class="saved-voice-btn"
                             onclick="event.stopPropagation(); previewSavedVoice('${voice.voice_id}', this)"
-                            title="معاينة سريعة">▶️</button>
+                            title="معاينة">▶️</button>
                     <button class="saved-voice-btn"
                             onclick="event.stopPropagation(); renameVoice('${voice.id}', '${escapeHtml(displayName)}')"
-                            title="إعادة تسمية">✏️</button>
+                            title="تسمية">✏️</button>
                     <button class="saved-voice-btn danger"
                             onclick="event.stopPropagation(); deleteSavedVoice('${voice.id}', '${escapeHtml(displayName)}')"
                             title="حذف">🗑️</button>
                 </div>
-
                 <div class="saved-voice-check">${isSelected ? '✓' : ''}</div>
             </div>
         `;
@@ -1312,16 +1582,12 @@ function selectSavedVoice(voiceId) {
         statusEl.innerHTML = `
             <div style="color:#34d399;font-size:12px;">
                 ✅ تم اختيار: <strong>${escapeHtml(voice?.display_name || voice?.name || voiceId)}</strong>
-                ${voice?.provider ? `<span style="color:#64748b;"> (${voice.provider})</span>` : ''}
             </div>
         `;
     }
 }
 
 
-// ============================================================
-// 🎙️ استنساخ صوت جديد
-// ============================================================
 async function cloneVoiceAndSave() {
     if (!VoiceoverState.pendingBlob) {
         return showToast('⚠️ لا يوجد صوت مرجعي', 'warning');
@@ -1339,7 +1605,7 @@ async function cloneVoiceAndSave() {
     if (statusEl) {
         statusEl.innerHTML = `
             <div style="color:#fbbf24;">
-                🎙️ جاري تحليل صوتك وإنشاء نسخة ذكية...
+                🎙️ جاري تحليل صوتك...
                 <br><small>يستغرق 20-60 ثانية</small>
             </div>
         `;
@@ -1358,12 +1624,8 @@ async function cloneVoiceAndSave() {
         });
 
         let data;
-        try {
-            data = await res.json();
-        } catch (e) {
-            const text = await res.text();
-            throw new Error(text || `HTTP ${res.status}`);
-        }
+        try { data = await res.json(); }
+        catch (e) { throw new Error(await res.text() || `HTTP ${res.status}`); }
 
         if (!data.success) {
             throw new Error(data.error || data.detail || 'فشل الاستنساخ');
@@ -1393,19 +1655,13 @@ async function cloneVoiceAndSave() {
         renderSavedVoicesList();
 
         if (statusEl) {
-            const providerMsg = data.provider === 'huggingface' && data.temporary
-                ? '<br><small style="color:#f59e0b;">⚠️ HuggingFace: ستحتاج رفع المرجع في كل مرة</small>'
-                : '';
-
             statusEl.innerHTML = `
                 <div style="color:#34d399;background:rgba(52,211,153,0.1);
                             border:1px solid rgba(52,211,153,0.3);
-                            border-radius:8px;padding:10px;font-size:12px;line-height:1.8;">
+                            border-radius:8px;padding:10px;font-size:12px;">
                     ✅ تم استنساخ الصوت!
                     <br>🎙️ <strong>${escapeHtml(displayName)}</strong>
-                    <br>📡 المزود: <strong>${data.provider || 'auto'}</strong>
-                    ${providerMsg}
-                    <br>💡 يمكنك الآن توليد النص بصوتك
+                    <br>📡 ${data.provider || 'auto'}
                 </div>
             `;
         }
@@ -1424,7 +1680,7 @@ async function cloneVoiceAndSave() {
                 <div style="color:#ef4444;background:rgba(239,68,68,0.1);
                             border:1px solid rgba(239,68,68,0.3);
                             border-radius:8px;padding:10px;font-size:11px;
-                            line-height:1.8;white-space:pre-wrap;direction:rtl;">
+                            white-space:pre-wrap;">
                     ❌ ${err.message}
                 </div>
             `;
@@ -1437,9 +1693,6 @@ async function cloneVoiceAndSave() {
 }
 
 
-// ============================================================
-// 🔊 تحميل أصوات Edge TTS
-// ============================================================
 async function loadEdgeVoices() {
     const select = document.getElementById('edgeVoiceSelect');
     if (!select) return;
@@ -1460,20 +1713,6 @@ async function loadEdgeVoices() {
         }
     } catch (e) {
         console.warn('Failed to load edge voices:', e);
-        const fallbackVoices = [
-            { id: 'ar-SA-HamedNeural', name: 'حامد (سعودي)', lang: 'ar-SA' },
-            { id: 'ar-SA-ZariyahNeural', name: 'زارية (سعودية)', lang: 'ar-SA' },
-            { id: 'ar-EG-ShakirNeural', name: 'شاكر (مصري)', lang: 'ar-EG' },
-            { id: 'ar-EG-SalmaNeural', name: 'سلمى (مصرية)', lang: 'ar-EG' },
-        ];
-        VoiceCloneState.edgeVoices = fallbackVoices;
-        select.innerHTML = '<option value="">— اختر صوتاً جاهزاً —</option>';
-        fallbackVoices.forEach(v => {
-            const opt = document.createElement('option');
-            opt.value = v.id;
-            opt.textContent = `${v.name} (${v.lang})`;
-            select.appendChild(opt);
-        });
     }
 }
 
@@ -1508,7 +1747,7 @@ function selectEdgeVoice(voiceId) {
     if (statusEl) {
         statusEl.innerHTML = `
             <div style="color:#34d399;font-size:12px;">
-                ✅ تم اختيار صوت Edge TTS: <strong>${displayName}</strong>
+                ✅ تم اختيار: <strong>${displayName}</strong>
             </div>
         `;
     }
@@ -1517,22 +1756,14 @@ function selectEdgeVoice(voiceId) {
 }
 
 
-// ============================================================
-// 🎙️ توليد النص بالصوت المُختار
-// ============================================================
 async function generateWithCache() {
     if (!VoiceCloneState.selectedVoiceId) {
         return showToast('⚠️ اختر صوتاً أولاً', 'warning');
     }
 
     const script = document.getElementById('voiceCloneScript').value.trim();
-    if (!script) {
-        return showToast('⚠️ اكتب النص أولاً', 'warning');
-    }
-
-    if (script.length > 10000) {
-        return showToast('⚠️ النص طويل جداً (الحد 10000 حرف)', 'warning');
-    }
+    if (!script) return showToast('⚠️ اكتب النص أولاً', 'warning');
+    if (script.length > 10000) return showToast('⚠️ النص طويل جداً', 'warning');
 
     const btn = document.getElementById('btnGenerateWithVoice');
     const statusEl = document.getElementById('voiceCloneStatus');
@@ -1549,8 +1780,7 @@ async function generateWithCache() {
     if (statusEl) {
         statusEl.innerHTML = `
             <div style="color:#fbbf24;">
-                🎙️ ${isHuggingFace ? 'جاري الاستنساخ عبر HuggingFace (قد يستغرق 1-3 دقائق)...' : 'جاري التوليد...'}
-                ${useCache && !isHuggingFace ? '<br><small>💾 سيُستخدم Cache إن وُجد</small>' : ''}
+                🎙️ ${isHuggingFace ? 'جاري الاستنساخ عبر HuggingFace...' : 'جاري التوليد...'}
             </div>
         `;
     }
@@ -1565,10 +1795,7 @@ async function generateWithCache() {
             formData.append('language', 'ar');
             formData.append('project_id', safeGetProjectId());
 
-            res = await fetch('/api/voice/hf-clone', {
-                method: 'POST',
-                body: formData,
-            });
+            res = await fetch('/api/voice/hf-clone', { method: 'POST', body: formData });
 
             if (!res.ok) {
                 const errData = await res.json().catch(() => ({}));
@@ -1579,8 +1806,7 @@ async function generateWithCache() {
             duration = parseFloat(res.headers.get('X-Duration') || '0');
             cacheHit = false;
             provider = 'huggingface';
-        }
-        else {
+        } else {
             const formData = new FormData();
             formData.append('voice_id', VoiceCloneState.selectedVoiceId);
             formData.append('script', script);
@@ -1588,10 +1814,7 @@ async function generateWithCache() {
             formData.append('use_cache', useCache ? 'true' : 'false');
             formData.append('speed', '1.0');
 
-            res = await fetch('/api/voice/generate-cached', {
-                method: 'POST',
-                body: formData,
-            });
+            res = await fetch('/api/voice/generate-cached', { method: 'POST', body: formData });
 
             if (!res.ok) {
                 const errData = await res.json().catch(() => ({}));
@@ -1641,20 +1864,15 @@ async function generateWithCache() {
             statusEl.innerHTML = `
                 <div style="color:#34d399;background:rgba(52,211,153,0.1);
                             border:1px solid rgba(52,211,153,0.3);
-                            border-radius:8px;padding:10px;font-size:12px;line-height:1.8;">
-                    ${cacheHit ? '💾 من Cache (بدون استهلاك)' : '✅ تم التوليد بنجاح!'}
-                    <br>📡 المزود: <strong>${provider}</strong>
-                    <br>⏱️ المدة: ${duration.toFixed(1)} ثانية
-                    <br>📝 الأحرف: ${script.length}
-                    <br><br>💡 اضغط "حفظ في المشروع" لإضافته للخط الزمني
+                            border-radius:8px;padding:10px;font-size:12px;">
+                    ${cacheHit ? '💾 من Cache' : '✅ تم التوليد!'}
+                    <br>📡 ${provider} • ⏱️ ${duration.toFixed(1)}s
+                    <br>💡 اضغط "حفظ في المشروع" لإضافته للـ timeline
                 </div>
             `;
         }
 
-        showToast(
-            cacheHit ? '💾 تم الجلب من Cache' : '🎙️ تم التوليد — اضغط حفظ',
-            'success'
-        );
+        showToast(cacheHit ? '💾 من Cache' : '🎙️ تم التوليد — اضغط حفظ', 'success');
 
     } catch (err) {
         console.error(err);
@@ -1663,7 +1881,7 @@ async function generateWithCache() {
                 <div style="color:#ef4444;background:rgba(239,68,68,0.1);
                             border:1px solid rgba(239,68,68,0.3);
                             border-radius:8px;padding:10px;font-size:11px;
-                            line-height:1.8;white-space:pre-wrap;direction:rtl;">
+                            white-space:pre-wrap;">
                     ❌ ${err.message}
                 </div>
             `;
@@ -1676,9 +1894,6 @@ async function generateWithCache() {
 }
 
 
-// ============================================================
-// 🎬 عرض الصوت المُولَّد
-// ============================================================
 function renderGeneratedAudio(localUrl, duration, script, cacheHit = false, provider = 'edge_tts') {
     const el = document.getElementById('generatedAudioPlayer');
     if (!el) return;
@@ -1717,9 +1932,6 @@ function renderGeneratedAudio(localUrl, duration, script, cacheHit = false, prov
 }
 
 
-// ============================================================
-// 💾 حفظ الصوت المُولَّد — مع إغلاق تلقائي
-// ============================================================
 async function saveGeneratedToProject() {
     if (!SyncProcessState.processedBlob) {
         return showToast('⚠️ لا يوجد صوت مُولَّد', 'warning');
@@ -1757,7 +1969,6 @@ async function saveGeneratedToProject() {
         const data = await res.json();
         if (!data.success) throw new Error(data.error || 'فشل الحفظ');
 
-        // ✅ إضافة المقطع للخط الزمني
         const addedClip = await addVoiceoverClip({
             type: 'audio',
             title: title,
@@ -1774,12 +1985,9 @@ async function saveGeneratedToProject() {
         });
 
         if (addedClip) {
-            showToast('✅ تم إضافة المقطع للخط الزمني', 'success');
-        } else {
-            showToast('⚠️ تم الحفظ لكن فشلت الإضافة للخط الزمني', 'warning');
+            showToast('✅ تم إضافة المقطع للخط الزمني — جرّب ▶️', 'success');
         }
 
-        // ✅ أغلق النافذة تلقائياً بعد الحفظ
         setTimeout(() => {
             closeVoiceCloneModal();
             closeVoiceoverStudio();
@@ -1792,9 +2000,6 @@ async function saveGeneratedToProject() {
 }
 
 
-// ============================================================
-// ⬇️ تحميل
-// ============================================================
 function downloadGenerated() {
     if (!SyncProcessState.processedUrl) return;
     const a = document.createElement('a');
@@ -1806,9 +2011,6 @@ function downloadGenerated() {
 }
 
 
-// ============================================================
-// ▶️ معاينة سريعة
-// ============================================================
 async function previewSavedVoice(voiceId, btn) {
     const originalText = btn.innerHTML;
     btn.innerHTML = '⏳';
@@ -1824,9 +2026,7 @@ async function previewSavedVoice(voiceId, btn) {
             body: formData,
         });
 
-        if (!res.ok) {
-            throw new Error(`HTTP ${res.status}`);
-        }
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
         const blob = await res.blob();
         const url = URL.createObjectURL(blob);
@@ -1856,9 +2056,6 @@ async function previewSavedVoice(voiceId, btn) {
 }
 
 
-// ============================================================
-// ✏️ إعادة تسمية
-// ============================================================
 async function renameVoice(recordId, currentName) {
     const newName = prompt('الاسم الجديد:', currentName);
     if (!newName || newName === currentName) return;
@@ -1882,9 +2079,6 @@ async function renameVoice(recordId, currentName) {
 }
 
 
-// ============================================================
-// 🗑️ حذف صوت
-// ============================================================
 async function deleteSavedVoice(recordId, name) {
     if (!confirm(`حذف الصوت "${name}"؟`)) return;
 
@@ -1907,14 +2101,9 @@ async function deleteSavedVoice(recordId, name) {
 }
 
 
-// ============================================================
-// 📤 تصدير / 📥 استيراد
-// ============================================================
 async function exportVoices() {
     const pid = safeGetProjectId();
-    if (!pid) {
-        return showToast('⚠️ لا يوجد مشروع', 'warning');
-    }
+    if (!pid) return showToast('⚠️ لا يوجد مشروع', 'warning');
 
     try {
         const url = `/api/voice/export/${pid}`;
@@ -1924,9 +2113,7 @@ async function exportVoices() {
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
-
         showToast('📤 جاري تصدير الأصوات...', 'info');
-
     } catch (err) {
         showToast('❌ فشل التصدير: ' + err.message, 'error');
     }
@@ -1947,14 +2134,10 @@ function triggerImportVoices() {
 
 async function importVoicesFromFile(file) {
     const pid = safeGetProjectId();
-    if (!pid) {
-        return showToast('⚠️ لا يوجد مشروع', 'warning');
-    }
+    if (!pid) return showToast('⚠️ لا يوجد مشروع', 'warning');
 
     const merge = confirm(
-        'اختر طريقة الاستيراد:\n\n' +
-        '✅ موافق = دمج (إضافة الأصوات الجديدة فقط)\n' +
-        '❌ إلغاء = استبدال (حذف كل الأصوات الحالية)'
+        'طريقة الاستيراد:\n\n✅ دمج (إضافة جديدة)\n❌ استبدال (حذف الحالية)'
     );
 
     try {
@@ -1971,12 +2154,7 @@ async function importVoicesFromFile(file) {
         if (!data.success) throw new Error(data.error || 'فشل الاستيراد');
 
         await reloadSavedVoices();
-
-        showToast(
-            `✅ تم استيراد ${data.added} صوت (تخطي ${data.skipped})`,
-            'success'
-        );
-
+        showToast(`✅ تم استيراد ${data.added} صوت`, 'success');
     } catch (err) {
         showToast('❌ فشل الاستيراد: ' + err.message, 'error');
     }
@@ -1995,29 +2173,20 @@ async function reloadSavedVoices() {
             renderSavedVoicesList();
         }
     } catch (err) {
-        console.warn('Failed to reload voices:', err);
+        console.warn('reload voices:', err);
     }
 }
 
 
-// ============================================================
-// 💾 إحصائيات Cache
-// ============================================================
 async function showCacheStats() {
     try {
         const res = await fetch('/api/voice/cache/stats');
         const data = await res.json();
         if (!data.success) throw new Error('فشل جلب الإحصائيات');
 
-        const msg = `💾 إحصائيات Cache:\n\n` +
-                    `📁 عدد الملفات: ${data.files}\n` +
-                    `💽 الحجم: ${data.total_size_mb} MB\n\n` +
-                    `هل تريد مسح الـ cache؟`;
-
+        const msg = `💾 إحصائيات Cache:\n\n📁 ${data.files} ملف\n💽 ${data.total_size_mb} MB\n\nمسح الـ cache؟`;
         if (confirm(msg)) {
-            const clearRes = await fetch('/api/voice/cache/clear', {
-                method: 'DELETE',
-            });
+            const clearRes = await fetch('/api/voice/cache/clear', { method: 'DELETE' });
             const clearData = await clearRes.json();
             if (clearData.success) {
                 showToast(`✅ تم مسح ${clearData.deleted} ملف`, 'success');
@@ -2029,9 +2198,6 @@ async function showCacheStats() {
 }
 
 
-// ============================================================
-// 🎚️ معالجة الصوت
-// ============================================================
 async function processAudio() {
     if (!SyncProcessState.rawAudioBlob && !VoiceoverState.pendingBlob) {
         return showToast('⚠️ لا يوجد صوت', 'warning');
@@ -2039,7 +2205,6 @@ async function processAudio() {
 
     const btn = document.getElementById('btnProcessAudio');
     const progressEl = document.getElementById('syncProcessProgress');
-
     if (!btn || !progressEl) return;
 
     btn.disabled = true;
@@ -2069,14 +2234,10 @@ async function processAudio() {
 
         updateSyncProgress(20, '🎚️ معالجة الصوت...');
 
-        const res = await fetch('/api/media/process-audio', {
-            method: 'POST',
-            body: formData,
-        });
-
+        const res = await fetch('/api/media/process-audio', { method: 'POST', body: formData });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
-        updateSyncProgress(80, '📥 استلام الصوت المعالج...');
+        updateSyncProgress(80, '📥 استلام...');
 
         const processedBlob = await res.blob();
         const url = URL.createObjectURL(processedBlob);
@@ -2084,19 +2245,16 @@ async function processAudio() {
         SyncProcessState.processedBlob = processedBlob;
         SyncProcessState.processedUrl = url;
 
-        updateSyncProgress(100, '✅ اكتملت المعالجة');
+        updateSyncProgress(100, '✅ اكتملت');
 
-        setTimeout(() => {
-            progressEl.style.display = 'none';
-        }, 800);
-
-        showToast('✅ تمت معالجة الصوت بنجاح', 'success');
+        setTimeout(() => { progressEl.style.display = 'none'; }, 800);
+        showToast('✅ تمت معالجة الصوت', 'success');
 
     } catch (err) {
         console.error(err);
         progressEl.innerHTML = `
             <div class="sync-progress-text" style="color:#ef4444;">
-                ❌ فشل المعالجة: ${err.message}
+                ❌ ${err.message}
             </div>
         `;
         showToast('❌ فشل المعالجة: ' + err.message, 'error');
@@ -2144,7 +2302,7 @@ function autoSegmentFromScript() {
 
     VoiceoverState.scriptSegments = autoSegmentScript(script);
     renderSegmentsForSync();
-    showToast(`✅ تم تقسيم النص إلى ${VoiceoverState.scriptSegments.length} مقطع`, 'success');
+    showToast(`✅ ${VoiceoverState.scriptSegments.length} مقطع`, 'success');
 }
 
 function renderSegmentsForSync() {
@@ -2157,9 +2315,9 @@ function renderSegmentsForSync() {
         el.innerHTML = `
             <div class="sync-empty">
                 <span style="font-size:24px;">📝</span>
-                <p>لا توجد مقاطع نصية</p>
+                <p>لا توجد مقاطع</p>
                 <button onclick="autoSegmentFromScript()" class="btn-secondary btn-sm">
-                    ✨ تقسيم النص تلقائياً
+                    ✨ تقسيم تلقائي
                 </button>
             </div>
         `;
@@ -2191,7 +2349,7 @@ function renderSegmentsForSync() {
     const total = segments.reduce((sum, s) => sum + (s.end - s.start), 0);
     const totalEl = document.getElementById('syncSegmentsTotal');
     if (totalEl) {
-        totalEl.textContent = `${segments.length} مقطع • ${total.toFixed(1)} ثانية`;
+        totalEl.textContent = `${segments.length} مقطع • ${total.toFixed(1)}s`;
     }
 }
 
@@ -2201,10 +2359,7 @@ function renderSegmentsForSync() {
 // ============================================================
 function openTalkingHeadModal() {
     const modal = document.getElementById('talkingHeadModal');
-    if (!modal) {
-        showToast('❌ نافذة Talking Head غير موجودة', 'error');
-        return;
-    }
+    if (!modal) return showToast('❌ نافذة غير موجودة', 'error');
 
     TalkingHeadState.imageBlob = null;
     TalkingHeadState.imageUrl = null;
@@ -2274,12 +2429,12 @@ async function handleTalkingHeadImage(event) {
     if (!file) return;
 
     if (!file.type.startsWith('image/')) {
-        showToast('❌ الرجاء اختيار صورة صالحة', 'error');
+        showToast('❌ صورة غير صالحة', 'error');
         return;
     }
 
     if (file.size > 10 * 1024 * 1024) {
-        showToast('❌ الصورة كبيرة جداً (الحد 10MB)', 'error');
+        showToast('❌ الصورة كبيرة جداً (10MB)', 'error');
         return;
     }
 
@@ -2288,7 +2443,6 @@ async function handleTalkingHeadImage(event) {
 
     renderTalkingHeadImagePreview(file, TalkingHeadState.imageUrl);
     updateTalkingHeadGenerateBtn();
-
     showToast('✅ تم تحميل الصورة', 'success');
 }
 
@@ -2302,9 +2456,7 @@ function renderTalkingHeadImagePreview(file, url) {
             <img src="${url}" alt="preview" class="talking-head-img">
             <div class="talking-head-image-info">
                 <div class="talking-head-image-name">${escapeHtml(file.name)}</div>
-                <div class="talking-head-image-meta">
-                    ${(file.size / 1024).toFixed(1)} KB
-                </div>
+                <div class="talking-head-image-meta">${(file.size / 1024).toFixed(1)} KB</div>
             </div>
             <button onclick="clearTalkingHeadImage()" class="talking-head-image-clear">✕</button>
         </div>
@@ -2313,9 +2465,7 @@ function renderTalkingHeadImagePreview(file, url) {
 
 
 function clearTalkingHeadImage() {
-    if (TalkingHeadState.imageUrl) {
-        URL.revokeObjectURL(TalkingHeadState.imageUrl);
-    }
+    if (TalkingHeadState.imageUrl) URL.revokeObjectURL(TalkingHeadState.imageUrl);
     TalkingHeadState.imageBlob = null;
     TalkingHeadState.imageUrl = null;
 
@@ -2353,10 +2503,7 @@ function populateTalkingHeadVoices() {
         });
     }
 
-    if (select.options.length > 1) {
-        select.selectedIndex = 1;
-    }
-
+    if (select.options.length > 1) select.selectedIndex = 1;
     updateTalkingHeadGenerateBtn();
 }
 
@@ -2367,14 +2514,11 @@ function updateTalkingHeadCharCount() {
     if (!ta || !counter) return;
 
     const len = ta.value.length;
-    counter.textContent = `${len} / 1000 حرف`;
+    counter.textContent = `${len} / 1000`;
 
     counter.classList.remove('warning', 'danger');
-    if (len > 900) {
-        counter.classList.add('danger');
-    } else if (len > 800) {
-        counter.classList.add('warning');
-    }
+    if (len > 900) counter.classList.add('danger');
+    else if (len > 800) counter.classList.add('warning');
 
     updateTalkingHeadGenerateBtn();
 }
@@ -2395,21 +2539,15 @@ function updateTalkingHeadGenerateBtn() {
 
 
 async function generateTalkingHead() {
-    if (!TalkingHeadState.imageBlob) {
-        return showToast('⚠️ اختر صورة أولاً', 'warning');
-    }
+    if (!TalkingHeadState.imageBlob) return showToast('⚠️ اختر صورة', 'warning');
 
     const voiceSelect = document.getElementById('talkingHeadVoice');
     const voiceId = voiceSelect?.value;
-    if (!voiceId) {
-        return showToast('⚠️ اختر صوتاً أولاً', 'warning');
-    }
+    if (!voiceId) return showToast('⚠️ اختر صوتاً', 'warning');
 
     const scriptEl = document.getElementById('talkingHeadScript');
     const text = scriptEl?.value.trim();
-    if (!text) {
-        return showToast('⚠️ اكتب النص أولاً', 'warning');
-    }
+    if (!text) return showToast('⚠️ اكتب النص', 'warning');
 
     const btn = document.getElementById('btnGenerateTalkingHead');
     const statusEl = document.getElementById('talkingHeadStatus');
@@ -2422,8 +2560,7 @@ async function generateTalkingHead() {
     if (statusEl) {
         statusEl.innerHTML = `
             <div style="color:#fbbf24;">
-                🎭 جاري إنشاء الفيديو...
-                <br><small>يستغرق 30-90 ثانية</small>
+                🎭 جاري الإنشاء... (30-90 ثانية)
             </div>
         `;
     }
@@ -2446,34 +2583,20 @@ async function generateTalkingHead() {
         formData.append('language', 'ar');
         formData.append('project_id', safeGetProjectId());
 
-        updateTHProgress(10, '🎭 جاري الرفع للخادم...');
+        updateTHProgress(10, '🎭 جاري الرفع...');
 
-        const res = await fetch('/api/talking-head/generate', {
-            method: 'POST',
-            body: formData,
-        });
-
+        const res = await fetch('/api/talking-head/generate', { method: 'POST', body: formData });
         const data = await res.json();
 
-        if (!data.success) {
-            throw new Error(data.error || 'فشل الإنشاء');
-        }
+        if (!data.success) throw new Error(data.error || 'فشل الإنشاء');
 
         TalkingHeadState.currentTalkId = data.talk_id;
-
-        updateTHProgress(20, '⏳ جاري معالجة الفيديو في D-ID...');
-
+        updateTHProgress(20, '⏳ جاري المعالجة...');
         startTalkingHeadPolling(data.talk_id);
 
     } catch (err) {
         console.error(err);
-        if (statusEl) {
-            statusEl.innerHTML = `
-                <div style="color:#ef4444;">
-                    ❌ فشل الإنشاء: ${err.message}
-                </div>
-            `;
-        }
+        if (statusEl) statusEl.innerHTML = `<div style="color:#ef4444;">❌ ${err.message}</div>`;
         if (progressEl) progressEl.style.display = 'none';
         showToast('❌ فشل الإنشاء: ' + err.message, 'error');
         btn.disabled = false;
@@ -2489,41 +2612,32 @@ function startTalkingHeadPolling(talkId) {
 
     TalkingHeadState.pollingInterval = setInterval(async () => {
         attempts++;
-
         if (attempts > maxAttempts) {
             clearInterval(TalkingHeadState.pollingInterval);
             TalkingHeadState.pollingInterval = null;
-            handleTalkingHeadError('استغرق الفيديو وقتاً طويلاً — جرّب نصاً أقصر');
+            handleTalkingHeadError('استغرق وقتاً طويلاً');
             return;
         }
 
         try {
             const res = await fetch(`/api/talking-head/status/${talkId}`);
             const data = await res.json();
+            if (!data.success) throw new Error(data.error);
 
-            if (!data.success) {
-                throw new Error(data.error || 'فشل جلب الحالة');
-            }
-
-            const status = data.status;
-
-            if (status === 'done') {
+            if (data.status === 'done') {
                 clearInterval(TalkingHeadState.pollingInterval);
                 TalkingHeadState.pollingInterval = null;
                 handleTalkingHeadSuccess(data.result_url);
-            } else if (status === 'error') {
+            } else if (data.status === 'error') {
                 clearInterval(TalkingHeadState.pollingInterval);
                 TalkingHeadState.pollingInterval = null;
-                handleTalkingHeadError(data.error || 'خطأ في D-ID');
+                handleTalkingHeadError(data.error || 'خطأ');
             } else {
                 const progress = 20 + Math.min(attempts * 3, 60);
-                updateTHProgress(
-                    progress,
-                    `⏳ جاري المعالجة... (${status}) — ${attempts * 5}s`
-                );
+                updateTHProgress(progress, `⏳ ${data.status} — ${attempts * 5}s`);
             }
         } catch (err) {
-            console.warn('Polling error:', err);
+            console.warn('Polling:', err);
         }
     }, 5000);
 }
@@ -2543,20 +2657,9 @@ function handleTalkingHeadSuccess(videoUrl) {
     const progressEl = document.getElementById('talkingHeadProgress');
     const resultEl = document.getElementById('talkingHeadResult');
 
-    if (btn) {
-        btn.disabled = false;
-        btn.innerHTML = '🎭 إنشاء فيديو جديد';
-    }
-
+    if (btn) { btn.disabled = false; btn.innerHTML = '🎭 فيديو جديد'; }
     if (progressEl) progressEl.style.display = 'none';
-
-    if (statusEl) {
-        statusEl.innerHTML = `
-            <div style="color:#34d399;">
-                ✅ تم إنشاء الفيديو بنجاح!
-            </div>
-        `;
-    }
+    if (statusEl) statusEl.innerHTML = `<div style="color:#34d399;">✅ تم بنجاح!</div>`;
 
     TalkingHeadState.resultUrl = videoUrl;
     TalkingHeadState.isGenerating = false;
@@ -2565,16 +2668,12 @@ function handleTalkingHeadSuccess(videoUrl) {
         resultEl.style.display = 'block';
         resultEl.innerHTML = `
             <div class="talking-head-result-container">
-                <video controls src="${videoUrl}"
-                       class="talking-head-video"
-                       poster=""></video>
+                <video controls src="${videoUrl}" class="talking-head-video"></video>
                 <div class="talking-head-result-actions">
-                    <button onclick="saveTalkingHeadToProject()" 
-                            class="btn-primary btn-sm" style="flex:1;">
+                    <button onclick="saveTalkingHeadToProject()" class="btn-primary btn-sm" style="flex:1;">
                         💾 حفظ في المشروع
                     </button>
-                    <button onclick="downloadTalkingHead()" 
-                            class="btn-secondary btn-sm">
+                    <button onclick="downloadTalkingHead()" class="btn-secondary btn-sm">
                         ⬇️ تحميل
                     </button>
                 </div>
@@ -2582,7 +2681,7 @@ function handleTalkingHeadSuccess(videoUrl) {
         `;
     }
 
-    showToast('🎭 تم إنشاء الفيديو بنجاح!', 'success');
+    showToast('🎭 تم إنشاء الفيديو!', 'success');
 }
 
 
@@ -2591,20 +2690,9 @@ function handleTalkingHeadError(message) {
     const statusEl = document.getElementById('talkingHeadStatus');
     const progressEl = document.getElementById('talkingHeadProgress');
 
-    if (btn) {
-        btn.disabled = false;
-        btn.innerHTML = '🎭 إعادة المحاولة';
-    }
-
+    if (btn) { btn.disabled = false; btn.innerHTML = '🎭 إعادة'; }
     if (progressEl) progressEl.style.display = 'none';
-
-    if (statusEl) {
-        statusEl.innerHTML = `
-            <div style="color:#ef4444;">
-                ❌ ${message}
-            </div>
-        `;
-    }
+    if (statusEl) statusEl.innerHTML = `<div style="color:#ef4444;">❌ ${message}</div>`;
 
     TalkingHeadState.isGenerating = false;
     showToast('❌ ' + message, 'error');
@@ -2612,9 +2700,7 @@ function handleTalkingHeadError(message) {
 
 
 async function saveTalkingHeadToProject() {
-    if (!TalkingHeadState.resultUrl) {
-        return showToast('⚠️ لا يوجد فيديو', 'warning');
-    }
+    if (!TalkingHeadState.resultUrl) return showToast('⚠️ لا يوجد فيديو', 'warning');
 
     const scriptEl = document.getElementById('talkingHeadScript');
     const text = scriptEl?.value.trim() || '';
@@ -2636,8 +2722,7 @@ async function saveTalkingHeadToProject() {
         });
 
         const data = await res.json();
-
-        if (!data.success) throw new Error(data.error || 'فشل الحفظ');
+        if (!data.success) throw new Error(data.error);
 
         await addVoiceoverClip({
             type: 'video',
@@ -2653,19 +2738,18 @@ async function saveTalkingHeadToProject() {
             icon: '🎭',
         });
 
-        showToast('✅ تم حفظ الفيديو في المشروع', 'success');
+        showToast('✅ تم حفظ الفيديو', 'success');
         closeTalkingHeadModal();
         closeVoiceoverStudio();
 
     } catch (err) {
-        showToast('❌ فشل الحفظ: ' + err.message, 'error');
+        showToast('❌ ' + err.message, 'error');
     }
 }
 
 
 function downloadTalkingHead() {
     if (!TalkingHeadState.resultUrl) return;
-
     const a = document.createElement('a');
     a.href = TalkingHeadState.resultUrl;
     a.download = `talking_head_${Date.now()}.mp4`;
@@ -2683,10 +2767,8 @@ if (typeof window.showToast !== 'function') {
     window.showToast = function (msg, type = 'info') {
         console.log(`[${type}] ${msg}`);
         const colors = {
-            info: '#3b82f6',
-            success: '#10b981',
-            warning: '#f59e0b',
-            error: '#ef4444',
+            info: '#3b82f6', success: '#10b981',
+            warning: '#f59e0b', error: '#ef4444',
         };
         const el = document.createElement('div');
         el.style.cssText = `
@@ -2707,14 +2789,10 @@ if (typeof window.showToast !== 'function') {
 // ============================================================
 document.addEventListener('DOMContentLoaded', () => {
     const ta = document.getElementById('voiceCloneScript');
-    if (ta) {
-        ta.addEventListener('input', updateCharCounter);
-    }
+    if (ta) ta.addEventListener('input', updateCharCounter);
 
     const thTa = document.getElementById('talkingHeadScript');
-    if (thTa) {
-        thTa.addEventListener('input', updateTalkingHeadCharCount);
-    }
+    if (thTa) thTa.addEventListener('input', updateTalkingHeadCharCount);
 
     const lufs = document.getElementById('optTargetLufs');
     if (lufs) {
@@ -2726,12 +2804,17 @@ document.addEventListener('DOMContentLoaded', () => {
     initSavedVoices();
     loadEdgeVoices();
 
-    console.log('✅ voiceover.js loaded — بدون state، متوافق مع timeline-core.js');
+    // 🔊 تهيئة نظام تشغيل الصوت
+    setTimeout(() => {
+        initAudioPlayback();
+    }, 300);
+
+    console.log('✅ voiceover.js loaded — متوافق مع timeline-core.js + الصوت يعمل');
 });
 
 
 // ============================================================
-// تصدير الدوال للنطاق العام
+// تصدير الدوال
 // ============================================================
 window.openVoiceoverStudio = openVoiceoverStudio;
 window.closeVoiceoverStudio = closeVoiceoverStudio;
@@ -2800,6 +2883,14 @@ window.downloadTalkingHead = downloadTalkingHead;
 window.updateTalkingHeadCharCount = updateTalkingHeadCharCount;
 window.populateTalkingHeadVoices = populateTalkingHeadVoices;
 window.updateTalkingHeadGenerateBtn = updateTalkingHeadGenerateBtn;
+
+// 🔊 Audio Playback
+window.syncAudioClipsPlayback = syncAudioClipsPlayback;
+window.stopAllAudioClips = stopAllAudioClips;
+window.syncAudioMute = syncAudioMute;
+window.syncAudioSpeed = syncAudioSpeed;
+window.initAudioPlayback = initAudioPlayback;
+window.startAudioSyncLoop = startAudioSyncLoop;
 
 window.escapeHtml = escapeHtml;
 window.getCurrentPlayheadTime = getCurrentPlayheadTime;
