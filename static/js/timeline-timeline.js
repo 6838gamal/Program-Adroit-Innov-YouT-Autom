@@ -8,6 +8,22 @@
 function renderPreview(time) {
     if (!isCanvasReady || !ctx) return;
 
+    // ✅ إذا كان هناك فيديو نشط في المعاينة، الفيديو يحل مكان الـ canvas
+    const videoEl = document.getElementById('previewVideo');
+    if (videoEl && videoEl.style.display === 'block') {
+        document.getElementById('currentTimeDisplay').textContent = formatTime(time);
+        document.getElementById('totalTimeDisplay').textContent = formatTime(projectData.totalDuration);
+        const slider = document.getElementById('seekSlider');
+        if (projectData.totalDuration > 0) {
+            slider.value = (time / projectData.totalDuration) * 100;
+        }
+        const playbackInfo = document.getElementById('playbackInfo');
+        if (playbackInfo) playbackInfo.style.display = 'block';
+        const playbackTime = document.getElementById('playbackTime');
+        if (playbackTime) playbackTime.textContent = formatTime(time);
+        return;
+    }
+
     const w = canvas.width;
     const h = canvas.height;
 
