@@ -1360,8 +1360,8 @@ let recordingStream = null;
 let recordingWallStart = 0;
 let recordingBoundClipId = null;
 let recordingMaxEnd = 0;
-let recordingLastEndCheck = 0;    // ✅ آخر فحص للنهاية المتصلة
-let recordingInitialMaxEnd = 0;   // ✅ النهاية الأولية
+let recordingLastEndCheck = 0;
+let recordingInitialMaxEnd = 0;
 let clipIdCounter = 0;
 let currentClipAtTime = null;
 let renderPollInterval = null;
@@ -1612,6 +1612,9 @@ function renderPreview(time) {
 
     activeClips.sort((a, b) => a.layer - b.layer);
 
+    // ✅ شغّل/أوقف الصوت دائماً أثناء التشغيل (بغض النظر عن وجود شريحة مرئية)
+    if (isPlaying) syncAudio(time);
+
     if (activeClips.length > 0) {
         activeClips.forEach((clip) => {
             const x = w / 2;
@@ -1634,8 +1637,6 @@ function renderPreview(time) {
         document.getElementById('playbackTime').textContent = formatTime(time);
         document.getElementById('statusCurrentClip').textContent = '▶️';
 
-        if (isPlaying) syncAudio(time);
-
     } else {
         ctx.fillStyle = 'rgba(255,255,255,0.03)';
         ctx.font = '48px sans-serif';
@@ -1649,8 +1650,6 @@ function renderPreview(time) {
         document.getElementById('playbackInfo').style.display = 'none';
         document.getElementById('statusCurrentClip').textContent = '⏸️';
         currentClipAtTime = null;
-
-        if (audioPlayer && !audioPlayer.paused) audioPlayer.pause();
     }
 
     ctx.fillStyle = 'rgba(0,0,0,0.5)';
@@ -1832,7 +1831,7 @@ function drawTextOnly(ctx, text, x, y, w, h) {
 }
 
 // ============================================================
-//  RECORDING BOUNDS — يحسب النهاية المتصلة
+//  RECORDING BOUNDS
 // ============================================================
 function getActiveClipAt(time) {
     const activeClips = projectData.clips.filter(c => {
@@ -1847,18 +1846,7 @@ function getActiveClipAt(time) {
     return activeClips[0];
 }
 
-// ✅ النهاية المتصلة: تمتد عبر الشرائح المتلاصقة بدون فجوة
 function getContinuousEndFrom(time) {
-    /**
-     * يجد نهاية آخر شريحة متصلة (بدون فجوة > 0.05ث) ابتداءً من time.
-     * 
-     * مثال:
-     *   شرائح: [0→3] [3→6] [6→9]
-     *   time=2.5 → يُرجع 9  ✅ (الشرائح متصلة)
-     *   
-     *   شرائح: [0→3] [5→8]
-     *   time=2.5 → يُرجع 3  ✅ (فجوة من 3 إلى 5)
-     */
     const TOLERANCE = 0.05;
     let cursor = time;
     let changed = true;
@@ -1880,8 +1868,6 @@ function getContinuousEndFrom(time) {
             const clipStart = clip.start;
             const clipEnd = clip.start + clip.duration;
 
-            // إذا كانت الشريحة تبدأ عند أو قبل cursor (مع تسامح)
-            // وتنتهي بعد cursor → مدّد cursor
             if (clipStart <= cursor + TOLERANCE && clipEnd > cursor + TOLERANCE) {
                 cursor = clipEnd;
                 changed = true;
@@ -1896,7 +1882,6 @@ function getRecordingBounds(startTime) {
     const activeClip = getActiveClipAt(startTime);
     if (!activeClip) return null;
 
-    // ✅ استخدم النهاية المتصلة بدل نهاية المقطع الواحد
     const continuousEnd = getContinuousEndFrom(startTime);
 
     return {
@@ -1908,16 +1893,12 @@ function getRecordingBounds(startTime) {
 }
 
 function countChainedClips(startTime, endTime) {
-    /**
-     * يحسب عدد الشرائح المتصلة بين startTime و endTime.
-     */
     return projectData.clips.filter(c => {
         const layer = projectData.layers[c.layer];
         if (!layer || !layer.visible) return false;
         if (c.type === 'audio') return false;
         const clipEnd = c.start + c.duration;
         const clipStart = c.start;
-        // شريحة ضمن السلسلة: تتقاطع مع النطاق
         return clipEnd > startTime - 0.05 && clipStart < endTime + 0.05;
     }).length;
 }
@@ -2027,21 +2008,18 @@ function normalizeLayer(layerIndex) {
 }
 
 // ============================================================
-//  SYNC AUDIO
+//  SYNC AUDIO — يشغّل التسجيلات بغض النظر عن المقطع الحاوي
 // ============================================================
 function syncAudio(time) {
     if (Math.abs(time - lastAudioSyncTime) < 0.03) return;
     lastAudioSyncTime = time;
 
+    // ✅ اجمع كل التسجيلات النشطة (زمنياً) بغض النظر عن المقطع
     const activeRecordings = [];
 
     projectData.clips.forEach(clip => {
-        const layer = projectData.layers[clip.layer];
-        if (!layer || !layer.visible) return;
+        // لا تتحقق من أن المقطع نشط — فقط من أن التسجيل يقع في الزمن الحالي
         if (!clip.metadata || !clip.metadata.audioRecordings) return;
-
-        const clipActive = time >= clip.start && time < clip.start + clip.duration;
-        if (!clipActive) return;
 
         clip.metadata.audioRecordings.forEach((rec, idx) => {
             const recStart = rec.start;
@@ -2059,6 +2037,7 @@ function syncAudio(time) {
 
     const activeIds = new Set(activeRecordings.map(r => r.id));
 
+    // أوقف أي صوت لم يعد نشطاً
     audioNodes.forEach(node => {
         if (!activeIds.has(node.clipId)) {
             try { node.source.stop(); } catch(e) {}
@@ -2105,9 +2084,11 @@ function syncAudio(time) {
                 .then(buf => audioContext.decodeAudioData(buf))
                 .then(decoded => {
                     audioBuffers[src] = decoded;
-                    if (isPlaying) playAudioBuffer(src, decoded, rec, currentTime);
+                    if (isPlaying && currentTime >= rec.start && currentTime < rec.start + rec.duration) {
+                        playAudioBuffer(src, decoded, rec, currentTime);
+                    }
                 })
-                .catch(() => {});
+                .catch(err => console.warn('فشل تحميل الصوت:', err));
             return;
         }
 
@@ -2893,6 +2874,7 @@ function startPlay() {
     if (currentTime >= projectData.totalDuration) currentTime = 0;
 
     isPlaying = true;
+    lastAudioSyncTime = -1;
     document.getElementById('playBtn').textContent = '⏸';
     document.getElementById('playhead').classList.add('active');
 
@@ -2917,6 +2899,7 @@ function startPlay() {
         if (currentTime >= projectData.totalDuration) {
             if (isLooping) {
                 currentTime = 0;
+                lastAudioSyncTime = -1;
                 if (audioPlayer && audioPlayer.src) {
                     audioPlayer.currentTime = 0;
                     audioPlayer.play().catch(() => {});
@@ -2948,6 +2931,7 @@ function pausePlay() {
         node.isPlaying = false;
     });
     audioNodes = [];
+    lastAudioSyncTime = -1;
 
     if (playInterval) {
         clearInterval(playInterval);
@@ -3006,6 +2990,8 @@ function seekTo(time) {
         return;
     }
     currentTime = Math.max(0, Math.min(time, projectData.totalDuration));
+    lastAudioSyncTime = -1;
+
     if (isPlaying) {
         pausePlay();
         setTimeout(() => startPlay(), 50);
@@ -3034,7 +3020,7 @@ document.getElementById('seekSlider').addEventListener('input', function() {
 });
 
 // ============================================================
-//  PLAYHEAD DRAGGING — يدعم الفأرة + اللمس + Pointer Events
+//  PLAYHEAD DRAGGING
 // ============================================================
 function setupPlayheadDragging() {
     const playhead = document.getElementById('playhead');
@@ -3359,7 +3345,7 @@ function setupTouchClipDragging() {
 }
 
 // ============================================================
-//  RECORDING — يستمر عبر الشرائح المتصلة
+//  RECORDING
 // ============================================================
 async function toggleRecording() {
     const btn = document.getElementById('recordBtn');
@@ -3408,8 +3394,8 @@ async function toggleRecording() {
         recordingStartTime = currentTime;
         recordingBoundClipId = bounds.clip.id;
         recordingMaxEnd = bounds.end;
-        recordingInitialMaxEnd = bounds.end;  // ✅ احتفظ بالقيمة الأولية
-        recordingLastEndCheck = 0;            // ✅ أعد تعيين آخر فحص
+        recordingInitialMaxEnd = bounds.end;
+        recordingLastEndCheck = 0;
 
         if (isPlaying) pausePlay();
 
@@ -3452,7 +3438,6 @@ async function toggleRecording() {
                 url: supabaseUrl,
             });
 
-            // ✅ اربط التسجيل بالمقطع الذي كان نشطاً في البداية
             const parentClip = projectData.clips.find(c => c.id === recordingBoundClipId);
             if (parentClip) {
                 if (!parentClip.metadata) parentClip.metadata = {};
@@ -3495,15 +3480,11 @@ async function toggleRecording() {
         const chainCount = countChainedClips(bounds.start, bounds.end);
         showToast(`🔴 التسجيل من ${formatTime(recordingStartTime)} — متاح ${bounds.maxDuration.toFixed(1)}ث عبر ${chainCount} شريحة متصلة`, 'info');
 
-        // ============================================================
-        //  حلقة التسجيل — مع فحص ديناميكي للنهاية المتصلة
-        // ============================================================
         recordingTimerInterval = setInterval(() => {
             if (!isRecording) return;
             const elapsed = (performance.now() - recordingWallStart) / 1000;
             let newTime = recordingStartTime + elapsed;
 
-            // ✅ فحص ديناميكي كل 500ms: هل هناك شرائح متصلة جديدة تمتد أبعد؟
             if (elapsed - recordingLastEndCheck > 0.5) {
                 recordingLastEndCheck = elapsed;
                 const newEnd = getContinuousEndFrom(newTime);
@@ -3514,7 +3495,6 @@ async function toggleRecording() {
                 }
             }
 
-            // ✅ توقف فقط عند النهاية الفعلية
             if (newTime >= recordingMaxEnd) {
                 newTime = recordingMaxEnd;
                 currentTime = newTime;
@@ -4138,6 +4118,6 @@ window.addEventListener('beforeunload', function() {
     });
 });
 
-console.log('🎬 المحرر جاهز - تسجيل ممتد عبر الشرائح المتصلة ✅');
+console.log('🎬 المحرر جاهز - تشغيل الصوت عبر جميع الشرائح ✅');
 </script>
 {% endblock %}
