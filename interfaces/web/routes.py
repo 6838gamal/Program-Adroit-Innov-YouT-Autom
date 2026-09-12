@@ -33,6 +33,25 @@ logger = logging.getLogger(__name__)
 
 
 # ============================================================
+# DIAGNOSTIC HELPERS
+# ============================================================
+
+def _diag(msg: str) -> None:
+    """Print + log a diagnostic message immediately."""
+    print(msg, flush=True)
+    logger.info(msg)
+
+
+def _diag_err(msg: str, exc: Optional[BaseException] = None) -> None:
+    """Print + log an error."""
+    print(msg, flush=True)
+    if exc is not None:
+        logger.error(msg, exc_info=exc)
+    else:
+        logger.error(msg)
+
+
+# ============================================================
 # JINJA2 CUSTOM FILTERS
 # ============================================================
 
@@ -236,7 +255,7 @@ def _compute_text_hash(voice_id: str, text: str, settings_dict: dict) -> str:
 
 
 # ============================================================
-# 🔊 EDGE TTS — مجاني 100% (بدون API key)
+# 🔊 EDGE TTS
 # ============================================================
 
 async def _edge_tts_generate(
@@ -246,10 +265,7 @@ async def _edge_tts_generate(
     volume: str = "+0%",
     pitch: str = "+0Hz",
 ) -> bytes:
-    """
-    توليد صوت عبر Edge TTS (Microsoft).
-    مجاني تماماً - لا يحتاج مفتاح API.
-    """
+    """توليد صوت عبر Edge TTS (Microsoft)."""
     try:
         import edge_tts
 
@@ -297,10 +313,7 @@ async def edge_tts_generate_endpoint(
     pitch: str = Form("+0Hz"),
     project_id: str = Form(""),
 ):
-    """
-    🎙️ Edge TTS — مجاني تماماً (لا يحتاج API key).
-    أصوات احترافية جاهزة بـ 40+ لغة.
-    """
+    """🎙️ Edge TTS — مجاني تماماً."""
     try:
         text = text.strip()
         if not text:
@@ -360,7 +373,7 @@ async def edge_tts_generate_endpoint(
 
 
 # ============================================================
-# 🎙️ HUGGINGFACE — XTTS v2 (Voice Cloning مجاني)
+# 🎙️ HUGGINGFACE — XTTS v2
 # ============================================================
 
 async def _huggingface_clone_and_generate(
@@ -368,10 +381,7 @@ async def _huggingface_clone_and_generate(
     text: str,
     language: str = "ar",
 ) -> bytes:
-    """
-    استنساخ صوت + توليد نص عبر HuggingFace Space (XTTS v2).
-    مجاني تماماً.
-    """
+    """استنساخ صوت + توليد نص عبر HuggingFace Space."""
     import httpx
 
     spaces_to_try = [
@@ -437,10 +447,7 @@ async def huggingface_clone_voice(
     language: str = Form("ar"),
     project_id: str = Form(""),
 ):
-    """
-    🎙️ استنساخ صوت + توليد نص عبر HuggingFace Spaces.
-    مجاني تماماً (XTTS v2).
-    """
+    """🎙️ استنساخ صوت + توليد نص عبر HuggingFace Spaces."""
     tmp_ref = None
     tmp_wav = None
     try:
@@ -481,7 +488,6 @@ async def huggingface_clone_voice(
             tmp.write(content)
             tmp_ref = Path(tmp.name)
 
-        # حوّل إلى WAV 22050Hz mono (متطلب XTTS)
         tmp_wav = tmp_ref.with_suffix(".wav")
         ffmpeg_cmd = [
             "ffmpeg", "-y", "-i", str(tmp_ref),
@@ -545,7 +551,7 @@ async def huggingface_clone_voice(
 
 
 # ============================================================
-# 🎙️ ELEVENLABS — للمستخدمين المدفوعين (اختياري)
+# 🎙️ ELEVENLABS
 # ============================================================
 
 ELEVENLABS_API_BASE = "https://api.elevenlabs.io/v1"
@@ -665,7 +671,7 @@ async def _elevenlabs_delete_voice(voice_id: str) -> bool:
 
 
 # ============================================================
-# 🎭 TALKING HEAD — D-ID
+# 🎭 TALKING HEAD — D-ID (مُحدَّث)
 # ============================================================
 
 DID_API_BASE = "https://api.d-id.com"
@@ -676,16 +682,36 @@ async def _did_create_talk(
     audio_content: bytes,
     image_filename: str = "image.jpg",
 ) -> str:
+    """
+    🎭 إنشاء فيديو talking head من صورة + صوت.
+    مع تشخيص كامل للأخطاء.
+    """
     import httpx
 
     if not settings.did_configured:
-        raise HTTPException(status_code=503, detail="D-ID غير مهيأ")
+        raise HTTPException(
+            status_code=503,
+            detail="D-ID API غير مهيأ. أضف DID_API_KEY.",
+        )
 
     api_key = settings.did_api_key_value
 
-    img_b64 = base64.b64encode(image_content).decode()
-    aud_b64 = base64.b64encode(audio_content).decode()
+    # ═══════════════════════════════════════════════════════════
+    # ✅ 1. تحقق من الصورة
+    # ═══════════════════════════════════════════════════════════
+    img_size_mb = len(image_content) / 1024 / 1024
+    _diag(f"🖼️  Image size: {img_size_mb:.2f} MB")
 
+    if img_size_mb > 5:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"الصورة كبيرة جداً ({img_size_mb:.2f} MB). "
+                f"الحد الأقصى 5 MB. صغّر الصورة أولاً."
+            ),
+        )
+
+    # اكتشف نوع الصورة
     suffix = Path(image_filename).suffix.lower()
     mime = {
         ".jpg": "image/jpeg",
@@ -694,25 +720,186 @@ async def _did_create_talk(
         ".webp": "image/webp",
     }.get(suffix, "image/jpeg")
 
+    # ═══════════════════════════════════════════════════════════
+    # ✅ 2. تحقق من الصوت
+    # ═══════════════════════════════════════════════════════════
+    aud_size_mb = len(audio_content) / 1024 / 1024
+    _diag(f"🔊 Audio size: {aud_size_mb:.2f} MB")
+
+    if aud_size_mb > 10:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"الصوت كبير جداً ({aud_size_mb:.2f} MB). "
+                f"الحد الأقصى 10 MB. استخدم نصاً أقصر."
+            ),
+        )
+
+    # ═══════════════════════════════════════════════════════════
+    # ✅ 3. تحويل إلى base64
+    # ═══════════════════════════════════════════════════════════
+    img_b64 = base64.b64encode(image_content).decode('ascii')
+    aud_b64 = base64.b64encode(audio_content).decode('ascii')
+
+    _diag(f"🖼️  Image base64 length: {len(img_b64)} chars")
+    _diag(f"🔊 Audio base64 length: {len(aud_b64)} chars")
+
+    # ═══════════════════════════════════════════════════════════
+    # ✅ 4. بناء الطلب
+    # ═══════════════════════════════════════════════════════════
     payload = {
         "source_url": f"data:{mime};base64,{img_b64}",
         "script": {
             "type": "audio",
             "audio_url": f"data:audio/mpeg;base64,{aud_b64}",
         },
-        "config": {"stitch": True, "pad_audio": 0.0},
+        "config": {
+            "stitch": True,
+            "pad_audio": 0.0,
+        },
     }
 
-    headers = {"Authorization": api_key, "Content-Type": "application/json"}
+    headers = {
+        "Authorization": api_key,
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
 
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        r = await client.post(f"{DID_API_BASE}/talks", headers=headers, json=payload)
-        if r.status_code not in (200, 201):
-            raise HTTPException(
-                status_code=r.status_code,
-                detail=f"فشل D-ID: {r.text[:300]}",
+    _diag(f"🎭 Sending request to D-ID...")
+    _diag(f"   URL: {DID_API_BASE}/talks")
+    _diag(f"   Auth: {api_key[:30]}...")
+    _diag(f"   Payload size: {len(json.dumps(payload))} chars")
+
+    # ═══════════════════════════════════════════════════════════
+    # ✅ 5. أرسل الطلب
+    # ═══════════════════════════════════════════════════════════
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        try:
+            r = await client.post(
+                f"{DID_API_BASE}/talks",
+                headers=headers,
+                json=payload,
             )
-        return r.json().get("id")
+        except httpx.TimeoutException:
+            raise HTTPException(
+                status_code=504,
+                detail="انتهت مهلة الاتصال بـ D-ID. جرّب نصاً أقصر.",
+            )
+        except Exception as e:
+            _diag_err(f"❌ D-ID request failed: {e}", e)
+            raise HTTPException(
+                status_code=502,
+                detail=f"فشل الاتصال بـ D-ID: {str(e)}",
+            )
+
+    # ═══════════════════════════════════════════════════════════
+    # ✅ 6. عرض تفاصيل الخطأ الكاملة
+    # ═══════════════════════════════════════════════════════════
+    _diag(f"📡 D-ID response: status={r.status_code}")
+    _diag(f"📡 Response body: {r.text[:1500]}")
+
+    if r.status_code not in (200, 201):
+        error_text = r.text[:800]
+        user_message = f"D-ID error ({r.status_code})"
+
+        try:
+            error_data = r.json()
+            _diag(f"📡 Parsed error JSON: {json.dumps(error_data, ensure_ascii=False)[:500]}")
+
+            # D-ID يستخدم تنسيقات متعددة
+            err_detail = (
+                error_data.get("description")
+                or error_data.get("message")
+                or error_data.get("detail")
+                or error_data.get("error")
+            )
+
+            if isinstance(err_detail, dict):
+                err_detail = (
+                    err_detail.get("message")
+                    or err_detail.get("description")
+                    or str(err_detail)
+                )
+
+            if err_detail:
+                user_message = f"❌ D-ID: {err_detail}"
+
+            # أضف تفاصيل الحقول الخاطئة
+            if "details" in error_data and isinstance(error_data["details"], list):
+                field_errors = []
+                for d in error_data["details"][:5]:
+                    if isinstance(d, dict):
+                        field = d.get("field", "?")
+                        msg = d.get("message", "?")
+                        field_errors.append(f"  • {field}: {msg}")
+                if field_errors:
+                    user_message += "\n" + "\n".join(field_errors)
+
+        except Exception as e:
+            _diag(f"⚠️ Could not parse error JSON: {e}")
+            user_message = f"❌ D-ID ({r.status_code}): {error_text}"
+
+        # رسائل مخصصة لرموز معينة
+        if r.status_code == 400:
+            user_message += (
+                "\n\n💡 تحقق من:\n"
+                "• الصورة واضحة (< 5 MB)\n"
+                "• الوجه واضح ومباشر\n"
+                "• النص < 1000 حرف\n"
+                "• الصوت صالح (< 10 MB)"
+            )
+        elif r.status_code == 401:
+            user_message = (
+                "🔑 مفتاح D-ID غير صالح.\n"
+                "تحقق من DID_API_KEY في Environment."
+            )
+        elif r.status_code == 402:
+            user_message = (
+                "💳 انتهى رصيدك في D-ID.\n"
+                "افتح https://studio.d-id.com للشحن."
+            )
+        elif r.status_code == 403:
+            user_message = (
+                "🚫 تم رفض الوصول.\n"
+                "قد يكون المفتاح معطّل أو منتهي الصلاحية."
+            )
+        elif r.status_code == 429:
+            user_message = (
+                "⏱️ تجاوزت الحد المسموح.\n"
+                "انتظر قليلاً ثم حاول مجدداً."
+            )
+
+        raise HTTPException(
+            status_code=r.status_code,
+            detail=user_message,
+        )
+
+    # ═══════════════════════════════════════════════════════════
+    # ✅ 7. نجاح
+    # ═══════════════════════════════════════════════════════════
+    try:
+        result = r.json()
+    except Exception as e:
+        _diag_err(f"❌ Failed to parse success JSON: {e}", e)
+        raise HTTPException(
+            status_code=500,
+            detail="D-ID أعاد رداً غير متوقع.",
+        )
+
+    talk_id = result.get("id")
+
+    if not talk_id:
+        _diag(f"⚠️ Response has no 'id': {result}")
+        raise HTTPException(
+            status_code=500,
+            detail="D-ID لم يُرجع talk_id. تحقق من Logs.",
+        )
+
+    _diag(f"✅ D-ID talk created: {talk_id}")
+    _diag(f"   Duration: {result.get('duration')}")
+    _diag(f"   Status: {result.get('status')}")
+
+    return talk_id
 
 
 async def _did_get_talk_status(talk_id: str) -> Dict[str, Any]:
@@ -804,7 +991,6 @@ async def project_timeline(
     if not project:
         return HTMLResponse("Project not found", status_code=404)
 
-    # Build scenes
     scenes = []
     try:
         if hasattr(project, "timeline") and project.timeline:
@@ -837,7 +1023,6 @@ async def project_timeline(
             })
             t += duration
 
-    # اجلب مقاطع الصوت + الأصوات المحفوظة
     voiceover_clips = []
     saved_voices = []
     if hasattr(project, "data") and isinstance(project.data, dict):
@@ -902,12 +1087,7 @@ async def generate_voice_unified(
     project_id: str = Form(""),
     speed: float = Form(1.0),
 ):
-    """
-    🎙️ توليد صوت موحد — يختار المزود تلقائياً:
-      1. ElevenLabs (إذا voice_id متوفر)
-      2. HuggingFace (إذا reference_audio موجود)
-      3. Edge TTS (fallback مجاني)
-    """
+    """🎙️ توليد صوت موحد — يختار المزود تلقائياً."""
     try:
         text = text.strip()
         if not text:
@@ -916,7 +1096,6 @@ async def generate_voice_unified(
                 status_code=400,
             )
 
-        # Auto-detect provider
         if provider == "auto":
             if voice_id and settings.elevenlabs_configured:
                 provider = "elevenlabs"
@@ -927,7 +1106,6 @@ async def generate_voice_unified(
 
         logger.info(f"🎙️ Unified voice: provider={provider}, chars={len(text)}")
 
-        # ── 1. ElevenLabs ──
         if provider == "elevenlabs":
             if not voice_id:
                 return JSONResponse(
@@ -960,7 +1138,6 @@ async def generate_voice_unified(
                 logger.warning(f"ElevenLabs failed: {e.detail}, falling back to Edge TTS")
                 provider = "edge_tts"
 
-        # ── 2. HuggingFace ──
         if provider == "huggingface" and reference_audio:
             tmp_ref = None
             tmp_wav = None
@@ -1017,7 +1194,6 @@ async def generate_voice_unified(
                 if tmp_wav and tmp_wav.exists():
                     tmp_wav.unlink(missing_ok=True)
 
-        # ── 3. Edge TTS ──
         if provider == "edge_tts" or provider == "auto":
             rate_percent = int((speed - 1) * 100)
             rate_str = f"+{rate_percent}%" if rate_percent >= 0 else f"{rate_percent}%"
@@ -1073,11 +1249,7 @@ async def clone_user_voice(
     project_id: str = Form(""),
     description: str = Form(""),
 ):
-    """
-    🎙️ استنساخ صوت — يختار المزود تلقائياً:
-      1. ElevenLabs (إذا مدفوع)
-      2. HuggingFace (مجاني)
-    """
+    """🎙️ استنساخ صوت — يختار المزود تلقائياً."""
     try:
         content = await file.read()
         if not content:
@@ -1092,7 +1264,6 @@ async def clone_user_voice(
                 status_code=400,
             )
 
-        # ── جرّب ElevenLabs أولاً ──
         if settings.elevenlabs_configured:
             try:
                 voice_id = await _elevenlabs_create_voice(
@@ -1115,7 +1286,6 @@ async def clone_user_voice(
                 else:
                     logger.warning(f"ElevenLabs failed: {e.detail}")
 
-        # ── Fallback: HuggingFace ──
         return {
             "success": True,
             "voice_id": f"hf_temp_{uuid.uuid4().hex[:8]}",
@@ -1153,7 +1323,6 @@ async def preview_saved_voice(
         if len(text) > 200:
             text = text[:200]
 
-        # استخدم Edge TTS للمعاينة
         audio_bytes = await _edge_tts_generate(
             text=text,
             voice=voice_id if voice_id.startswith("ar-") else "ar-SA-HamedNeural",
@@ -1278,7 +1447,7 @@ async def generate_with_cache(
 
 
 # ============================================================
-# OLD GENERATE (لتوافق مع الكود القديم)
+# OLD GENERATE (توافق)
 # ============================================================
 
 @router.post("/api/voice/generate")
@@ -1292,8 +1461,7 @@ async def generate_with_cloned_voice(
     speed: float = Form(1.0),
     model_id: str = Form("eleven_multilingual_v2"),
 ):
-    """توليد صوت (توافق مع الكود القديم — يحوّل إلى Edge TTS)."""
-    # إذا voice_id يبدأ بـ ar- أو en- → Edge TTS
+    """توليد صوت (توافق مع الكود القديم)."""
     if voice_id.startswith(("ar-", "en-", "fr-", "de-", "es-")):
         return await generate_with_cache(
             voice_id=voice_id,
@@ -1303,10 +1471,8 @@ async def generate_with_cloned_voice(
             speed=speed,
         )
 
-    # وإلا → ElevenLabs
     try:
         if not settings.elevenlabs_configured:
-            # Fallback إلى Edge TTS
             return await generate_with_cache(
                 voice_id="ar-SA-HamedNeural",
                 script=script,
@@ -1471,7 +1637,6 @@ async def delete_saved_voice(
     voice_id = target.get("voice_id")
     provider = target.get("provider", "")
 
-    # احذف من ElevenLabs إذا كان
     if voice_id and provider == "elevenlabs":
         try:
             await _elevenlabs_delete_voice(voice_id)
@@ -1791,7 +1956,7 @@ async def check_permissions():
 
 
 # ============================================================
-# 🎭 TALKING HEAD
+# 🎭 TALKING HEAD ENDPOINTS
 # ============================================================
 
 @router.post("/api/talking-head/create")
@@ -1823,17 +1988,9 @@ async def create_talking_head(
                 status_code=400,
             )
 
-        if len(img_content) > 10 * 1024 * 1024:
-            return JSONResponse(
-                {"success": False, "error": "الصورة كبيرة جداً (الحد 10MB)"},
-                status_code=413,
-            )
-
-        if len(aud_content) > 100 * 1024 * 1024:
-            return JSONResponse(
-                {"success": False, "error": "الصوت كبير جداً (الحد 100MB)"},
-                status_code=413,
-            )
+        _diag(f"🎭 Talking Head (image+audio):")
+        _diag(f"   Image: {len(img_content) / 1024:.1f} KB")
+        _diag(f"   Audio: {len(aud_content) / 1024:.1f} KB")
 
         talk_id = await _did_create_talk(
             image_content=img_content,
@@ -1857,8 +2014,11 @@ async def create_talking_head(
             "message": "✅ تم إنشاء الفيديو. جاري المعالجة...",
         }
 
-    except HTTPException:
-        raise
+    except HTTPException as e:
+        return JSONResponse(
+            {"success": False, "error": e.detail},
+            status_code=e.status_code,
+        )
     except Exception as e:
         logger.exception("Talking head creation failed")
         return JSONResponse(
@@ -1886,6 +2046,9 @@ async def generate_talking_head(
                 status_code=503,
             )
 
+        # ═══════════════════════════════════════════════════════════
+        # تحقق من النص
+        # ═══════════════════════════════════════════════════════════
         text = text.strip()
         if not text:
             return JSONResponse(
@@ -1895,10 +2058,19 @@ async def generate_talking_head(
 
         if len(text) > settings.DID_MAX_TEXT_CHARS:
             return JSONResponse(
-                {"success": False, "error": f"النص طويل جداً (الحد {settings.DID_MAX_TEXT_CHARS})"},
+                {
+                    "success": False,
+                    "error": (
+                        f"النص طويل جداً ({len(text)} حرف). "
+                        f"الحد الأقصى {settings.DID_MAX_TEXT_CHARS} حرف."
+                    ),
+                },
                 status_code=400,
             )
 
+        # ═══════════════════════════════════════════════════════════
+        # تحقق من الصورة
+        # ═══════════════════════════════════════════════════════════
         img_content = await image.read()
         if not img_content:
             return JSONResponse(
@@ -1906,18 +2078,78 @@ async def generate_talking_head(
                 status_code=400,
             )
 
-        # ولّد الصوت عبر Edge TTS
-        audio_bytes = await _edge_tts_generate(
-            text=text,
-            voice=voice_id,
-        )
+        img_size_mb = len(img_content) / 1024 / 1024
+        if img_size_mb > 5:
+            return JSONResponse(
+                {
+                    "success": False,
+                    "error": (
+                        f"الصورة كبيرة جداً ({img_size_mb:.1f} MB). "
+                        f"الحد 5 MB. جرّب صورة أصغر."
+                    ),
+                },
+                status_code=400,
+            )
 
-        # أنشئ Talking Head
-        talk_id = await _did_create_talk(
-            image_content=img_content,
-            audio_content=audio_bytes,
-            image_filename=image.filename or "image.jpg",
-        )
+        _diag(f"🎭 Talking Head request:")
+        _diag(f"   Text: {len(text)} chars")
+        _diag(f"   Image: {img_size_mb:.2f} MB ({image.filename})")
+        _diag(f"   Voice: {voice_id}")
+
+        # ═══════════════════════════════════════════════════════════
+        # ولّد الصوت عبر Edge TTS
+        # ═══════════════════════════════════════════════════════════
+        _diag(f"🎙️ Generating audio via Edge TTS...")
+
+        try:
+            audio_bytes = await _edge_tts_generate(
+                text=text,
+                voice=voice_id,
+            )
+        except Exception as e:
+            _diag_err(f"❌ Edge TTS failed: {e}", e)
+            return JSONResponse(
+                {
+                    "success": False,
+                    "error": f"فشل توليد الصوت: {str(e)}",
+                },
+                status_code=500,
+            )
+
+        aud_size_mb = len(audio_bytes) / 1024 / 1024
+        _diag(f"✅ Audio generated: {aud_size_mb:.2f} MB")
+
+        if aud_size_mb > 10:
+            return JSONResponse(
+                {
+                    "success": False,
+                    "error": (
+                        f"الصوت المُولَّد كبير جداً ({aud_size_mb:.1f} MB). "
+                        f"استخدم نصاً أقصر."
+                    ),
+                },
+                status_code=400,
+            )
+
+        # ═══════════════════════════════════════════════════════════
+        # أنشئ Talking Head في D-ID
+        # ═══════════════════════════════════════════════════════════
+        _diag(f"🎭 Creating talking head on D-ID...")
+
+        try:
+            talk_id = await _did_create_talk(
+                image_content=img_content,
+                audio_content=audio_bytes,
+                image_filename=image.filename or "image.jpg",
+            )
+        except HTTPException as e:
+            return JSONResponse(
+                {
+                    "success": False,
+                    "error": e.detail,
+                },
+                status_code=e.status_code,
+            )
 
         TALKING_HEAD_JOBS[talk_id] = {
             "id": talk_id,
@@ -1929,6 +2161,8 @@ async def generate_talking_head(
             "created_at": datetime.utcnow().isoformat(),
         }
 
+        _diag(f"✅ Talking head started: {talk_id}")
+
         return {
             "success": True,
             "talk_id": talk_id,
@@ -1939,9 +2173,12 @@ async def generate_talking_head(
     except HTTPException:
         raise
     except Exception as e:
-        logger.exception("Talking head failed")
+        _diag_err(f"❌ Talking head failed: {e}", e)
         return JSONResponse(
-            {"success": False, "error": str(e)},
+            {
+                "success": False,
+                "error": f"خطأ غير متوقع: {str(e)}",
+            },
             status_code=500,
         )
 
@@ -2577,7 +2814,6 @@ async def align_script_with_audio(
     project_id: str = Form(""),
 ):
     """🎙️ Voice Cloning — توافق مع الكود القديم."""
-    # إذا voice_id موجود → استخدمه
     if voice_id:
         return await generate_with_cloned_voice(
             voice_id=voice_id,
@@ -2590,7 +2826,6 @@ async def align_script_with_audio(
             model_id=settings.ELEVENLABS_MODEL_ID,
         )
 
-    # وإلا → استخدم Edge TTS
     return await generate_with_cache(
         voice_id="ar-SA-HamedNeural",
         script=script,
@@ -2959,7 +3194,6 @@ async def logs_page(request: Request):
             "message": f"Supabase configured: {settings.SUPABASE_URL}"
         })
 
-    # حالة المزودين
     edge_ok = settings.EDGE_TTS_ENABLED
     log_entries.append({
         "level": "INFO" if edge_ok else "WARNING",
@@ -3017,7 +3251,6 @@ async def logs_page(request: Request):
         "message": f"FFmpeg: {'✅ متاح' if ffmpeg_ok else '❌ غير مثبّت'}"
     })
 
-    # Cache stats
     cache_files = list(CACHE_DIR.glob("*.mp3"))
     cache_size = sum(f.stat().st_size for f in cache_files) / 1024 / 1024
     log_entries.append({
