@@ -409,11 +409,11 @@
         <!-- المعاينة -->
         <div id="voiceoverPreview" class="mb-3"></div>
 
-        <!-- ✅ زر فتح المزامنة والمعالجة -->
+        <!-- ✅ زر فتح Voice Cloning -->
         <div id="openSyncBtnContainer" class="mb-3" style="display:none;">
             <button onclick="openSyncProcessModal()"
                     class="btn-primary btn-sm w-full sync-open-btn">
-                🎯 مزامنة النص + معالجة الصوت + استعراض
+                🎙️ توليد النص بصوتي + معالجة الصوت + استعراض
             </button>
         </div>
 
@@ -440,22 +440,22 @@
 </div>
 
 <!-- ============================================================ -->
-<!-- 🎯 نافذة المزامنة والمعالجة والاستعراض -->
+<!-- 🎙️ نافذة Voice Cloning + المزامنة + المعالجة -->
 <!-- ============================================================ -->
 <div id="syncProcessModal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
     <div class="bg-slate-800 rounded-xl p-6 max-w-4xl w-full border border-slate-700 max-h-[90vh] overflow-y-auto">
 
         <!-- Header -->
         <div class="flex justify-between items-center mb-4">
-            <h3 class="text-white text-lg font-semibold">🎯 مزامنة ومعالجة الصوت</h3>
+            <h3 class="text-white text-lg font-semibold">🎙️ توليد الصوت بصوتك + معالجة</h3>
             <button onclick="closeSyncProcessModal()" class="text-slate-400 hover:text-white text-xl">✕</button>
         </div>
 
-        <!-- ═══════════ قسم 1: الصوت الأصلي ═══════════ -->
+        <!-- ═══════════ قسم 1: صوتك المرجعي ═══════════ -->
         <div class="mb-5">
             <div class="flex items-center gap-2 mb-2">
                 <span class="badge-step">1</span>
-                <h4 class="text-white font-semibold text-sm">📼 الصوت الأصلي</h4>
+                <h4 class="text-white font-semibold text-sm">🎤 صوتك المرجعي</h4>
             </div>
             <div id="syncRawAudio" class="sync-audio-container"></div>
         </div>
@@ -472,75 +472,136 @@
             <div id="syncSegmentsList" class="sync-segments-container"></div>
         </div>
 
-        <!-- ═══════════ قسم 3: أزرار المزامنة ═══════════ -->
+        <!-- ═══════════ قسم 3: توليد الصوت بصوتك ═══════════ -->
         <div class="mb-5">
             <div class="flex items-center gap-2 mb-2">
                 <span class="badge-step">3</span>
-                <h4 class="text-white font-semibold text-sm">🎯 المزامنة</h4>
+                <h4 class="text-white font-semibold text-sm">🎙️ توليد النص بصوتك (AI Voice Cloning)</h4>
             </div>
+
+            <!-- شرح -->
+            <div style="background:linear-gradient(135deg,rgba(124,58,237,0.15),rgba(37,99,235,0.15));
+                        border:1px solid rgba(124,58,237,0.3);
+                        border-radius:8px;padding:12px;margin-bottom:12px;">
+                <div style="font-size:12px;color:#a78bfa;font-weight:600;margin-bottom:6px;">
+                    🎯 كيف يعمل Voice Cloning؟
+                </div>
+                <div style="font-size:11px;color:#cbd5e1;line-height:1.8;">
+                    <strong style="color:#60a5fa;">1.</strong> سجّل صوتك (30 ثانية - 3 دقائق)
+                    <br><strong style="color:#60a5fa;">2.</strong> اكتب النص المطلوب
+                    <br><strong style="color:#60a5fa;">3.</strong> الذكاء الاصطناعي 🎙️ يُنتج ملفاً صوتياً
+                    <br><strong style="color:#60a5fa;">4.</strong> النتيجة: <span style="color:#34d399;font-weight:600;">
+                        النص المكتوب بصوتك أنت!
+                    </span>
+                </div>
+            </div>
+
+            <!-- حالة الصوت المُستنسخ -->
+            <div id="clonedVoiceStatus" style="display:none;margin-bottom:12px;"></div>
+
+            <!-- إعدادات متقدمة -->
+            <details style="margin-bottom:12px;background:rgba(15,23,42,0.5);border:1px solid #334155;
+                            border-radius:8px;padding:10px;">
+                <summary style="color:#94a3b8;font-size:12px;cursor:pointer;font-weight:600;">
+                    ⚙️ إعدادات متقدمة (اختياري)
+                </summary>
+                <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-top:10px;">
+                    <div>
+                        <label style="color:#94a3b8;font-size:10px;display:block;margin-bottom:4px;">
+                            ⚡ السرعة: <span id="cloneSpeedVal">1.0</span>x
+                        </label>
+                        <input type="range" id="cloneSpeed" min="0.7" max="1.3" step="0.05" value="1"
+                               style="width:100%;accent-color:#2563eb;"
+                               oninput="document.getElementById('cloneSpeedVal').textContent = this.value">
+                    </div>
+                    <div>
+                        <label style="color:#94a3b8;font-size:10px;display:block;margin-bottom:4px;">
+                            🎯 الثبات: <span id="cloneStabilityVal">0.5</span>
+                        </label>
+                        <input type="range" id="cloneStability" min="0.1" max="0.9" step="0.05" value="0.5"
+                               style="width:100%;accent-color:#2563eb;"
+                               oninput="document.getElementById('cloneStabilityVal').textContent = this.value">
+                    </div>
+                    <div>
+                        <label style="color:#94a3b8;font-size:10px;display:block;margin-bottom:4px;">
+                            👤 التشابه: <span id="cloneSimilarityVal">0.75</span>
+                        </label>
+                        <input type="range" id="cloneSimilarity" min="0.3" max="1.0" step="0.05" value="0.75"
+                               style="width:100%;accent-color:#2563eb;"
+                               oninput="document.getElementById('cloneSimilarityVal').textContent = this.value">
+                    </div>
+                </div>
+            </details>
+
+            <!-- أزرار -->
             <div class="flex flex-wrap gap-2">
                 <button id="btnAlignScript" onclick="alignScriptWithAudio()"
-                        class="btn-primary btn-sm">
-                    🎯 مزامنة تلقائية دقيقة
+                        class="btn-primary btn-sm"
+                        style="background:linear-gradient(135deg,#7c3aed,#2563eb);flex:1;">
+                    🎙️ توليد النص بصوتي (AI Voice Cloning)
                 </button>
-                <button onclick="alignScriptManually()" class="btn-secondary btn-sm">
-                    📐 مزامنة يدوية (حسب المدة)
+                <button onclick="resetClonedVoice()" class="btn-secondary btn-sm"
+                        title="استخدم صوتاً جديداً">
+                    🔄
                 </button>
                 <button onclick="autoSegmentFromScript()" class="btn-secondary btn-sm">
-                    ✨ تقسيم النص تلقائياً
+                    ✨ تقسيم
                 </button>
             </div>
+
             <div id="syncAlignStatus" class="mt-2 text-xs"></div>
         </div>
 
-        <!-- ═══════════ قسم 4: معالجة الصوت ═══════════ -->
-        <div class="mb-5">
-            <div class="flex items-center gap-2 mb-2">
-                <span class="badge-step">4</span>
-                <h4 class="text-white font-semibold text-sm">🎚️ معالجة الصوت</h4>
+        <!-- ═══════════ قسم 4: معالجة الصوت (اختياري) ═══════════ -->
+        <details class="mb-5" style="background:rgba(15,23,42,0.3);border:1px solid #334155;
+                                      border-radius:8px;padding:12px;">
+            <summary style="color:#94a3b8;font-size:12px;cursor:pointer;font-weight:600;">
+                🎚️ معالجة الصوت (اختياري — تحسين الجودة)
+            </summary>
+
+            <div style="margin-top:12px;">
+                <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3">
+                    <label class="sync-option">
+                        <input type="checkbox" id="optNormalize" checked>
+                        <span>📊 تطبيع</span>
+                    </label>
+                    <label class="sync-option">
+                        <input type="checkbox" id="optTrimSilence" checked>
+                        <span>✂️ قص الصمت</span>
+                    </label>
+                    <label class="sync-option">
+                        <input type="checkbox" id="optDenoise">
+                        <span>🔇 إزالة ضوضاء</span>
+                    </label>
+                    <label class="sync-option">
+                        <input type="checkbox" id="optCompress">
+                        <span>🗜️ ضغط</span>
+                    </label>
+                </div>
+
+                <div class="mb-3">
+                    <label class="text-slate-400 text-xs">
+                        مستوى الاستهداف (LUFS):
+                        <span id="lufsVal" class="text-white font-mono">-16</span>
+                    </label>
+                    <input type="range" id="optTargetLufs" min="-30" max="-6" step="1" value="-16"
+                           class="w-full" dir="ltr"
+                           oninput="document.getElementById('lufsVal').textContent = this.value">
+                </div>
+
+                <button id="btnProcessAudio" onclick="processAudio()" class="btn-secondary btn-sm w-full">
+                    🎚️ معالجة الصوت المرجعي
+                </button>
+
+                <div id="syncProcessProgress" class="mt-3" style="display:none;"></div>
             </div>
-
-            <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3">
-                <label class="sync-option">
-                    <input type="checkbox" id="optNormalize" checked>
-                    <span>📊 تطبيع المستوى</span>
-                </label>
-                <label class="sync-option">
-                    <input type="checkbox" id="optTrimSilence" checked>
-                    <span>✂️ قص الصمت</span>
-                </label>
-                <label class="sync-option">
-                    <input type="checkbox" id="optDenoise">
-                    <span>🔇 إزالة ضوضاء</span>
-                </label>
-                <label class="sync-option">
-                    <input type="checkbox" id="optCompress">
-                    <span>🗜️ ضغط ديناميكي</span>
-                </label>
-            </div>
-
-            <div class="mb-3">
-                <label class="text-slate-400 text-xs">
-                    مستوى الاستهداف (LUFS):
-                    <span id="lufsVal" class="text-white font-mono">-16</span>
-                </label>
-                <input type="range" id="optTargetLufs" min="-30" max="-6" step="1" value="-16"
-                       class="w-full" dir="ltr"
-                       oninput="document.getElementById('lufsVal').textContent = this.value">
-            </div>
-
-            <button id="btnProcessAudio" onclick="processAudio()" class="btn-primary btn-sm w-full">
-                🎚️ معالجة الصوت الآن
-            </button>
-
-            <div id="syncProcessProgress" class="mt-3" style="display:none;"></div>
-        </div>
+        </details>
 
         <!-- ═══════════ قسم 5: الاستعراض والمقارنة ═══════════ -->
         <div id="syncProcessedSection" style="display:none;">
             <div class="flex items-center gap-2 mb-2">
-                <span class="badge-step">5</span>
-                <h4 class="text-white font-semibold text-sm">▶️ الاستعراض والمقارنة</h4>
+                <span class="badge-step">4</span>
+                <h4 class="text-white font-semibold text-sm">▶️ الاستعراض</h4>
             </div>
 
             <div id="syncProcessedAudio" class="sync-audio-container mb-3"></div>
@@ -563,7 +624,7 @@
             <button onclick="closeSyncProcessModal()" class="btn-secondary btn-sm">إلغاء</button>
             <button onclick="saveProcessedVoiceover()" class="btn-primary btn-sm"
                     id="btnSaveProcessed">
-                💾 حفظ الصوت المعالج في المشروع
+                💾 حفظ في المشروع
             </button>
         </div>
     </div>
