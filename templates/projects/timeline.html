@@ -52,7 +52,8 @@
     "projectId": "{{ project.id }}",
     "userId": "{{ current_user.id if current_user else '' }}",
     "userEmail": "{{ current_user.email if current_user else '' }}",
-    "scenes": {{ scenes_json | safe }}
+    "scenes": {{ scenes_json | safe }},
+    "voiceoverClips": {{ voiceover_clips | tojson | safe if voiceover_clips else '[]' }}
 }
 </script>
 
@@ -93,6 +94,12 @@
         <div class="recording-indicator" id="recordingIndicator">
             <span class="dot"></span>
             <span>🔴 التسجيل من <span id="recordingStartLabel">00:00</span></span>
+        </div>
+
+        <!-- ✅ جديد: طبقة عرض النص المُزامن -->
+        <div class="script-overlay" id="scriptOverlay">
+            <div class="script-title" id="scriptOverlayTitle"></div>
+            <div class="script-text" id="scriptOverlayText"></div>
         </div>
 
         <div class="playback-info" id="playbackInfo">
@@ -155,6 +162,8 @@
             <button class="tool-btn" onclick="addClip('video')" title="إضافة فيديو">🎬</button>
             <button class="tool-btn" onclick="addClip('audio')" title="إضافة صوت">🎤</button>
             <button class="tool-btn" onclick="addClip('text')" title="إضافة نص">📝</button>
+            <!-- ✅ جديد: زر الاستوديو الصوتي -->
+            <button class="tool-btn" onclick="openVoiceoverStudio()" title="الاستوديو الصوتي (نص + صوت)">🎙️✨</button>
         </div>
 
         <div class="toolbar-group">
@@ -212,6 +221,7 @@
 
 <div class="trash-zone" id="trashZone">🗑️ اسقط هنا للحذف</div>
 
+<!-- ============ نافذة استيراد وسائط ============ -->
 <div id="importModal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
     <div class="bg-slate-800 rounded-xl p-6 max-w-md w-full border border-slate-700">
         <h3 class="text-white text-lg font-semibold mb-4">📥 استيراد وسائط</h3>
@@ -228,6 +238,7 @@
     </div>
 </div>
 
+<!-- ============ نافذة خصائص المقطع ============ -->
 <div id="clipPropertiesModal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
     <div class="bg-slate-800 rounded-xl p-6 max-w-md w-full border border-slate-700">
         <h3 class="text-white text-lg font-semibold mb-4">⚙️ خصائص المقطع</h3>
@@ -265,6 +276,7 @@
     </div>
 </div>
 
+<!-- ============ نافذة المشاركة ============ -->
 <div id="shareModal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
     <div class="bg-slate-800 rounded-xl p-6 max-w-md w-full border border-slate-700">
         <h3 class="text-white text-lg font-semibold mb-4">👥 مشاركة المشروع</h3>
@@ -278,6 +290,167 @@
         </div>
     </div>
 </div>
+
+<!-- ============================================================ -->
+<!-- 🎙️ نافذة الاستوديو الصوتي (نص + صوت) -->
+<!-- ============================================================ -->
+<div id="voiceoverModal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+    <div class="bg-slate-800 rounded-xl p-6 max-w-3xl w-full border border-slate-700 max-h-[90vh] overflow-y-auto">
+
+        <!-- Header -->
+        <div class="flex justify-between items-center mb-4">
+            <h3 class="text-white text-lg font-semibold">🎙️ الاستوديو الصوتي — نص + صوت</h3>
+            <button onclick="closeVoiceoverStudio()" class="text-slate-400 hover:text-white text-xl">✕</button>
+        </div>
+
+        <!-- اختيار الوضع (3 خيارات) -->
+        <div class="grid grid-cols-3 gap-2 mb-4">
+            <label class="cursor-pointer">
+                <input type="radio" name="voiceoverMode" value="tts" checked class="hidden peer">
+                <div class="peer-checked:bg-blue-600 peer-checked:text-white bg-slate-700 text-slate-300 rounded-lg p-3 text-center transition text-sm">
+                    🔊<br>صوت جاهز
+                </div>
+            </label>
+            <label class="cursor-pointer">
+                <input type="radio" name="voiceoverMode" value="record" class="hidden peer">
+                <div class="peer-checked:bg-red-600 peer-checked:text-white bg-slate-700 text-slate-300 rounded-lg p-3 text-center transition text-sm">
+                    🎙️<br>تسجيل
+                </div>
+            </label>
+            <label class="cursor-pointer">
+                <input type="radio" name="voiceoverMode" value="file" class="hidden peer">
+                <div class="peer-checked:bg-emerald-600 peer-checked:text-white bg-slate-700 text-slate-300 rounded-lg p-3 text-center transition text-sm">
+                    🎵<br>ملف صوتي
+                </div>
+            </label>
+        </div>
+
+        <!-- العنوان -->
+        <div class="mb-3">
+            <label class="text-slate-400 text-sm">عنوان المقطع</label>
+            <input type="text" id="voiceoverTitle" placeholder="مثال: تعليق صوتي - المشهد 1"
+                   class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-white text-sm mt-1">
+        </div>
+
+        <!-- النص -->
+        <div class="mb-3">
+            <label class="text-slate-400 text-sm">📝 النص (Script)</label>
+            <textarea id="voiceoverScript" rows="4" dir="auto"
+                      placeholder="اكتب النص هنا... سيتم مزامنته مع الصوت تلقائياً"
+                      class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-white text-sm mt-1 resize-y"></textarea>
+            <div class="text-xs text-slate-500 mt-1">
+                💡 عند التسجيل أو استخراج النص، سيتم مزامنة الجمل مع التوقيتات تلقائياً
+            </div>
+        </div>
+
+        <!-- ====== إعدادات TTS ====== -->
+        <div id="ttsSettings" class="bg-slate-900/50 rounded-lg p-3 mb-3 space-y-2">
+            <div class="grid grid-cols-2 gap-3">
+                <div>
+                    <label class="text-slate-400 text-xs">الصوت</label>
+                    <select id="voiceoverVoiceSelect" class="w-full bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-white text-sm mt-1"></select>
+                </div>
+                <div>
+                    <label class="text-slate-400 text-xs">السرعة: <span id="rateVal">1.0</span></label>
+                    <input type="range" id="voiceoverRate" min="0.5" max="2" step="0.1" value="1"
+                           class="w-full mt-1" dir="ltr"
+                           oninput="document.getElementById('rateVal').textContent = this.value">
+                </div>
+                <div>
+                    <label class="text-slate-400 text-xs">النبرة: <span id="pitchVal">1.0</span></label>
+                    <input type="range" id="voiceoverPitch" min="0.5" max="2" step="0.1" value="1"
+                           class="w-full mt-1" dir="ltr"
+                           oninput="document.getElementById('pitchVal').textContent = this.value">
+                </div>
+                <div class="flex items-end">
+                    <button onclick="previewTTS()" class="btn-secondary btn-sm w-full">▶️ معاينة</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ====== إعدادات التسجيل ====== -->
+        <div id="recordSettings" class="hidden bg-slate-900/50 rounded-lg p-3 mb-3">
+            <div class="flex items-center gap-3">
+                <button id="voiceoverRecBtn" onclick="toggleVoiceoverRec()"
+                        class="btn-primary btn-sm flex-1">🎙️ تسجيل</button>
+                <span id="voiceoverRecTimer" style="display:none;color:#ef4444;font-weight:bold;font-size:13px;">● 0.0s</span>
+            </div>
+            <div class="text-xs text-slate-500 mt-2">
+                🎧 استخدم ميكروفوناً جيداً، وتحدث بوضوح — سيتم التعرف على الكلام ومزامنته تلقائياً
+            </div>
+        </div>
+
+        <!-- ====== إعدادات الملف الصوتي ====== -->
+        <div id="fileSettings" class="hidden bg-slate-900/50 rounded-lg p-3 mb-3">
+            <input type="file" id="voiceoverFileInput" accept="audio/*" class="hidden"
+                   onchange="handleAudioFileSelected(event)">
+
+            <button onclick="pickAudioFile()" class="btn-secondary btn-sm w-full mb-2">
+                📂 اختيار ملف صوتي من الجهاز
+            </button>
+
+            <div id="voiceoverFileInfo" class="hidden bg-slate-800 rounded p-2 mb-2"></div>
+
+            <div class="grid grid-cols-2 gap-2">
+                <button onclick="extractTranscriptFromFile()" class="btn-secondary btn-sm"
+                        id="extractBtn" title="استخراج النص من الصوت تلقائياً">
+                    🎬 استخراج النص
+                </button>
+                <button onclick="clearAudioFile()" class="btn-secondary btn-sm">
+                    🗑️ مسح الملف
+                </button>
+            </div>
+
+            <div class="text-xs text-slate-500 mt-2">
+                💡 يدعم: MP3, WAV, M4A, OGG, WEBM (حتى 100MB)
+            </div>
+        </div>
+
+        <!-- المعاينة -->
+        <div id="voiceoverPreview" class="mb-3"></div>
+
+        <!-- النص المُزامن -->
+        <div class="mb-3">
+            <label class="text-slate-400 text-sm">📊 المقاطع المُزامنة</label>
+            <div id="voiceoverSegments" class="bg-slate-900/50 rounded-lg p-2 mt-1 max-h-40 overflow-y-auto space-y-1">
+                <div style="color:#64748b;font-size:12px;text-align:center;padding:8px;">لا توجد مقاطع بعد</div>
+            </div>
+        </div>
+
+        <!-- النص المباشر (أثناء التسجيل) -->
+        <div class="mb-3">
+            <label class="text-slate-400 text-sm">📝 النص المُكتشف (مباشر)</label>
+            <div id="voiceoverTranscript" class="bg-slate-900/50 rounded-lg p-2 mt-1 min-h-[40px] text-sm text-slate-300" dir="auto"></div>
+        </div>
+
+        <!-- أزرار الحفظ -->
+        <div class="flex justify-end gap-2">
+            <button onclick="closeVoiceoverStudio()" class="btn-secondary btn-sm">إلغاء</button>
+            <button onclick="saveVoiceoverUnified()" class="btn-primary btn-sm">💾 حفظ في المشروع</button>
+        </div>
+    </div>
+</div>
+
+<script>
+// تبديل بين أوضاع الاستوديو الصوتي
+document.querySelectorAll('input[name="voiceoverMode"]').forEach(radio => {
+    radio.addEventListener('change', (e) => {
+        const mode = e.target.value;
+        document.getElementById('ttsSettings').classList.toggle('hidden', mode !== 'tts');
+        document.getElementById('recordSettings').classList.toggle('hidden', mode !== 'record');
+        document.getElementById('fileSettings').classList.toggle('hidden', mode !== 'file');
+
+        // أوقف التسجيل إذا انتقلنا لوضع آخر
+        if (mode !== 'record' && typeof stopVoiceoverRecording === 'function') {
+            stopVoiceoverRecording();
+        }
+        // أوقف TTS إذا انتقلنا لوضع آخر
+        if (mode !== 'tts' && 'speechSynthesis' in window) {
+            speechSynthesis.cancel();
+        }
+    });
+});
+</script>
 {% endblock %}
 
 {% block scripts %}
@@ -285,5 +458,6 @@
 <script src="{{ url_for('static', path='js/timeline-media.js') }}"></script>
 <script src="{{ url_for('static', path='js/timeline-timeline.js') }}"></script>
 <script src="{{ url_for('static', path='js/timeline-playback.js') }}"></script>
+<script src="{{ url_for('static', path='js/voiceover.js') }}"></script>
 <script src="{{ url_for('static', path='js/timeline-init.js') }}"></script>
 {% endblock %}
