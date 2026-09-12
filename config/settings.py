@@ -37,50 +37,41 @@ class Settings(BaseSettings):
     # ============================================
     # SUPABASE - MODERN CONFIGURATION (ONLY)
     # ============================================
-
-    # 1. SUPABASE_URL: رابط مشروع Supabase
     SUPABASE_URL: Optional[str] = Field(
         default=None,
         description="Supabase project URL (e.g., https://project.supabase.co)"
     )
 
-    # 2. SUPABASE_DIRECT_URL: رابط مباشر لقاعدة البيانات
     SUPABASE_DIRECT_URL: Optional[str] = Field(
         default=None,
         description="Direct PostgreSQL connection URL for Supabase"
     )
 
-    # 3. SUPABASE_PUBLIC_KEY: المفتاح العام (Anon/Public Key)
     SUPABASE_PUBLIC_KEY: Optional[SecretStr] = Field(
         default=None,
         description="Supabase public key (starts with sb_publishable_ or eyJh)"
     )
 
-    # 4. SUPABASE_SECRET_KEY: المفتاح السري (Service Role/Secret Key)
     SUPABASE_SECRET_KEY: Optional[SecretStr] = Field(
         default=None,
         description="Supabase secret key for server-side (starts with sb_secret_ or eyJh)"
     )
 
-    # 5. SUPABASE_DB_SCHEMA: مخطط قاعدة البيانات
     SUPABASE_DB_SCHEMA: str = Field(
         default="public",
         description="Supabase database schema"
     )
 
-    # 6. SUPABASE_DB_POOL_SIZE: حجم تجمع الاتصالات
     SUPABASE_DB_POOL_SIZE: int = Field(
         default=10,
         description="Supabase connection pool size"
     )
 
-    # 7. SUPABASE_STORAGE: نوع التخزين
     SUPABASE_STORAGE: str = Field(
         default="s3",
         description="Supabase storage type"
     )
 
-    # 8. SUPABASE_BUCKET: دلاء التخزين
     SUPABASE_BUCKET: str = Field(
         default="videos",
         description="Supabase storage bucket for videos"
@@ -198,6 +189,65 @@ class Settings(BaseSettings):
         )
 
     # ============================================
+    # 🎭 TALKING HEAD — D-ID API
+    # ============================================
+    DID_API_KEY: Optional[SecretStr] = Field(
+        default=None,
+        description=(
+            "D-ID API key for talking head animation. "
+            "Format: 'Basic <base64_encoded_credentials>'. "
+            "Get it from https://studio.d-id.com"
+        )
+    )
+    DID_API_BASE: str = Field(
+        default="https://api.d-id.com",
+        description="D-ID API base URL"
+    )
+    DID_DEFAULT_PRESENTER: str = Field(
+        default="amy-jcwCkr1grs",
+        description="Default D-ID presenter ID (for text-to-video without image)"
+    )
+    DID_MAX_TEXT_CHARS: int = Field(
+        default=1000,
+        description="Max text characters for talking head (D-ID limit)"
+    )
+    DID_DEFAULT_LANGUAGE: str = Field(
+        default="ar",
+        description="Default language for talking head"
+    )
+    DID_POLLING_INTERVAL: int = Field(
+        default=5,
+        description="Polling interval for talking head status (seconds)"
+    )
+    DID_MAX_POLLING_ATTEMPTS: int = Field(
+        default=60,
+        description="Max polling attempts (60 × 5s = 5 minutes)"
+    )
+
+    @property
+    def did_api_key_value(self) -> Optional[str]:
+        """Get the D-ID API key value"""
+        if self.DID_API_KEY:
+            return self.DID_API_KEY.get_secret_value()
+        return None
+
+    @property
+    def did_configured(self) -> bool:
+        """Check if D-ID is properly configured"""
+        key = self.did_api_key_value
+        return bool(
+            key and
+            key not in [
+                None, "",
+                "your-did-api-key",
+                "Basic xxx",
+                "Basic your_key_here",
+            ] and
+            key.startswith("Basic ") and
+            len(key) > 20
+        )
+
+    # ============================================
     # 🎙️ WHISPER — SPEECH TO TEXT (اختياري)
     # ============================================
     WHISPER_ENABLED: bool = Field(
@@ -265,6 +315,7 @@ class Settings(BaseSettings):
     MAX_FILE_SIZE: int = 500 * 1024 * 1024  # 500MB
     MAX_THUMBNAIL_SIZE: int = 5 * 1024 * 1024  # 5MB
     MAX_VOICEOVER_SIZE: int = 100 * 1024 * 1024  # 100MB
+    MAX_TALKING_HEAD_IMAGE_SIZE: int = 10 * 1024 * 1024  # 10MB
     ALLOWED_VIDEO_EXTENSIONS: List[str] = [".mp4", ".mov", ".avi", ".mkv", ".webm", ".flv", ".wmv"]
     ALLOWED_IMAGE_EXTENSIONS: List[str] = [".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"]
     ALLOWED_AUDIO_EXTENSIONS: List[str] = [".mp3", ".wav", ".m4a", ".ogg", ".webm", ".aac", ".flac"]
@@ -355,6 +406,11 @@ class Settings(BaseSettings):
         """Check if using Supabase as database"""
         return self.DATABASE_TYPE.lower() == "supabase"
 
+    @property
+    def voice_features_available(self) -> bool:
+        """Check if any voice features are available"""
+        return self.elevenlabs_configured or self.did_configured
+
     # ============================================
     # VALIDATORS
     # ============================================
@@ -427,6 +483,27 @@ class Settings(BaseSettings):
                 )
         return v
 
+    @field_validator("DID_API_KEY")
+    def validate_did_key(cls, v: Optional[SecretStr]) -> Optional[SecretStr]:
+        if v:
+            value = v.get_secret_value()
+            if value in ["your-did-api-key", "Basic xxx", "Basic your_key_here"]:
+                warnings.warn(
+                    "DID_API_KEY is set to placeholder value! Please update it.",
+                    UserWarning
+                )
+            elif not value.startswith("Basic "):
+                warnings.warn(
+                    "DID_API_KEY should start with 'Basic ' — it may be invalid.",
+                    UserWarning
+                )
+            elif len(value) < 20:
+                warnings.warn(
+                    "DID_API_KEY looks too short — verify it's a valid base64-encoded key.",
+                    UserWarning
+                )
+        return v
+
     @field_validator("POSTGRES_PASSWORD")
     def validate_postgres_password(cls, v: str) -> str:
         if v == "postgres":
@@ -476,7 +553,13 @@ def ensure_dirs() -> None:
         # مجلدات الصوت
         settings.MEDIA_DIR / "voiceovers",
         settings.MEDIA_DIR / "cloned_voices",
+        settings.MEDIA_DIR / "cloned_voices" / "cache",
         settings.MEDIA_DIR / "tts",
+        # 🎭 مجلدات Talking Head
+        settings.MEDIA_DIR / "talking_heads",
+        settings.MEDIA_DIR / "talking_heads" / "images",
+        settings.MEDIA_DIR / "talking_heads" / "videos",
+        settings.MEDIA_DIR / "talking_heads" / "temp",
         # عامة
         BASE_DIR / "data",
         BASE_DIR / "logs",
@@ -525,11 +608,18 @@ def validate_config() -> bool:
         if settings.MAX_FILE_SIZE <= 0:
             raise ValueError("MAX_FILE_SIZE must be greater than 0")
 
-        # تحذير فقط إن لم يكن ElevenLabs مهيأ (لا يمنع التشغيل)
+        # تحذيرات الميزات الاختيارية
         if not settings.elevenlabs_configured:
             warnings.warn(
                 "ELEVENLABS_API_KEY not configured — Voice Cloning feature will be disabled. "
                 "Get a free key from https://elevenlabs.io",
+                UserWarning
+            )
+
+        if not settings.did_configured:
+            warnings.warn(
+                "DID_API_KEY not configured — Talking Head feature will be disabled. "
+                "Get a free key from https://studio.d-id.com",
                 UserWarning
             )
 
@@ -542,6 +632,20 @@ def validate_config() -> bool:
         else:
             warnings.warn(f"Configuration validation warning: {e}")
             return False
+
+
+# ============================================
+# FEATURE AVAILABILITY CHECK
+# ============================================
+def get_available_features() -> dict:
+    """Get a summary of available features based on configuration."""
+    return {
+        "voice_cloning": settings.elevenlabs_configured,
+        "talking_head": settings.did_configured,
+        "transcription": settings.WHISPER_ENABLED,
+        "supabase_storage": settings.supabase_configured,
+        "audio_processing": True,  # ffmpeg assumed available
+    }
 
 
 # Auto-validation on import (only in production)
