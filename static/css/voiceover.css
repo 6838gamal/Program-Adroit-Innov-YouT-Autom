@@ -1,6 +1,6 @@
 /* ============================================================
- * voiceover.css — الاستوديو الصوتي + Voice Cloning + المزامنة
- * ملف شامل لكل ميزات الصوت
+ * voiceover.css — الاستوديو الصوتي + Voice Cloning + Talking Head
+ * ملف شامل لكل ميزات الصوت والفيديو
  * ============================================================ */
 
 
@@ -242,6 +242,17 @@
 
 @keyframes spin {
     to { transform: rotate(360deg); }
+}
+
+@keyframes slide-shimmer {
+    0%   { left: -100%; }
+    100% { left: 100%; }
+}
+
+@keyframes shimmer-btn {
+    0%   { left: -100%; }
+    50%  { left: 100%; }
+    100% { left: 100%; }
 }
 
 
@@ -937,15 +948,22 @@
 /* ============================================================
  * 18. Textarea في Voice Clone
  * ============================================================ */
-#voiceCloneScript {
+#voiceCloneScript,
+#talkingHeadScript {
     font-family: inherit;
     transition: border-color 0.15s, box-shadow 0.15s;
 }
 
-#voiceCloneScript:focus {
+#voiceCloneScript:focus,
+#talkingHeadScript:focus {
     outline: none;
     border-color: #2563eb !important;
     box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.2);
+}
+
+#talkingHeadScript:focus {
+    border-color: #ec4899 !important;
+    box-shadow: 0 0 0 2px rgba(236, 72, 153, 0.2);
 }
 
 
@@ -954,13 +972,15 @@
  * ============================================================ */
 #voiceoverModal,
 #syncProcessModal,
-#voiceCloneModal {
+#voiceCloneModal,
+#talkingHeadModal {
     animation: fadeIn 0.2s ease;
 }
 
 #voiceoverModal > div,
 #syncProcessModal > div,
-#voiceCloneModal > div {
+#voiceCloneModal > div,
+#talkingHeadModal > div {
     animation: fadeInUp 0.25s ease;
 }
 
@@ -971,28 +991,33 @@
 #voiceoverModal::-webkit-scrollbar,
 #syncProcessModal::-webkit-scrollbar,
 #voiceCloneModal::-webkit-scrollbar,
+#talkingHeadModal::-webkit-scrollbar,
 #voiceoverModal > div::-webkit-scrollbar,
 #syncProcessModal > div::-webkit-scrollbar,
-#voiceCloneModal > div::-webkit-scrollbar {
+#voiceCloneModal > div::-webkit-scrollbar,
+#talkingHeadModal > div::-webkit-scrollbar {
     width: 8px;
 }
 
 #voiceoverModal::-webkit-scrollbar-track,
 #syncProcessModal::-webkit-scrollbar-track,
-#voiceCloneModal::-webkit-scrollbar-track {
+#voiceCloneModal::-webkit-scrollbar-track,
+#talkingHeadModal::-webkit-scrollbar-track {
     background: rgba(15, 23, 42, 0.3);
 }
 
 #voiceoverModal::-webkit-scrollbar-thumb,
 #syncProcessModal::-webkit-scrollbar-thumb,
-#voiceCloneModal::-webkit-scrollbar-thumb {
+#voiceCloneModal::-webkit-scrollbar-thumb,
+#talkingHeadModal::-webkit-scrollbar-thumb {
     background: #334155;
     border-radius: 4px;
 }
 
 #voiceoverModal::-webkit-scrollbar-thumb:hover,
 #syncProcessModal::-webkit-scrollbar-thumb:hover,
-#voiceCloneModal::-webkit-scrollbar-thumb:hover {
+#voiceCloneModal::-webkit-scrollbar-thumb:hover,
+#talkingHeadModal::-webkit-scrollbar-thumb:hover {
     background: #475569;
 }
 
@@ -1039,6 +1064,17 @@
     opacity: 0.9;
     pointer-events: none;
     filter: drop-shadow(0 0 4px rgba(124, 58, 237, 0.8));
+}
+
+.clip-block[data-source="talking_head"]::after {
+    content: '🎭';
+    position: absolute;
+    top: 2px;
+    right: 4px;
+    font-size: 9px;
+    opacity: 0.9;
+    pointer-events: none;
+    filter: drop-shadow(0 0 4px rgba(236, 72, 153, 0.8));
 }
 
 .clip-block.has-script::before {
@@ -1099,11 +1135,6 @@
     animation: slide-shimmer 1.5s infinite;
 }
 
-@keyframes slide-shimmer {
-    0%   { left: -100%; }
-    100% { left: 100%; }
-}
-
 
 /* ============================================================
  * 24. زر التوليد الرئيسي
@@ -1147,15 +1178,228 @@
     animation: shimmer-btn 2.5s infinite;
 }
 
-@keyframes shimmer-btn {
-    0%   { left: -100%; }
-    50%  { left: 100%; }
-    100% { left: 100%; }
+
+/* ============================================================
+ * 25. 🎭 Talking Head — المكونات
+ * ============================================================ */
+
+/* صورة الشخص */
+.talking-head-image-container {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px;
+    background: rgba(15, 23, 42, 0.6);
+    border: 1px solid #334155;
+    border-radius: 8px;
+    animation: fadeInUp 0.3s ease;
+}
+
+.talking-head-img {
+    width: 80px;
+    height: 80px;
+    border-radius: 50%;
+    object-fit: cover;
+    border: 3px solid #7c3aed;
+    box-shadow: 0 4px 12px rgba(124, 58, 237, 0.4);
+    transition: all 0.2s;
+}
+
+.talking-head-image-container:hover .talking-head-img {
+    border-color: #ec4899;
+    box-shadow: 0 4px 20px rgba(236, 72, 153, 0.5);
+}
+
+.talking-head-image-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.talking-head-image-name {
+    color: #f1f5f9;
+    font-size: 13px;
+    font-weight: 600;
+    margin-bottom: 2px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.talking-head-image-meta {
+    color: #64748b;
+    font-size: 11px;
+    font-family: monospace;
+}
+
+.talking-head-image-clear {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: rgba(239, 68, 68, 0.2);
+    border: 1px solid rgba(239, 68, 68, 0.4);
+    color: #f87171;
+    cursor: pointer;
+    font-size: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.15s;
+}
+
+.talking-head-image-clear:hover {
+    background: rgba(239, 68, 68, 0.4);
+    transform: scale(1.1);
+}
+
+
+/* النتيجة */
+.talking-head-result-container {
+    background: rgba(15, 23, 42, 0.6);
+    border: 1px solid rgba(124, 58, 237, 0.4);
+    border-radius: 8px;
+    padding: 12px;
+    animation: fadeInUp 0.4s ease;
+    box-shadow: 0 4px 20px rgba(124, 58, 237, 0.15);
+}
+
+.talking-head-video {
+    width: 100%;
+    border-radius: 6px;
+    background: #000;
+    max-height: 400px;
+    object-fit: contain;
+}
+
+.talking-head-result-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 10px;
+}
+
+
+/* زر التوليد */
+#btnGenerateTalkingHead {
+    background: linear-gradient(135deg, #ec4899, #7c3aed);
+    border: none;
+    padding: 12px;
+    font-size: 14px;
+    font-weight: 600;
+    color: #fff;
+    transition: all 0.25s;
+    position: relative;
+    overflow: hidden;
+}
+
+#btnGenerateTalkingHead:not(:disabled):hover {
+    transform: translateY(-1px);
+    box-shadow: 0 8px 24px rgba(236, 72, 153, 0.4);
+}
+
+#btnGenerateTalkingHead:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    background: linear-gradient(135deg, #475569, #334155);
+}
+
+#btnGenerateTalkingHead:not(:disabled)::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(
+        90deg,
+        transparent,
+        rgba(255, 255, 255, 0.2),
+        transparent
+    );
+    animation: shimmer-btn 2.5s infinite;
+}
+
+
+/* زر فتح Talking Head */
+#openTalkingHeadBtnContainer button {
+    background: linear-gradient(135deg, #ec4899, #7c3aed);
+    border: none;
+    padding: 10px 16px;
+    font-weight: 600;
+    transition: all 0.25s;
+    color: #fff;
+}
+
+#openTalkingHeadBtnContainer button:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 6px 20px rgba(236, 72, 153, 0.4);
+}
+
+
+/* شارة "Processing" في Talking Head */
+.talking-head-processing {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 14px;
+    background: rgba(236, 72, 153, 0.15);
+    border: 1px solid rgba(236, 72, 153, 0.3);
+    border-radius: 8px;
+    color: #f9a8d4;
+    font-size: 12px;
+}
+
+.talking-head-processing::before {
+    content: '';
+    width: 12px;
+    height: 12px;
+    border: 2px solid rgba(236, 72, 153, 0.3);
+    border-top-color: #ec4899;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+
+
+/* شارة نجاح Talking Head */
+.talking-head-success {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 14px;
+    background: rgba(52, 211, 153, 0.15);
+    border: 1px solid rgba(52, 211, 153, 0.3);
+    border-radius: 8px;
+    color: #34d399;
+    font-size: 12px;
+}
+
+.talking-head-success::before {
+    content: '✅';
+}
+
+
+/* شارة خطأ Talking Head */
+.talking-head-error {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 14px;
+    background: rgba(239, 68, 68, 0.15);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    border-radius: 8px;
+    color: #f87171;
+    font-size: 12px;
+}
+
+.talking-head-error::before {
+    content: '❌';
 }
 
 
 /* ============================================================
- * 25. استجابة الجوال
+ * 26. استجابة الجوال
  * ============================================================ */
 @media (max-width: 768px) {
     .script-overlay {
@@ -1189,6 +1433,13 @@
         height: 26px;
         font-size: 11px;
     }
+    .talking-head-img {
+        width: 60px;
+        height: 60px;
+    }
+    .talking-head-image-name {
+        font-size: 12px;
+    }
 }
 
 @media (max-width: 640px) {
@@ -1213,6 +1464,12 @@
     }
     .saved-voice-actions {
         opacity: 1;
+    }
+    .talking-head-result-actions {
+        flex-direction: column;
+    }
+    .talking-head-result-actions button {
+        width: 100%;
     }
 }
 
@@ -1243,33 +1500,42 @@
         height: 20px;
         font-size: 12px;
     }
+    .talking-head-img {
+        width: 50px;
+        height: 50px;
+    }
+    .talking-head-image-name {
+        font-size: 11px;
+    }
+    .talking-head-image-meta {
+        font-size: 10px;
+    }
 }
 
 
 /* ============================================================
- * 26. تحسينات الوصول (Accessibility)
+ * 27. تحسينات الوصول (Accessibility)
  * ============================================================ */
 @media (prefers-reduced-motion: reduce) {
     .script-overlay,
     .saved-voice-item,
     .voice-clone-tip,
-    #btnGenerateWithVoice {
+    #btnGenerateWithVoice,
+    #btnGenerateTalkingHead,
+    .talking-head-result-container,
+    .talking-head-image-container {
         transition: none;
         animation: none;
     }
     #btnGenerateWithVoice::after,
+    #btnGenerateTalkingHead::after,
     .voice-cloning-active::before {
         animation: none;
         display: none;
     }
-}
-
-
-/* ============================================================
- * 27. Dark mode ملائم
- * ============================================================ */
-@media (prefers-color-scheme: light) {
-    /* تبقى بألوان داكنة لأن التطبيق يستخدم theme داكن */
+    .talking-head-processing::before {
+        animation: none;
+    }
 }
 
 
@@ -1280,7 +1546,8 @@
     .script-overlay,
     #voiceoverModal,
     #syncProcessModal,
-    #voiceCloneModal {
+    #voiceCloneModal,
+    #talkingHeadModal {
         display: none !important;
     }
 }
