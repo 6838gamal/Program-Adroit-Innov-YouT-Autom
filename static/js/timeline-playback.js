@@ -1,6 +1,11 @@
 // ============================================================
-//  timeline-playback.js — التشغيل + الصوت + التسجيل
+//  timeline-playback.js — التشغيل + الصوت + التسجيل + عرض الفيديو
 // ============================================================
+
+// ============================================================
+//  🎬 VIDEO PREVIEW STATE
+// ============================================================
+let _currentVideoPreviewId = null;
 
 // ============================================================
 //  PLAYBACK CONTROLS
@@ -34,6 +39,9 @@ function startPlay() {
         audioPlayer.play().catch(() => {});
     }
 
+    // ✅ ابدأ تشغيل الفيديو النشط في المعاينة
+    syncVideoPreview(currentTime);
+
     Object.values(videoElements).forEach(v => {
         if (!v.paused) return;
         v.play().catch(() => {});
@@ -56,12 +64,16 @@ function startPlay() {
                     v.currentTime = 0;
                     v.play().catch(() => {});
                 });
+                // ✅ أعد ضبط فيديو المعاينة عند التكرار
+                _currentVideoPreviewId = null;
+                syncVideoPreview(currentTime);
             } else {
                 pausePlay();
                 return;
             }
         }
         updatePlayhead();
+        syncVideoPreview(currentTime);   // ✅ جديد
         renderPreview(currentTime);
     }, intervalMs);
 }
@@ -73,6 +85,10 @@ function pausePlay() {
 
     if (audioPlayer) audioPlayer.pause();
     Object.values(videoElements).forEach(v => { try { v.pause(); } catch(e) {} });
+
+    // ✅ أوقف فيديو المعاينة
+    const previewVideo = document.getElementById('previewVideo');
+    if (previewVideo) previewVideo.pause();
 
     audioNodes.forEach(node => {
         try { node.source.stop(); } catch(e) {}
@@ -94,6 +110,10 @@ function changeSpeed() {
     playbackSpeed = parseFloat(document.getElementById('speedSelect').value);
     if (audioPlayer) audioPlayer.playbackRate = playbackSpeed;
     Object.values(videoElements).forEach(v => { v.playbackRate = playbackSpeed; });
+
+    // ✅ طبّق السرعة على فيديو المعاينة
+    const previewVideo = document.getElementById('previewVideo');
+    if (previewVideo) previewVideo.playbackRate = playbackSpeed;
 }
 
 function toggleLoop() {
@@ -109,6 +129,10 @@ function toggleMute() {
     audioNodes.forEach(node => {
         if (node.gain) node.gain.gain.value = isMuted ? 0 : 0.8;
     });
+
+    // ✅ طبّق الكتم على فيديو المعاينة
+    const previewVideo = document.getElementById('previewVideo');
+    if (previewVideo) previewVideo.muted = isMuted;
 }
 
 function toggleFullscreen() {
@@ -137,6 +161,7 @@ function seekTo(time) {
         setTimeout(() => startPlay(), 50);
     } else {
         updatePlayhead();
+        syncVideoPreview(currentTime);   // ✅ جديد
         renderPreview(currentTime);
     }
 
@@ -151,6 +176,85 @@ function seekTo(time) {
         if (activeAudio) {
             audioPlayer.currentTime = currentTime - activeAudio.start;
         }
+    }
+}
+
+// ============================================================
+//  🎬 SYNC VIDEO PREVIEW — عرض الفيديو في المعاينة
+// ============================================================
+function syncVideoPreview(time) {
+    const videoEl = document.getElementById('previewVideo');
+    if (!videoEl) return;
+    if (!projectData || !projectData.clips) return;
+
+    // ابحث عن clip فيديو نشط
+    const activeClip = projectData.clips.find(c => {
+        if (c.type !== 'video') return false;
+        const layer = projectData.layers[c.layer];
+        if (layer && !layer.visible) return false;
+
+        const start = c.start || 0;
+        const end = start + (c.duration || 3);
+        return time >= start && time < end;
+    });
+
+    // ── لا يوجد فيديو نشط ──
+    if (!activeClip) {
+        if (_currentVideoPreviewId !== null) {
+            videoEl.style.display = 'none';
+            videoEl.pause();
+            videoEl.removeAttribute('src');
+            videoEl.load();
+            _currentVideoPreviewId = null;
+
+            const canvas = document.getElementById('previewCanvas');
+            if (canvas) canvas.style.opacity = '1';
+
+            // أعد رسم Canvas
+            if (typeof renderPreview === 'function') renderPreview(currentTime);
+        }
+        return;
+    }
+
+    // ── فيديو جديد ──
+    if (_currentVideoPreviewId !== activeClip.id) {
+        console.log('🎬 Video preview →', activeClip.title || activeClip.id);
+
+        _currentVideoPreviewId = activeClip.id;
+        videoEl.src = activeClip.content || activeClip.url;
+        videoEl.style.display = 'block';
+        videoEl.muted = isMuted;
+        videoEl.playbackRate = playbackSpeed;
+        videoEl.load();
+
+        const canvas = document.getElementById('previewCanvas');
+        if (canvas) canvas.style.opacity = '0';
+
+        const localStart = time - (activeClip.start || 0);
+        videoEl.onloadedmetadata = () => {
+            try {
+                videoEl.currentTime = Math.max(0, Math.min(localStart, videoEl.duration || 9999));
+            } catch (e) {}
+            if (isPlaying) videoEl.play().catch(() => {});
+        };
+        return;
+    }
+
+    // ── نفس الفيديو — زامن الوقت ──
+    const localTime = time - (activeClip.start || 0);
+    const videoDuration = videoEl.duration || activeClip.duration || 3;
+
+    if (videoEl.readyState >= 1 && Math.abs(videoEl.currentTime - localTime) > 0.3) {
+        try {
+            videoEl.currentTime = Math.max(0, Math.min(localTime, videoDuration));
+        } catch (e) {}
+    }
+
+    // زامن التشغيل
+    if (isPlaying && videoEl.paused) {
+        videoEl.play().catch(() => {});
+    } else if (!isPlaying && !videoEl.paused) {
+        videoEl.pause();
     }
 }
 
@@ -392,6 +496,7 @@ async function toggleRecording() {
 
             currentTime = recordingStartTime + duration;
             updatePlayhead();
+            syncVideoPreview(currentTime);   // ✅ جديد
             renderPreview(currentTime);
         };
 
