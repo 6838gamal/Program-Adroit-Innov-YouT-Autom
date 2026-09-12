@@ -4,7 +4,6 @@
 
 {% block head %}
 <style>
-    /* ====== المتغيرات العامة ====== */
     :root {
         --track-height: 52px;
         --ruler-height: 32px;
@@ -32,7 +31,6 @@
         border: 1px solid var(--border-color);
     }
 
-    /* ====== منطقة المعاينة ====== */
     .preview-area {
         flex: 1;
         background: #000;
@@ -54,7 +52,6 @@
         object-fit: contain;
     }
 
-    /* ====== شريط أدوات المعاينة العلوي ====== */
     .preview-toolbar {
         position: absolute;
         top: 12px;
@@ -85,7 +82,6 @@
         color: white;
     }
 
-    /* ====== معلومات التشغيل ====== */
     .playback-info {
         position: absolute;
         bottom: 60px;
@@ -109,7 +105,6 @@
         font-size: 11px;
     }
 
-    /* ====== شريط التحكم السفلي ====== */
     .controls-bar {
         background: var(--bg-panel);
         border-top: 1px solid var(--border-color);
@@ -201,7 +196,6 @@
     }
     .controls-bar .speed-control select option { background: var(--bg-dark); }
 
-    /* ====== شريط الأدوات ====== */
     .toolbar {
         display: flex;
         flex-wrap: wrap;
@@ -245,7 +239,6 @@
     .tool-btn.active { background: var(--primary); color: white; border-color: var(--primary); }
     .tool-btn.danger:hover { background: rgba(239,68,68,0.2); border-color: #ef4444; color: #ef4444; }
 
-    /* ====== الطبقات ====== */
     .layers-panel {
         display: flex;
         flex-direction: column;
@@ -372,7 +365,6 @@
     }
     .layer-item .layer-drag-handle:hover { opacity: 0.8; }
 
-    /* ====== التايم لاين ====== */
     .timeline-area {
         flex: 1;
         overflow: hidden;
@@ -504,7 +496,6 @@
         min-height: var(--track-height);
     }
 
-    /* ====== Clip blocks ====== */
     .clip-block {
         position: absolute;
         top: 4px;
@@ -604,7 +595,6 @@
     .clip-block:hover .clip-delete-btn { opacity: 1; }
     .clip-block .clip-delete-btn:hover { background: #ef4444; }
 
-    /* شريط التسجيلات المرتبطة داخل الكليب */
     .clip-block .clip-audio-track {
         position: absolute;
         bottom: 0;
@@ -625,14 +615,12 @@
         text-shadow: 0 0 3px black;
     }
 
-    /* ====== ألوان الكليبات ====== */
     .clip-type-video { background: rgba(37,99,235,0.3); border-color: rgba(37,99,235,0.5); color: #60a5fa; }
     .clip-type-audio { background: rgba(5,150,105,0.2); border-color: rgba(5,150,105,0.3); color: #34d399; }
     .clip-type-image { background: rgba(245,158,11,0.3); border-color: rgba(245,158,11,0.5); color: #fbbf24; }
     .clip-type-text { background: rgba(217,119,6,0.3); border-color: rgba(217,119,6,0.5); color: #f59e0b; }
     .clip-type-music { background: rgba(124,58,237,0.3); border-color: rgba(124,58,237,0.5); color: #a78bfa; }
 
-    /* ====== المؤشر المرن (يدعم الفأرة + اللمس) ====== */
     .playhead {
         position: absolute;
         top: 0;
@@ -698,7 +686,6 @@
     }
     .playhead.locked::before { cursor: not-allowed; }
 
-    /* إبراز منطقة التسجيل الصالحة */
     .record-zone-highlight {
         position: absolute;
         top: 0;
@@ -815,7 +802,6 @@
         50% { opacity: 0.5; }
     }
 
-    /* ====== معرض الوسائط ====== */
     .media-gallery {
         display: flex;
         flex-wrap: wrap;
@@ -915,7 +901,6 @@
 
     #audioPlayer { display: none; }
 
-    /* ====== زر تحميل الرندر ====== */
     .render-loading {
         display: none;
         align-items: center;
@@ -950,7 +935,6 @@
         transition: width 0.3s;
     }
 
-    /* ====== وضع ملء الشاشة ====== */
     .preview-area.fullscreen {
         position: fixed;
         top: 0;
@@ -967,7 +951,6 @@
         height: 100% !important;
     }
 
-    /* ====== حالة المزامنة ====== */
     .sync-status {
         display: inline-flex;
         align-items: center;
@@ -1015,7 +998,6 @@
         font-size: 14px;
     }
 
-    /* ====== مؤشر التسجيل النشط ====== */
     .recording-indicator {
         position: absolute;
         top: 12px;
@@ -1046,7 +1028,6 @@
         50% { opacity: 0.5; transform: scale(0.8); }
     }
 
-    /* ====== منع تحديد النص على عناصر التايم لاين ====== */
     .clip-block,
     .playhead,
     .ruler-marks,
@@ -1150,7 +1131,7 @@
 
         <div class="preview-toolbar">
             <button class="tool-btn" onclick="toggleFullscreen()" title="شاشة كاملة">⛶</button>
-            <button class="record-btn" id="recordBtn" onclick="toggleRecording()" title="تسجيل الصوت من موضع المؤشر (مرتبط بالشريحة النشطة)">🎙️</button>
+            <button class="record-btn" id="recordBtn" onclick="toggleRecording()" title="تسجيل الصوت من موضع المؤشر">🎙️</button>
         </div>
 
         <div class="recording-indicator" id="recordingIndicator">
@@ -1379,6 +1360,8 @@ let recordingStream = null;
 let recordingWallStart = 0;
 let recordingBoundClipId = null;
 let recordingMaxEnd = 0;
+let recordingLastEndCheck = 0;    // ✅ آخر فحص للنهاية المتصلة
+let recordingInitialMaxEnd = 0;   // ✅ النهاية الأولية
 let clipIdCounter = 0;
 let currentClipAtTime = null;
 let renderPollInterval = null;
@@ -1393,7 +1376,6 @@ let isCanvasReady = false;
 let imageCache = {};
 let videoElements = {};
 
-// ====== AUDIO ENGINE ======
 let audioContext = null;
 let audioBuffers = {};
 let audioNodes = [];
@@ -1687,7 +1669,6 @@ function renderPreview(time) {
     }
 }
 
-// ====== دوال الرسم ======
 function drawImageOnly(ctx, src, x, y, w, h) {
     if (!imageCache[src]) {
         const img = new Image();
@@ -1851,7 +1832,7 @@ function drawTextOnly(ctx, text, x, y, w, h) {
 }
 
 // ============================================================
-//  RECORDING BOUNDS
+//  RECORDING BOUNDS — يحسب النهاية المتصلة
 // ============================================================
 function getActiveClipAt(time) {
     const activeClips = projectData.clips.filter(c => {
@@ -1866,16 +1847,79 @@ function getActiveClipAt(time) {
     return activeClips[0];
 }
 
+// ✅ النهاية المتصلة: تمتد عبر الشرائح المتلاصقة بدون فجوة
+function getContinuousEndFrom(time) {
+    /**
+     * يجد نهاية آخر شريحة متصلة (بدون فجوة > 0.05ث) ابتداءً من time.
+     * 
+     * مثال:
+     *   شرائح: [0→3] [3→6] [6→9]
+     *   time=2.5 → يُرجع 9  ✅ (الشرائح متصلة)
+     *   
+     *   شرائح: [0→3] [5→8]
+     *   time=2.5 → يُرجع 3  ✅ (فجوة من 3 إلى 5)
+     */
+    const TOLERANCE = 0.05;
+    let cursor = time;
+    let changed = true;
+    let safetyCounter = 0;
+    const maxIterations = 500;
+
+    const relevantClips = projectData.clips.filter(c => {
+        const layer = projectData.layers[c.layer];
+        if (!layer || !layer.visible) return false;
+        if (c.type === 'audio') return false;
+        return true;
+    });
+
+    while (changed && safetyCounter < maxIterations) {
+        changed = false;
+        safetyCounter++;
+
+        for (const clip of relevantClips) {
+            const clipStart = clip.start;
+            const clipEnd = clip.start + clip.duration;
+
+            // إذا كانت الشريحة تبدأ عند أو قبل cursor (مع تسامح)
+            // وتنتهي بعد cursor → مدّد cursor
+            if (clipStart <= cursor + TOLERANCE && clipEnd > cursor + TOLERANCE) {
+                cursor = clipEnd;
+                changed = true;
+            }
+        }
+    }
+
+    return cursor;
+}
+
 function getRecordingBounds(startTime) {
     const activeClip = getActiveClipAt(startTime);
     if (!activeClip) return null;
 
+    // ✅ استخدم النهاية المتصلة بدل نهاية المقطع الواحد
+    const continuousEnd = getContinuousEndFrom(startTime);
+
     return {
         start: startTime,
-        end: activeClip.start + activeClip.duration,
+        end: continuousEnd,
         clip: activeClip,
-        maxDuration: (activeClip.start + activeClip.duration) - startTime
+        maxDuration: continuousEnd - startTime
     };
+}
+
+function countChainedClips(startTime, endTime) {
+    /**
+     * يحسب عدد الشرائح المتصلة بين startTime و endTime.
+     */
+    return projectData.clips.filter(c => {
+        const layer = projectData.layers[c.layer];
+        if (!layer || !layer.visible) return false;
+        if (c.type === 'audio') return false;
+        const clipEnd = c.start + c.duration;
+        const clipStart = c.start;
+        // شريحة ضمن السلسلة: تتقاطع مع النطاق
+        return clipEnd > startTime - 0.05 && clipStart < endTime + 0.05;
+    }).length;
 }
 
 function updateRecordZoneHighlight() {
@@ -1883,7 +1927,7 @@ function updateRecordZoneHighlight() {
     if (!highlight) return;
 
     const bounds = getRecordingBounds(currentTime);
-    if (!bounds) {
+    if (!bounds || bounds.maxDuration < 0.1) {
         highlight.classList.remove('active');
         return;
     }
@@ -1923,20 +1967,16 @@ function updatePlayheadLock() {
             recordBtn.title = 'لا توجد شريحة نشطة عند المؤشر';
         } else {
             recordBtn.disabled = false;
-            recordBtn.title = `تسجيل من ${formatTime(currentTime)} (متاح ${bounds.maxDuration.toFixed(1)}ث)`;
+            const chainCount = countChainedClips(bounds.start, bounds.end);
+            recordBtn.title = `تسجيل من ${formatTime(currentTime)} (متاح ${bounds.maxDuration.toFixed(1)}ث عبر ${chainCount} شريحة متصلة)`;
         }
     }
 }
 
 // ============================================================
-//  FIND NEXT INSERT POINT — إيجاد نقطة إدراج دقيقة
+//  FIND NEXT INSERT POINT
 // ============================================================
 function findNextInsertPoint(layerIndex, preferredStart = null) {
-    /**
-     * يجد أول نقطة فارغة (غير متداخلة) في الطبقة.
-     * - إذا كانت preferredStart داخل فجوة → استخدمها
-     * - وإلا ابحث عن أقرب نهاية شريحة بعدها
-     */
     const layerClips = projectData.clips
         .filter(c => c.layer === layerIndex)
         .sort((a, b) => a.start - b.start);
@@ -1950,12 +1990,10 @@ function findNextInsertPoint(layerIndex, preferredStart = null) {
     for (const clip of layerClips) {
         const clipEnd = clip.start + clip.duration;
 
-        // إذا كنا قبل بداية هذه الشريحة → لا مشكلة
         if (start + 0.01 < clip.start) {
             return start;
         }
 
-        // إذا كنا داخل الشريحة أو عندها → انقل بعد نهايتها
         if (start < clipEnd - 0.001) {
             start = clipEnd;
         }
@@ -1970,9 +2008,6 @@ function findExactEndOfLayer(layerIndex) {
     return Math.max(...layerClips.map(c => c.start + c.duration));
 }
 
-// ============================================================
-//  NORMALIZE LAYER — إزالة الفراغات (اختياري)
-// ============================================================
 function normalizeLayer(layerIndex) {
     const layerClips = projectData.clips
         .filter(c => c.layer === layerIndex)
@@ -2169,14 +2204,10 @@ function renderMediaGallery() {
     });
 }
 
-// ============================================================
-//  ADD MEDIA TO TIMELINE — مع نقل المؤشر تلقائياً
-// ============================================================
 function addMediaToTimeline(index) {
     const file = projectData.mediaFiles[index];
     if (!file) return;
 
-    // ✅ احسب نقطة البداية بدقة (بدون فراغات أو تداخل)
     const startTime = findNextInsertPoint(selectedLayerIndex, currentTime);
 
     const type = file.type.split('/')[0];
@@ -2209,12 +2240,10 @@ function addMediaToTimeline(index) {
     renderMediaGallery();
     updateStatus();
 
-    // ✅ انقل المؤشر إلى نهاية الشريحة الجديدة بالضبط
     currentTime = clip.start + clip.duration;
     updatePlayhead();
     renderPreview(currentTime);
 
-    // ✅ مرّر تلقائياً لرؤية المؤشر
     const scroll = document.getElementById('timelineContainer');
     if (scroll) {
         const pxPerSec = projectData.cellWidth / 2;
@@ -2665,9 +2694,6 @@ function selectClip(id) {
     renderTimeline();
 }
 
-// ============================================================
-//  ADD CLIP — مع نقل المؤشر تلقائياً
-// ============================================================
 function addClip(type) {
     if (type === 'image' || type === 'video' || type === 'audio') {
         const input = document.createElement('input');
@@ -2686,7 +2712,6 @@ function addClip(type) {
         const text = prompt('نص المقطع:');
         if (!text) return;
 
-        // ✅ نقطة البداية بدقة
         const startTime = findNextInsertPoint(selectedLayerIndex, currentTime);
 
         const clip = {
@@ -2706,12 +2731,10 @@ function addClip(type) {
         renderTimeline();
         updateStatus();
 
-        // ✅ انقل المؤشر لنهاية الشريحة
         currentTime = clip.start + clip.duration;
         updatePlayhead();
         renderPreview(currentTime);
 
-        // مرّر تلقائياً
         const scroll = document.getElementById('timelineContainer');
         if (scroll) {
             const pxPerSec = projectData.cellWidth / 2;
@@ -3137,7 +3160,6 @@ function setupPlayheadDragging() {
         }
     });
 
-    // ===== الرولر =====
     const rulerMarks = document.getElementById('rulerMarks');
     if (rulerMarks) {
         rulerMarks.style.cursor = 'ew-resize';
@@ -3204,7 +3226,6 @@ function setupPlayheadDragging() {
         }
     }
 
-    // ===== خلفية المسارات =====
     document.addEventListener('pointerdown', (e) => {
         if (isRecording) return;
         if (e.target.classList.contains('track-body')) {
@@ -3338,7 +3359,7 @@ function setupTouchClipDragging() {
 }
 
 // ============================================================
-//  RECORDING
+//  RECORDING — يستمر عبر الشرائح المتصلة
 // ============================================================
 async function toggleRecording() {
     const btn = document.getElementById('recordBtn');
@@ -3387,6 +3408,8 @@ async function toggleRecording() {
         recordingStartTime = currentTime;
         recordingBoundClipId = bounds.clip.id;
         recordingMaxEnd = bounds.end;
+        recordingInitialMaxEnd = bounds.end;  // ✅ احتفظ بالقيمة الأولية
+        recordingLastEndCheck = 0;            // ✅ أعد تعيين آخر فحص
 
         if (isPlaying) pausePlay();
 
@@ -3429,6 +3452,7 @@ async function toggleRecording() {
                 url: supabaseUrl,
             });
 
+            // ✅ اربط التسجيل بالمقطع الذي كان نشطاً في البداية
             const parentClip = projectData.clips.find(c => c.id === recordingBoundClipId);
             if (parentClip) {
                 if (!parentClip.metadata) parentClip.metadata = {};
@@ -3468,13 +3492,29 @@ async function toggleRecording() {
         document.getElementById('playhead').classList.add('recording');
         updatePlayheadLock();
 
-        showToast(`🔴 التسجيل من ${formatTime(recordingStartTime)} (متاح ${bounds.maxDuration.toFixed(1)}ث)`, 'info');
+        const chainCount = countChainedClips(bounds.start, bounds.end);
+        showToast(`🔴 التسجيل من ${formatTime(recordingStartTime)} — متاح ${bounds.maxDuration.toFixed(1)}ث عبر ${chainCount} شريحة متصلة`, 'info');
 
+        // ============================================================
+        //  حلقة التسجيل — مع فحص ديناميكي للنهاية المتصلة
+        // ============================================================
         recordingTimerInterval = setInterval(() => {
             if (!isRecording) return;
             const elapsed = (performance.now() - recordingWallStart) / 1000;
             let newTime = recordingStartTime + elapsed;
 
+            // ✅ فحص ديناميكي كل 500ms: هل هناك شرائح متصلة جديدة تمتد أبعد؟
+            if (elapsed - recordingLastEndCheck > 0.5) {
+                recordingLastEndCheck = elapsed;
+                const newEnd = getContinuousEndFrom(newTime);
+                if (newEnd > recordingMaxEnd + 0.05) {
+                    const oldEnd = recordingMaxEnd;
+                    recordingMaxEnd = newEnd;
+                    console.log(`🔊 تمديد التسجيل: ${oldEnd.toFixed(1)} → ${newEnd.toFixed(1)}`);
+                }
+            }
+
+            // ✅ توقف فقط عند النهاية الفعلية
             if (newTime >= recordingMaxEnd) {
                 newTime = recordingMaxEnd;
                 currentTime = newTime;
@@ -3493,7 +3533,7 @@ async function toggleRecording() {
                 indicator.classList.remove('active');
                 document.getElementById('playhead').classList.remove('recording');
                 updatePlayheadLock();
-                showToast('⏹️ توقف التسجيل تلقائياً عند نهاية المقطع', 'info');
+                showToast('⏹️ توقف التسجيل عند نهاية الشرائح المتصلة', 'info');
                 return;
             }
 
@@ -3513,7 +3553,8 @@ async function toggleRecording() {
                 slider.value = Math.min(100, (currentTime / projectData.totalDuration) * 100);
             }
 
-            const recordProgress = Math.min(100, (elapsed / bounds.maxDuration) * 100);
+            const totalAvailable = recordingMaxEnd - recordingStartTime;
+            const recordProgress = Math.min(100, (elapsed / totalAvailable) * 100);
             indicator.querySelector('span:last-child').textContent =
                 `🔴 التسجيل من ${formatTime(recordingStartTime)} (${recordProgress.toFixed(0)}%)`;
         }, 50);
@@ -4097,6 +4138,6 @@ window.addEventListener('beforeunload', function() {
     });
 });
 
-console.log('🎬 المحرر جاهز - مؤشر مرن + تسجيل مرتبط + نقل تلقائي بعد الإضافة ✅');
+console.log('🎬 المحرر جاهز - تسجيل ممتد عبر الشرائح المتصلة ✅');
 </script>
 {% endblock %}
