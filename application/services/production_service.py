@@ -3,7 +3,8 @@
 ✅ دعم كامل لمصادر الصوت:
    1. clip.type == "audio"     → clip.url (TTS / Edge TTS / Cloned / Recording)
    2. clip.metadata.audioRecordings[] → تسجيلات مرفقة بـ image/video clip
-   3. لا TTS تلقائي — الصوت فقط من مصادر المُستخدم.
+   3. ربط دقيق (audio يُشغَّل مرة واحدة فقط، مع scene التي يبدأ فيها)
+   4. لا TTS تلقائي — الصوت فقط من مصادر المُستخدم.
 """
 import asyncio
 import inspect
@@ -118,10 +119,12 @@ class ProductionService:
             if not isinstance(existing_data, dict):
                 existing_data = {}
 
-            # ✅ احتفظ بـ cloned_voices المحفوظة (لا تحذفها)
-            preserved_keys = ["cloned_voices", "voiceovers", "rendered_at",
-                              "video_url", "video_path", "thumbnail",
-                              "thumbnail_path", "output_local_path"]
+            # ✅ احتفظ بالبيانات المهمة (لا تحذفها)
+            preserved_keys = [
+                "cloned_voices", "voiceovers", "rendered_at",
+                "video_url", "video_path", "thumbnail",
+                "thumbnail_path", "output_local_path",
+            ]
 
             preserved = {
                 k: existing_data.get(k)
@@ -137,11 +140,13 @@ class ProductionService:
                 "updated_at": datetime.utcnow().isoformat(),
             })
 
-            # أعد القيم المحفوظة
+            # أعد القيم المحفوظة (باستثناء نتائج الرندر السابقة)
+            render_output_keys = [
+                "rendered_at", "video_url", "video_path",
+                "thumbnail", "thumbnail_path", "output_local_path",
+            ]
             for k, v in preserved.items():
-                if v is not None and k not in ["rendered_at", "video_url", "video_path",
-                                                "thumbnail", "thumbnail_path",
-                                                "output_local_path"]:
+                if v is not None and k not in render_output_keys:
                     existing_data[k] = v
 
             if hasattr(project, "update_data"):
@@ -557,10 +562,13 @@ class ProductionService:
 
                 # ── إذا كان audio-only scene (لا صورة) → صورة سوداء ──────
                 if not used_real_media and scene_type == "text" and actual_audio:
-                    # أنشئ صورة سوداء بسيطة
                     try:
                         from PIL import Image
-                        img = Image.new('RGB', (rs.resolution_width, rs.resolution_height), color='black')
+                        img = Image.new(
+                            'RGB',
+                            (rs.resolution_width, rs.resolution_height),
+                            color='black',
+                        )
                         img.save(image_path, 'JPEG', quality=85)
                         used_real_media = True
                         _diag(f"🎨 Scene {i}: created black background for audio")
@@ -594,11 +602,17 @@ class ProductionService:
 
             # ✅ تشخيص نهائي
             audio_scenes = sum(1 for s in scenes_data if s.get("audio_path"))
+            silent_scenes = len(scenes_data) - audio_scenes
             _diag(
                 f"🎙️ Render summary: {len(scenes_data)} scenes, "
                 f"{audio_scenes} with audio, "
-                f"{len(scenes_data) - audio_scenes} silent"
+                f"{silent_scenes} silent"
             )
+
+            # تفاصيل كل scene
+            for idx, s in enumerate(scenes_data):
+                a = s.get("audio_path") or "🔇 silent"
+                _diag(f"   Scene {idx}: audio={a[:70]}")
 
             await save_progress(62.0, "تركيب الفيديو النهائي")
 
@@ -828,10 +842,11 @@ class ProductionService:
         clips: List[Dict[str, Any]],
     ) -> List[Dict[str, Any]]:
         """
-        ✅ يتبع التحرير حرفياً:
+        ✅ يتبع التحرير حرفياً مع **ربط دقيق للصوت**:
            - audio clip (type="audio") → يُشغّل صوته (TTS/Edge/Cloned/Recording)
            - image/video clip → يُشغّل صورته
            - metadata.audioRecordings[] → تسجيلات مرفقة بـ image/video
+           - **الصوت يُشغَّل مرة واحدة فقط، مع الـ scene التي يبدأ فيها**
            - لا TTS تلقائي
 
         Returns:
@@ -870,6 +885,7 @@ class ProductionService:
 
         # ══════════════════════════════════════════════════════════════════
         # ✅ الخطوة 1: استخرج كل clips الصوت (type == "audio")
+        #           مع علامة `used` لمنع التكرار
         # ══════════════════════════════════════════════════════════════════
         audio_clips_map: list[dict] = []
         for clip in sorted_clips:
@@ -888,6 +904,7 @@ class ProductionService:
             start = float(clip.get("start", 0.0) or 0.0)
             duration = float(clip.get("duration", 3.0) or 3.0)
             source = clip.get("source", "unknown")
+            layer = int(clip.get("layer", 0) or 0)
 
             audio_clips_map.append({
                 "id": clip.get("id"),
@@ -901,12 +918,14 @@ class ProductionService:
                 "script_segments": clip.get("script_segments") or [],
                 "voice_id": clip.get("voice_id"),
                 "metadata": clip.get("metadata") or {},
+                "layer": layer,
+                "used": False,  # ✅ علامة: هل تم استخدامه؟
             })
 
             _diag(
                 f"🎵 Found audio clip: id={clip.get('id')} "
                 f"source={source} start={start:.2f}s dur={duration:.2f}s "
-                f"voice_id={clip.get('voice_id')}"
+                f"layer={layer} voice_id={clip.get('voice_id')}"
             )
 
         _diag(f"🎵 Total audio clips: {len(audio_clips_map)}")
@@ -930,6 +949,12 @@ class ProductionService:
                 duration = float(clip.get("duration", 3.0) or 3.0)
                 source = clip.get("source", "unknown")
                 title = clip.get("title") or "مقطع صوتي"
+
+                # ✅ علّم clip الصوت كمُستخدم
+                for ac in audio_clips_map:
+                    if ac["id"] == clip.get("id"):
+                        ac["used"] = True
+                        break
 
                 _diag(
                     f"🎙️ Audio-only scene: '{title}' "
@@ -983,24 +1008,56 @@ class ProductionService:
                     recorded_audio_url = best_rec["url"]
                     recorded_audio_duration = float(best_rec.get("duration", 0) or 0)
 
-            # ── ✅ إذا لم يكن هناك تسجيل، ابحث عن audio clip متقاطع ──
+            # ══════════════════════════════════════════════════════════════
+            # ✅ جديد: ربط دقيق (Audio Overlap Logic v2)
+            # الصوت يُشغَّل **مرة واحدة فقط** — مع scene التي يبدأ فيها
+            # ══════════════════════════════════════════════════════════════
             clip_start = float(clip.get("start", 0.0) or 0.0)
-            clip_end = clip_start + float(clip.get("duration", 3.0) or 3.0)
+            clip_duration = float(clip.get("duration", 3.0) or 3.0)
+            clip_end = clip_start + clip_duration
 
             if not recorded_audio_url and audio_clips_map:
                 for audio_clip in audio_clips_map:
-                    overlap_start = max(clip_start, audio_clip["start"])
-                    overlap_end = min(clip_end, audio_clip["end"])
+                    # ✅ تخطى الأصوات المستخدمة
+                    if audio_clip["used"]:
+                        continue
 
-                    if overlap_end > overlap_start:
-                        recorded_audio_url = audio_clip["url"]
-                        recorded_audio_duration = overlap_end - overlap_start
-                        _diag(
-                            f"🔗 Scene {len(scenes)}: linked audio clip "
-                            f"'{audio_clip['title']}' "
-                            f"(overlap {overlap_start:.2f}→{overlap_end:.2f}s)"
-                        )
-                        break
+                    audio_start = audio_clip["start"]
+                    audio_end = audio_clip["end"]
+
+                    # ✅ الشرط الصحيح:
+                    # 1. الصوت يبدأ داخل هذه الـ scene:
+                    #      clip_start <= audio_start < clip_end
+                    # OR
+                    # 2. الـ scene تبدأ داخل الصوت (لكن ليس استمراراً من scene سابقة):
+                    #      audio_start <= clip_start < audio_end
+                    #      AND clip_start - audio_start < 0.1
+                    #      (يعني الـ scene تبدأ تقريباً عند نفس نقطة بداية الصوت)
+
+                    audio_starts_inside = (clip_start <= audio_start < clip_end)
+                    scene_starts_at_audio_start = (
+                        audio_start <= clip_start < audio_end
+                        and (clip_start - audio_start) < 0.1
+                    )
+
+                    if audio_starts_inside or scene_starts_at_audio_start:
+                        overlap_start = max(clip_start, audio_start)
+                        overlap_end = min(clip_end, audio_end)
+                        overlap_duration = overlap_end - overlap_start
+
+                        if overlap_duration > 0.1:
+                            recorded_audio_url = audio_clip["url"]
+                            recorded_audio_duration = overlap_duration
+                            audio_clip["used"] = True  # ✅ علّم كمُستخدم
+
+                            _diag(
+                                f"🔗 Scene {len(scenes)}: linked audio clip "
+                                f"'{audio_clip['title']}' "
+                                f"(audio starts at {audio_start:.2f}s, "
+                                f"scene starts at {clip_start:.2f}s, "
+                                f"overlap {overlap_start:.2f}→{overlap_end:.2f}s)"
+                            )
+                            break
 
             # ── النص الأصلي ────────────────
             if clip_type == "text":
@@ -1052,9 +1109,23 @@ class ProductionService:
                 "layer": 0,
             }]
 
+        # ✅ تشخيص نهائي
         _diag(f"📽️ Built {len(scenes)} scenes from {len(clips)} clips")
         audio_scenes = sum(1 for s in scenes if s.get("recorded_audio_url"))
-        _diag(f"🎙️ Scenes with audio: {audio_scenes}/{len(scenes)}")
+        silent_scenes = len(scenes) - audio_scenes
+        _diag(f"🎙️ Scenes with audio: {audio_scenes}/{len(scenes)} ({silent_scenes} silent)")
+
+        # ✅ إحصائيات الأصوات
+        used_audio_count = sum(1 for ac in audio_clips_map if ac["used"])
+        unused_audio_count = len(audio_clips_map) - used_audio_count
+        if unused_audio_count > 0:
+            _diag(f"⚠️ {unused_audio_count} audio clips were NOT linked to any scene")
+            for ac in audio_clips_map:
+                if not ac["used"]:
+                    _diag(
+                        f"   ❌ Unused: {ac['title']} "
+                        f"(start={ac['start']:.2f}s, dur={ac['duration']:.2f}s)"
+                    )
 
         return scenes
 
