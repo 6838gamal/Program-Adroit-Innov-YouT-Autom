@@ -4,6 +4,7 @@
 
 {% block head %}
 <link rel="stylesheet" href="{{ url_for('static', path='css/timeline.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', path='css/voiceover.css') }}">
 {% endblock %}
 
 {% block header_actions %}
@@ -96,7 +97,7 @@
             <span>🔴 التسجيل من <span id="recordingStartLabel">00:00</span></span>
         </div>
 
-        <!-- ✅ جديد: طبقة عرض النص المُزامن -->
+        <!-- ✅ طبقة عرض النص المُزامن -->
         <div class="script-overlay" id="scriptOverlay">
             <div class="script-title" id="scriptOverlayTitle"></div>
             <div class="script-text" id="scriptOverlayText"></div>
@@ -162,7 +163,6 @@
             <button class="tool-btn" onclick="addClip('video')" title="إضافة فيديو">🎬</button>
             <button class="tool-btn" onclick="addClip('audio')" title="إضافة صوت">🎤</button>
             <button class="tool-btn" onclick="addClip('text')" title="إضافة نص">📝</button>
-            <!-- ✅ جديد: زر الاستوديو الصوتي -->
             <button class="tool-btn" onclick="openVoiceoverStudio()" title="الاستوديو الصوتي (نص + صوت)">🎙️✨</button>
         </div>
 
@@ -409,6 +409,14 @@
         <!-- المعاينة -->
         <div id="voiceoverPreview" class="mb-3"></div>
 
+        <!-- ✅ زر فتح المزامنة والمعالجة -->
+        <div id="openSyncBtnContainer" class="mb-3" style="display:none;">
+            <button onclick="openSyncProcessModal()"
+                    class="btn-primary btn-sm w-full sync-open-btn">
+                🎯 مزامنة النص + معالجة الصوت + استعراض
+            </button>
+        </div>
+
         <!-- النص المُزامن -->
         <div class="mb-3">
             <label class="text-slate-400 text-sm">📊 المقاطع المُزامنة</label>
@@ -431,6 +439,136 @@
     </div>
 </div>
 
+<!-- ============================================================ -->
+<!-- 🎯 نافذة المزامنة والمعالجة والاستعراض -->
+<!-- ============================================================ -->
+<div id="syncProcessModal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+    <div class="bg-slate-800 rounded-xl p-6 max-w-4xl w-full border border-slate-700 max-h-[90vh] overflow-y-auto">
+
+        <!-- Header -->
+        <div class="flex justify-between items-center mb-4">
+            <h3 class="text-white text-lg font-semibold">🎯 مزامنة ومعالجة الصوت</h3>
+            <button onclick="closeSyncProcessModal()" class="text-slate-400 hover:text-white text-xl">✕</button>
+        </div>
+
+        <!-- ═══════════ قسم 1: الصوت الأصلي ═══════════ -->
+        <div class="mb-5">
+            <div class="flex items-center gap-2 mb-2">
+                <span class="badge-step">1</span>
+                <h4 class="text-white font-semibold text-sm">📼 الصوت الأصلي</h4>
+            </div>
+            <div id="syncRawAudio" class="sync-audio-container"></div>
+        </div>
+
+        <!-- ═══════════ قسم 2: النص والمقاطع ═══════════ -->
+        <div class="mb-5">
+            <div class="flex items-center justify-between mb-2">
+                <div class="flex items-center gap-2">
+                    <span class="badge-step">2</span>
+                    <h4 class="text-white font-semibold text-sm">📝 النص والمقاطع</h4>
+                </div>
+                <span id="syncSegmentsTotal" class="text-xs text-slate-400"></span>
+            </div>
+            <div id="syncSegmentsList" class="sync-segments-container"></div>
+        </div>
+
+        <!-- ═══════════ قسم 3: أزرار المزامنة ═══════════ -->
+        <div class="mb-5">
+            <div class="flex items-center gap-2 mb-2">
+                <span class="badge-step">3</span>
+                <h4 class="text-white font-semibold text-sm">🎯 المزامنة</h4>
+            </div>
+            <div class="flex flex-wrap gap-2">
+                <button id="btnAlignScript" onclick="alignScriptWithAudio()"
+                        class="btn-primary btn-sm">
+                    🎯 مزامنة تلقائية دقيقة
+                </button>
+                <button onclick="alignScriptManually()" class="btn-secondary btn-sm">
+                    📐 مزامنة يدوية (حسب المدة)
+                </button>
+                <button onclick="autoSegmentFromScript()" class="btn-secondary btn-sm">
+                    ✨ تقسيم النص تلقائياً
+                </button>
+            </div>
+            <div id="syncAlignStatus" class="mt-2 text-xs"></div>
+        </div>
+
+        <!-- ═══════════ قسم 4: معالجة الصوت ═══════════ -->
+        <div class="mb-5">
+            <div class="flex items-center gap-2 mb-2">
+                <span class="badge-step">4</span>
+                <h4 class="text-white font-semibold text-sm">🎚️ معالجة الصوت</h4>
+            </div>
+
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3">
+                <label class="sync-option">
+                    <input type="checkbox" id="optNormalize" checked>
+                    <span>📊 تطبيع المستوى</span>
+                </label>
+                <label class="sync-option">
+                    <input type="checkbox" id="optTrimSilence" checked>
+                    <span>✂️ قص الصمت</span>
+                </label>
+                <label class="sync-option">
+                    <input type="checkbox" id="optDenoise">
+                    <span>🔇 إزالة ضوضاء</span>
+                </label>
+                <label class="sync-option">
+                    <input type="checkbox" id="optCompress">
+                    <span>🗜️ ضغط ديناميكي</span>
+                </label>
+            </div>
+
+            <div class="mb-3">
+                <label class="text-slate-400 text-xs">
+                    مستوى الاستهداف (LUFS):
+                    <span id="lufsVal" class="text-white font-mono">-16</span>
+                </label>
+                <input type="range" id="optTargetLufs" min="-30" max="-6" step="1" value="-16"
+                       class="w-full" dir="ltr"
+                       oninput="document.getElementById('lufsVal').textContent = this.value">
+            </div>
+
+            <button id="btnProcessAudio" onclick="processAudio()" class="btn-primary btn-sm w-full">
+                🎚️ معالجة الصوت الآن
+            </button>
+
+            <div id="syncProcessProgress" class="mt-3" style="display:none;"></div>
+        </div>
+
+        <!-- ═══════════ قسم 5: الاستعراض والمقارنة ═══════════ -->
+        <div id="syncProcessedSection" style="display:none;">
+            <div class="flex items-center gap-2 mb-2">
+                <span class="badge-step">5</span>
+                <h4 class="text-white font-semibold text-sm">▶️ الاستعراض والمقارنة</h4>
+            </div>
+
+            <div id="syncProcessedAudio" class="sync-audio-container mb-3"></div>
+
+            <div class="sync-live-text-container mb-3">
+                <div class="sync-live-text-label">📖 النص أثناء التشغيل:</div>
+                <div id="syncOverlayText" class="sync-live-text"></div>
+            </div>
+
+            <div class="sync-aligned-preview-header">
+                <span class="text-slate-400 text-xs">انقر أي مقطع للانتقال إليه</span>
+            </div>
+            <div id="syncAlignedPreview" class="sync-aligned-preview"></div>
+
+            <div id="syncComparisonSection" class="mt-4"></div>
+        </div>
+
+        <!-- ═══════════ أزرار الحفظ ═══════════ -->
+        <div class="flex justify-end gap-2 mt-5 pt-4 border-t border-slate-700">
+            <button onclick="closeSyncProcessModal()" class="btn-secondary btn-sm">إلغاء</button>
+            <button onclick="saveProcessedVoiceover()" class="btn-primary btn-sm"
+                    id="btnSaveProcessed">
+                💾 حفظ الصوت المعالج في المشروع
+            </button>
+        </div>
+    </div>
+</div>
+
 <script>
 // تبديل بين أوضاع الاستوديو الصوتي
 document.querySelectorAll('input[name="voiceoverMode"]').forEach(radio => {
@@ -440,15 +578,23 @@ document.querySelectorAll('input[name="voiceoverMode"]').forEach(radio => {
         document.getElementById('recordSettings').classList.toggle('hidden', mode !== 'record');
         document.getElementById('fileSettings').classList.toggle('hidden', mode !== 'file');
 
-        // أوقف التسجيل إذا انتقلنا لوضع آخر
         if (mode !== 'record' && typeof stopVoiceoverRecording === 'function') {
             stopVoiceoverRecording();
         }
-        // أوقف TTS إذا انتقلنا لوضع آخر
         if (mode !== 'tts' && 'speechSynthesis' in window) {
             speechSynthesis.cancel();
         }
     });
+});
+
+// ربط شريط LUFS
+document.addEventListener('DOMContentLoaded', () => {
+    const lufs = document.getElementById('optTargetLufs');
+    if (lufs) {
+        lufs.addEventListener('input', () => {
+            document.getElementById('lufsVal').textContent = lufs.value;
+        });
+    }
 });
 </script>
 {% endblock %}
