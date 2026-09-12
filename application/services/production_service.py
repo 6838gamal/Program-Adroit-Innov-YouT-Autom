@@ -1,7 +1,9 @@
 """Application service for Production / Render use cases.
 
-✅ لا TTS تلقائي — الصوت فقط من تسجيلات المستخدم (metadata.audioRecordings).
-✅ المشاهد بدون تسجيل = صمت.
+✅ دعم كامل لمصادر الصوت:
+   1. clip.type == "audio"     → clip.url (TTS / Edge TTS / Cloned / Recording)
+   2. clip.metadata.audioRecordings[] → تسجيلات مرفقة بـ image/video clip
+   3. لا TTS تلقائي — الصوت فقط من مصادر المُستخدم.
 """
 import asyncio
 import inspect
@@ -115,6 +117,18 @@ class ProductionService:
             existing_data = project_data.get("data", {}) or {}
             if not isinstance(existing_data, dict):
                 existing_data = {}
+
+            # ✅ احتفظ بـ cloned_voices المحفوظة (لا تحذفها)
+            preserved_keys = ["cloned_voices", "voiceovers", "rendered_at",
+                              "video_url", "video_path", "thumbnail",
+                              "thumbnail_path", "output_local_path"]
+
+            preserved = {
+                k: existing_data.get(k)
+                for k in preserved_keys
+                if k in existing_data
+            }
+
             existing_data.update({
                 "clips": clips,
                 "layers": layers,
@@ -122,6 +136,13 @@ class ProductionService:
                 "media_files": media_files,
                 "updated_at": datetime.utcnow().isoformat(),
             })
+
+            # أعد القيم المحفوظة
+            for k, v in preserved.items():
+                if v is not None and k not in ["rendered_at", "video_url", "video_path",
+                                                "thumbnail", "thumbnail_path",
+                                                "output_local_path"]:
+                    existing_data[k] = v
 
             if hasattr(project, "update_data"):
                 project.update_data(existing_data)
@@ -394,7 +415,9 @@ class ProductionService:
 
             await save_progress(5.0, "تحليل المشاهد")
 
-            # ── Build scenes from clips OR script ────────────────────────────
+            # ═══════════════════════════════════════════════════════════════
+            # ── Build scenes from clips OR script ────────────────────────
+            # ═══════════════════════════════════════════════════════════════
             script = project_data.get("script", "") or ""
             title = project_data.get("title", "") or ""
             brand_colors = project_data.get("brand_colors", {}) or {}
@@ -402,18 +425,48 @@ class ProductionService:
             if isinstance(brand_colors, dict):
                 brand_color = brand_colors.get("primary")
 
+            # ✅ ابحث عن clips في أماكن متعددة
+            clips = []
             project_data_data = project_data.get("data", {}) or {}
-            if not isinstance(project_data_data, dict):
-                project_data_data = {}
-            clips = project_data_data.get("clips", []) or []
+            if isinstance(project_data_data, dict):
+                clips = project_data_data.get("clips", []) or []
+
+            # fallback: إذا لم توجد، ابحث في project_data مباشرة
+            if not clips:
+                clips = project_data.get("clips", []) or []
+
+            _diag(f"🔥 Found {len(clips)} clips in project_data")
+
+            # ✅ إحصائيات clips
+            if clips:
+                audio_clips_count = sum(
+                    1 for c in clips
+                    if isinstance(c, dict) and (c.get("type") or "").lower() == "audio"
+                )
+                image_clips_count = sum(
+                    1 for c in clips
+                    if isinstance(c, dict) and (c.get("type") or "").lower() == "image"
+                )
+                video_clips_count = sum(
+                    1 for c in clips
+                    if isinstance(c, dict) and (c.get("type") or "").lower() == "video"
+                )
+                text_clips_count = sum(
+                    1 for c in clips
+                    if isinstance(c, dict) and (c.get("type") or "").lower() == "text"
+                )
+                _diag(
+                    f"🔥 Clips breakdown: audio={audio_clips_count}, "
+                    f"image={image_clips_count}, video={video_clips_count}, "
+                    f"text={text_clips_count}"
+                )
 
             if clips:
-                # ✅ scenes من clips (مع التسجيلات، بلا TTS)
+                # ✅ scenes من clips (مع الصوت)
                 scene_objects = self._build_scenes_from_clips(clips)
                 _diag(f"📽️ Using {len(scene_objects)} scenes from client clips")
             else:
-                # ✅ لا clips → مشهد واحد صامت
-                # (لا نستخدم السكريبت لأنه لا يعني أن المستخدم يريد صوتاً)
+                # ⚠️ لا clips → مشهد واحد صامت
                 _diag("⚠️ No clips found — creating single silent scene")
                 scene_objects = [{
                     "text": "",
@@ -445,7 +498,7 @@ class ProductionService:
                 pct = 10.0 + (i / max(total, 1)) * 50.0
                 await save_progress(pct, f"معالجة المشهد {i + 1}/{total}")
 
-                scene_text = scene_obj["text"]               # دائماً ""
+                scene_text = scene_obj["text"]
                 scene_type = scene_obj["type"]
                 scene_media_url = scene_obj.get("media_url")
                 scene_title = scene_obj.get("title") or f"مشهد {i + 1}"
@@ -453,20 +506,21 @@ class ProductionService:
 
                 recorded_audio_url = scene_obj.get("recorded_audio_url")
                 recorded_audio_duration = scene_obj.get("recorded_audio_duration")
+                audio_source = scene_obj.get("source", "unknown")
 
                 actual_audio: Optional[Path] = None
                 duration = scene_duration
 
                 # ══════════════════════════════════════════════════════════
-                # ✅ التسجيل الصوتي فقط — لا TTS إطلاقاً
+                # ✅ تحميل الصوت (من أي مصدر)
                 # ══════════════════════════════════════════════════════════
                 if recorded_audio_url:
                     recorded_ext = _guess_audio_ext(recorded_audio_url)
-                    recorded_path = temp_dir / f"recorded_{i:04d}{recorded_ext}"
+                    recorded_path = temp_dir / f"audio_{i:04d}{recorded_ext}"
 
                     _diag(
-                        f"🎤 Scene {i}: downloading USER recording from Supabase: "
-                        f"{recorded_audio_url}"
+                        f"🎙️ Scene {i}: downloading audio (source={audio_source}) "
+                        f"from: {recorded_audio_url[:80]}..."
                     )
                     ok = await _download_media_to_file(recorded_audio_url, recorded_path)
 
@@ -475,15 +529,15 @@ class ProductionService:
                         if recorded_audio_duration and recorded_audio_duration > 0.5:
                             duration = recorded_audio_duration
                         _diag(
-                            f"✅ Scene {i}: using USER recording "
+                            f"✅ Scene {i}: using audio "
                             f"({duration:.2f}s) → {recorded_path}"
                         )
                     else:
                         _diag_err(
-                            f"⚠️ Scene {i}: recording download failed → silent"
+                            f"⚠️ Scene {i}: audio download failed → silent"
                         )
                 else:
-                    _diag(f"🔇 Scene {i}: silent (no recording in timeline)")
+                    _diag(f"🔇 Scene {i}: silent (no audio)")
 
                 # ── الوسائط الحقيقية أو توليد صورة ──────────────────────
                 image_path = temp_dir / f"scene_{i:04d}.jpg"
@@ -501,6 +555,19 @@ class ProductionService:
                     else:
                         _diag_err(f"⚠️ Scene {i}: media download failed, falling back")
 
+                # ── إذا كان audio-only scene (لا صورة) → صورة سوداء ──────
+                if not used_real_media and scene_type == "text" and actual_audio:
+                    # أنشئ صورة سوداء بسيطة
+                    try:
+                        from PIL import Image
+                        img = Image.new('RGB', (rs.resolution_width, rs.resolution_height), color='black')
+                        img.save(image_path, 'JPEG', quality=85)
+                        used_real_media = True
+                        _diag(f"🎨 Scene {i}: created black background for audio")
+                    except Exception as e:
+                        _diag_err(f"⚠️ Black image failed: {e}", e)
+
+                # ── وإلا: ولّد صورة بـ HF/Pillow ──────────────────────
                 if not used_real_media:
                     try:
                         await image_generator.generate_scene_image(
@@ -515,15 +582,23 @@ class ProductionService:
                         image_path = None
 
                 scenes_data.append({
-                    "text": scene_text,                     # دائماً ""
+                    "text": scene_text,
                     "image_path": str(image_path) if image_path else "",
                     "audio_path": str(actual_audio) if actual_audio else "",
                     "duration": duration,
                     "transition": "fade",
                     "type": scene_type,
                     "media_url": scene_media_url,
-                    "audio_source": "user_recording" if actual_audio else "silent",
+                    "audio_source": audio_source if actual_audio else "silent",
                 })
+
+            # ✅ تشخيص نهائي
+            audio_scenes = sum(1 for s in scenes_data if s.get("audio_path"))
+            _diag(
+                f"🎙️ Render summary: {len(scenes_data)} scenes, "
+                f"{audio_scenes} with audio, "
+                f"{len(scenes_data) - audio_scenes} silent"
+            )
 
             await save_progress(62.0, "تركيب الفيديو النهائي")
 
@@ -745,32 +820,41 @@ class ProductionService:
             _active_renders.pop(str(job_id), None)
             _diag(f"🔥 _run_render END job_id={job_id}")
 
+    # ═════════════════════════════════════════════════════════════════════════
     # ── Scene builder from clips ─────────────────────────────────────────────
+    # ═════════════════════════════════════════════════════════════════════════
     def _build_scenes_from_clips(
         self,
         clips: List[Dict[str, Any]],
     ) -> List[Dict[str, Any]]:
         """
         ✅ يتبع التحرير حرفياً:
-           - إذا كان clip له تسجيل صوتي (metadata.audioRecordings) → يُشغّل
-           - إذا لم يكن له تسجيل → صمت (text = "")
-           - لا TTS إطلاقاً
+           - audio clip (type="audio") → يُشغّل صوته (TTS/Edge/Cloned/Recording)
+           - image/video clip → يُشغّل صورته
+           - metadata.audioRecordings[] → تسجيلات مرفقة بـ image/video
+           - لا TTS تلقائي
 
-        Returns a list of dicts:
-            {
-                "text": "",                    # دائماً فارغ (لا TTS)
-                "type": "image"|"video"|"text",
-                "media_url": str|None,
-                "recorded_audio_url": str|None,
-                "recorded_audio_duration": float|None,
-                "original_text": str,          # للعنوان فقط
-                "title": str,
-                "duration": float,
-                "start": float,
-                "layer": int,
-            }
+        Returns:
+            list of scene dicts with:
+                text, type, media_url, recorded_audio_url,
+                recorded_audio_duration, original_text, title,
+                duration, start, layer, source
         """
         scenes: list[dict] = []
+
+        if not clips:
+            return [{
+                "text": "",
+                "type": "text",
+                "media_url": None,
+                "recorded_audio_url": None,
+                "recorded_audio_duration": None,
+                "original_text": "",
+                "title": "مشهد",
+                "duration": 3.0,
+                "start": 0.0,
+                "layer": 0,
+            }]
 
         # ── رتّب حسب (الطبقة، البداية) ─────────────────────────
         try:
@@ -784,14 +868,90 @@ class ProductionService:
         except Exception:
             sorted_clips = list(clips)
 
-        # ── حوّل كل clip إلى scene ────────────────────────────
+        # ══════════════════════════════════════════════════════════════════
+        # ✅ الخطوة 1: استخرج كل clips الصوت (type == "audio")
+        # ══════════════════════════════════════════════════════════════════
+        audio_clips_map: list[dict] = []
+        for clip in sorted_clips:
+            clip_type = (clip.get("type") or "").lower()
+            if clip_type != "audio":
+                continue
+
+            audio_url = clip.get("url") or clip.get("content")
+            if not isinstance(audio_url, str) or not audio_url.startswith("http"):
+                _diag(
+                    f"⚠️ Audio clip {clip.get('id')}: no valid url "
+                    f"(url={str(audio_url)[:60]}) — skipped"
+                )
+                continue
+
+            start = float(clip.get("start", 0.0) or 0.0)
+            duration = float(clip.get("duration", 3.0) or 3.0)
+            source = clip.get("source", "unknown")
+
+            audio_clips_map.append({
+                "id": clip.get("id"),
+                "url": audio_url,
+                "start": start,
+                "end": start + duration,
+                "duration": duration,
+                "source": source,
+                "title": clip.get("title") or "مقطع صوتي",
+                "script": clip.get("script") or "",
+                "script_segments": clip.get("script_segments") or [],
+                "voice_id": clip.get("voice_id"),
+                "metadata": clip.get("metadata") or {},
+            })
+
+            _diag(
+                f"🎵 Found audio clip: id={clip.get('id')} "
+                f"source={source} start={start:.2f}s dur={duration:.2f}s "
+                f"voice_id={clip.get('voice_id')}"
+            )
+
+        _diag(f"🎵 Total audio clips: {len(audio_clips_map)}")
+
+        # ══════════════════════════════════════════════════════════════════
+        # ✅ الخطوة 2: حوّل كل clip إلى scene
+        # ══════════════════════════════════════════════════════════════════
         for clip in sorted_clips:
             clip_type = (clip.get("type") or "text").lower()
             metadata = clip.get("metadata") or {}
             if not isinstance(metadata, dict):
                 metadata = {}
 
-            # ── رابط الوسائط الحقيقي (صورة/فيديو فقط) ──────────
+            # ── إذا كان clip صوتياً → أنشئ scene خاصة به ──
+            if clip_type == "audio":
+                audio_url = clip.get("url") or clip.get("content")
+                if not isinstance(audio_url, str) or not audio_url.startswith("http"):
+                    continue
+
+                start = float(clip.get("start", 0.0) or 0.0)
+                duration = float(clip.get("duration", 3.0) or 3.0)
+                source = clip.get("source", "unknown")
+                title = clip.get("title") or "مقطع صوتي"
+
+                _diag(
+                    f"🎙️ Audio-only scene: '{title}' "
+                    f"(source={source}, {duration:.2f}s)"
+                )
+
+                scenes.append({
+                    "text": "",
+                    "type": "text",  # مشهد أسود (بلا صورة)
+                    "media_url": None,
+                    "recorded_audio_url": audio_url,
+                    "recorded_audio_duration": duration,
+                    "original_text": title,
+                    "title": title,
+                    "duration": duration,
+                    "start": start,
+                    "layer": int(clip.get("layer", 0) or 0),
+                    "source": source,
+                })
+                continue
+
+            # ── لغير الصوت: image/video/text ──
             media_url = None
             if clip_type in ("image", "video"):
                 candidate = (
@@ -802,7 +962,7 @@ class ProductionService:
                 if isinstance(candidate, str) and candidate.startswith("http") and "blob:" not in candidate:
                     media_url = candidate
 
-            # ── استخراج التسجيل الصوتي ────────────────────────
+            # ── استخراج التسجيل الصوتي (من metadata) ──────────
             audio_recordings = metadata.get("audioRecordings") or []
             recorded_audio_url: Optional[str] = None
             recorded_audio_duration: Optional[float] = None
@@ -823,30 +983,49 @@ class ProductionService:
                     recorded_audio_url = best_rec["url"]
                     recorded_audio_duration = float(best_rec.get("duration", 0) or 0)
 
-            # ── النص الأصلي (للعرض/العنوان فقط) ────────────────
+            # ── ✅ إذا لم يكن هناك تسجيل، ابحث عن audio clip متقاطع ──
+            clip_start = float(clip.get("start", 0.0) or 0.0)
+            clip_end = clip_start + float(clip.get("duration", 3.0) or 3.0)
+
+            if not recorded_audio_url and audio_clips_map:
+                for audio_clip in audio_clips_map:
+                    overlap_start = max(clip_start, audio_clip["start"])
+                    overlap_end = min(clip_end, audio_clip["end"])
+
+                    if overlap_end > overlap_start:
+                        recorded_audio_url = audio_clip["url"]
+                        recorded_audio_duration = overlap_end - overlap_start
+                        _diag(
+                            f"🔗 Scene {len(scenes)}: linked audio clip "
+                            f"'{audio_clip['title']}' "
+                            f"(overlap {overlap_start:.2f}→{overlap_end:.2f}s)"
+                        )
+                        break
+
+            # ── النص الأصلي ────────────────
             if clip_type == "text":
                 original_text = (clip.get("content") or clip.get("title") or "").strip()
             else:
                 original_text = (clip.get("title") or "").strip()
 
-            # ── السجلات التشخيصية ────────────────────────────
+            # ── السجلات التشخيصية ────────────
             if recorded_audio_url:
                 _diag(
-                    f"🎤 Clip {clip.get('id')}: has recording "
+                    f"🎤 Scene {len(scenes)}: has audio "
                     f"({recorded_audio_duration or 0:.1f}s) — '{original_text[:40]}'"
                 )
             else:
                 _diag(
-                    f"🔇 Clip {clip.get('id')}: silent — '{original_text[:40]}'"
+                    f"🔇 Scene {len(scenes)}: silent — '{original_text[:40]}'"
                 )
 
-            # ── المدة ────────────────────────────────────────
+            # ── المدة ────────────────────────
             duration = float(clip.get("duration", 3.0) or 3.0)
             if recorded_audio_duration and recorded_audio_duration > duration:
                 duration = recorded_audio_duration
 
             scenes.append({
-                "text": "",                     # ✅ دائماً فارغ — لا TTS
+                "text": "",
                 "type": clip_type,
                 "media_url": media_url,
                 "recorded_audio_url": recorded_audio_url,
@@ -854,8 +1033,9 @@ class ProductionService:
                 "original_text": original_text,
                 "title": clip.get("title") or f"مقطع {len(scenes) + 1}",
                 "duration": duration,
-                "start": float(clip.get("start", 0.0) or 0.0),
+                "start": clip_start,
                 "layer": int(clip.get("layer", 0) or 0),
+                "source": metadata.get("source", "user"),
             })
 
         if not scenes:
@@ -871,6 +1051,10 @@ class ProductionService:
                 "start": 0.0,
                 "layer": 0,
             }]
+
+        _diag(f"📽️ Built {len(scenes)} scenes from {len(clips)} clips")
+        audio_scenes = sum(1 for s in scenes if s.get("recorded_audio_url"))
+        _diag(f"🎙️ Scenes with audio: {audio_scenes}/{len(scenes)}")
 
         return scenes
 
@@ -942,12 +1126,12 @@ async def _download_media_to_file(url: str, output_path: Path) -> bool:
             resp.raise_for_status()
             output_path.write_bytes(resp.content)
             _diag(
-                f"✅ Downloaded media: {url} → {output_path} "
+                f"✅ Downloaded media: {url[:80]}... → {output_path} "
                 f"({len(resp.content)} bytes)"
             )
             return True
     except Exception as e:
-        _diag_err(f"❌ Failed to download media: {url} → {e}", e)
+        _diag_err(f"❌ Failed to download media: {url[:80]}... → {e}", e)
         return False
 
 
@@ -961,7 +1145,7 @@ async def _upload_to_supabase(
     remote_path: str,
     content_type: str = "application/octet-stream",
 ) -> None:
-    """Upload a local file to Supabase Storage using whatever API the adapter exposes."""
+    """Upload a local file to Supabase Storage."""
     local_path = Path(local_path)
 
     if hasattr(storage, "upload_file"):
@@ -1053,7 +1237,6 @@ async def _build_public_url(storage, remote_path: str) -> Optional[str]:
 
 # ═════════════════════════════════════════════════════════════════════════════
 # Image generation helpers
-# (voice plugin helpers removed — no TTS)
 # ═════════════════════════════════════════════════════════════════════════════
 
 async def _resolve_image_generator(rs: RenderSettings):
