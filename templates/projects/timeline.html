@@ -160,6 +160,7 @@
         background: rgba(0,0,0,0.3);
         padding: 2px 8px;
         border-radius: 4px;
+        direction: ltr;
     }
 
     .controls-bar input[type="range"] {
@@ -168,6 +169,7 @@
         cursor: pointer;
         background: transparent;
         height: 4px;
+        direction: ltr;
     }
 
     .controls-bar input[type="range"]::-webkit-slider-thumb {
@@ -384,6 +386,7 @@
         flex: 1;
         overflow: auto;
         position: relative;
+        direction: ltr; /* ✅ من اليسار لليمين */
     }
 
     #timeline-inner {
@@ -391,6 +394,7 @@
         min-width: max-content;
         --cell-w: var(--cell-base);
         padding-bottom: 8px;
+        direction: ltr; /* ✅ من اليسار لليمين */
     }
 
     .ruler {
@@ -402,6 +406,7 @@
         top: 0;
         z-index: 5;
         overflow: hidden;
+        direction: ltr; /* ✅ */
     }
 
     .ruler .track-label {
@@ -420,6 +425,7 @@
         display: flex;
         flex: 1;
         position: relative;
+        direction: ltr; /* ✅ */
         background: repeating-linear-gradient(
             90deg,
             transparent,
@@ -437,6 +443,7 @@
         padding: 2px 0 0 2px;
         font-family: monospace;
         position: relative;
+        direction: ltr; /* ✅ */
     }
     .ruler-mark.major { border-left-color: #64748b; }
     .ruler-mark .label {
@@ -445,6 +452,8 @@
         left: 4px;
         font-size: 9px;
         color: #475569;
+        direction: ltr; /* ✅ */
+        font-family: monospace;
     }
 
     .track-row {
@@ -452,6 +461,7 @@
         min-height: var(--track-height);
         border-bottom: 1px solid var(--border-color);
         position: relative;
+        direction: ltr; /* ✅ */
     }
     .track-row:last-child { border-bottom: none; }
 
@@ -470,6 +480,7 @@
         flex-direction: column;
         line-height: 1.2;
         text-align: center;
+        direction: rtl; /* النصوص العربية تبقى RTL */
     }
     .track-label .track-icon { font-size: 14px; }
 
@@ -477,6 +488,7 @@
         flex: 1;
         position: relative;
         overflow: hidden;
+        direction: ltr; /* ✅ */
         background: 
             repeating-linear-gradient(
                 90deg,
@@ -508,6 +520,7 @@
         min-width: 20px;
         z-index: 2;
         gap: 2px;
+        direction: ltr; /* ✅ */
     }
 
     .clip-block:hover {
@@ -556,6 +569,8 @@
         font-size: 9px;
         flex: 1;
         opacity: 0.8;
+        direction: rtl; /* النص العربي يبقى RTL */
+        text-align: right;
     }
 
     .clip-block .clip-duration {
@@ -563,6 +578,7 @@
         opacity: 0.6;
         font-family: monospace;
         flex-shrink: 0;
+        direction: ltr; /* الأرقام LTR */
     }
 
     .clip-block .clip-delete-btn {
@@ -608,6 +624,8 @@
     }
     .playhead.active { background: #22c55e; }
     .playhead.active::before { border-top-color: #22c55e; }
+    .playhead.recording { background: #ef4444; }
+    .playhead.recording::before { border-top-color: #ef4444; }
 
     .drop-zone {
         border: 2px dashed var(--border-color);
@@ -633,6 +651,7 @@
         color: var(--text-muted);
         flex-shrink: 0;
         min-height: 28px;
+        direction: ltr; /* ✅ */
     }
 
     .status-bar .status-info {
@@ -913,6 +932,37 @@
         font-size: 14px;
     }
 
+    /* ====== مؤشر التسجيل النشط ====== */
+    .recording-indicator {
+        position: absolute;
+        top: 12px;
+        right: 12px;
+        background: rgba(239,68,68,0.9);
+        color: white;
+        padding: 6px 14px;
+        border-radius: 20px;
+        font-size: 12px;
+        font-weight: bold;
+        display: none;
+        align-items: center;
+        gap: 8px;
+        z-index: 20;
+        box-shadow: 0 4px 20px rgba(239,68,68,0.4);
+        animation: pulse-record 1s infinite;
+    }
+    .recording-indicator.active { display: flex; }
+    .recording-indicator .dot {
+        width: 10px;
+        height: 10px;
+        background: white;
+        border-radius: 50%;
+        animation: pulse-dot 0.8s infinite;
+    }
+    @keyframes pulse-dot {
+        0%, 100% { opacity: 1; transform: scale(1); }
+        50% { opacity: 0.5; transform: scale(0.8); }
+    }
+
     @media (max-width: 768px) {
         .editor-container { height: calc(100vh - 140px); }
         .preview-area { min-height: 160px; }
@@ -1011,7 +1061,13 @@
 
         <div class="preview-toolbar">
             <button class="tool-btn" onclick="toggleFullscreen()" title="شاشة كاملة">⛶</button>
-            <button class="record-btn" id="recordBtn" onclick="toggleRecording()" title="تسجيل الصوت">🎙️</button>
+            <button class="record-btn" id="recordBtn" onclick="toggleRecording()" title="تسجيل الصوت من موضع المؤشر">🎙️</button>
+        </div>
+
+        <!-- ✅ مؤشر التسجيل النشط -->
+        <div class="recording-indicator" id="recordingIndicator">
+            <span class="dot"></span>
+            <span>🔴 جاري التسجيل من <span id="recordingStartLabel">00:00</span></span>
         </div>
 
         <div class="playback-info" id="playbackInfo">
@@ -1037,7 +1093,7 @@
 
         <div class="control-group">
             <span class="time-display" id="currentTimeDisplay">00:00:00</span>
-            <input type="range" id="seekSlider" min="0" max="100" value="0">
+            <input type="range" id="seekSlider" min="0" max="100" value="0" dir="ltr">
             <span class="time-display" id="totalTimeDisplay">00:00:00</span>
         </div>
 
@@ -1087,7 +1143,7 @@
 
         <div class="toolbar-group">
             <label class="text-slate-400 text-xs">تكبير:</label>
-            <input type="range" id="zoom-slider" min="30" max="200" value="80" class="w-20 sm:w-28 accent-blue-500">
+            <input type="range" id="zoom-slider" min="30" max="200" value="80" class="w-20 sm:w-28 accent-blue-500" dir="ltr">
             <span id="zoom-val" class="text-slate-400 text-xs w-8">80</span>
         </div>
     </div>
@@ -1237,6 +1293,10 @@ let isLooping = false;
 let isRecording = false;
 let mediaRecorder = null;
 let recordedChunks = [];
+let recordingStartTime = 0;
+let recordingTimerInterval = null;
+let recordingStream = null;
+let recordingWallStart = 0;
 let clipIdCounter = 0;
 let currentClipAtTime = null;
 let renderPollInterval = null;
@@ -1250,6 +1310,12 @@ let audioPlayer = null;
 let isCanvasReady = false;
 let imageCache = {};
 let videoElements = {};
+
+// ====== AUDIO ENGINE ======
+let audioContext = null;
+let audioBuffers = {};
+let audioNodes = [];
+let lastAudioSyncTime = -1;
 
 const COLORS = {
     video: '#2563eb',
@@ -1266,14 +1332,9 @@ const TYPE_ICONS = {
 };
 
 // ============================================================
-//  SUPABASE UPLOAD — رفع الوسائط فوراً
+//  SUPABASE UPLOAD
 // ============================================================
-
 async function uploadFileToSupabase(file, projectId) {
-    /**
-     * رفع ملف إلى Supabase Storage عبر endpoint الخلفية.
-     * يُرجع URL العام أو null عند الفشل.
-     */
     const formData = new FormData();
     formData.append("file", file);
     formData.append("project_id", projectId);
@@ -1304,14 +1365,11 @@ async function uploadFileToSupabase(file, projectId) {
 // ============================================================
 //  SUPABASE SAVE / LOAD
 // ============================================================
-
 async function saveProjectToSupabase(projectId, data) {
     try {
         const response = await fetch(`/api/v1/projects/save`, {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 project_id: projectId,
                 user_id: currentUserId,
@@ -1323,10 +1381,7 @@ async function saveProjectToSupabase(projectId, data) {
                         start: c.start,
                         duration: c.duration,
                         title: c.title,
-                        // ✅ احفظ URL فقط إذا كان http(s)
-                        content: (c.content && c.content.startsWith('http'))
-                            ? c.content
-                            : null,
+                        content: (c.content && c.content.startsWith('http')) ? c.content : null,
                         color: c.color,
                         icon: c.icon,
                         metadata: c.metadata || {}
@@ -1334,7 +1389,6 @@ async function saveProjectToSupabase(projectId, data) {
                     layers: data.layers,
                     total_duration: data.totalDuration,
                     cell_width: data.cellWidth,
-                    // ✅ احفظ URLs في media_files أيضاً
                     media_files: data.mediaFiles.map(f => ({
                         name: f.name,
                         size: f.size,
@@ -1357,7 +1411,6 @@ async function saveProjectToSupabase(projectId, data) {
     } catch(e) {
         console.error('❌ فشل الحفظ على Supabase:', e);
         updateSyncStatus('error');
-        showToast('❌ فشل حفظ المشروع: ' + e.message, 'error');
         throw e;
     }
 }
@@ -1366,10 +1419,7 @@ async function loadProjectFromSupabase(projectId) {
     try {
         const response = await fetch(`/api/v1/projects/${projectId}?user_id=${currentUserId}`);
 
-        if (response.status === 404) {
-            return null;
-        }
-
+        if (response.status === 404) return null;
         if (!response.ok) {
             const error = await response.json();
             throw new Error(error.detail || 'فشل التحميل');
@@ -1396,30 +1446,11 @@ async function loadProjectFromSupabase(projectId) {
     }
 }
 
-async function loadSharedProject(projectId) {
-    try {
-        const response = await fetch(`/api/v1/projects/${projectId}/shared?user_email=${encodeURIComponent(currentUserEmail)}`);
-
-        if (!response.ok) {
-            throw new Error('لا تملك صلاحية الوصول');
-        }
-
-        const result = await response.json();
-        return result.data;
-
-    } catch(e) {
-        showToast('❌ ' + e.message, 'error');
-        return null;
-    }
-}
-
 async function shareProjectWithUser(projectId, email) {
     try {
         const response = await fetch(`/api/v1/projects/${projectId}/share`, {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ email: email })
         });
 
@@ -1462,15 +1493,13 @@ async function syncProject() {
     showToast('🔄 جاري المزامنة...', 'info');
 
     try {
-        const data = {
+        await saveProjectToSupabase(projectId, {
             clips: projectData.clips,
             layers: projectData.layers,
             totalDuration: projectData.totalDuration,
             cellWidth: projectData.cellWidth,
             mediaFiles: projectData.mediaFiles
-        };
-
-        await saveProjectToSupabase(projectId, data);
+        });
         showToast('✅ تمت المزامنة بنجاح', 'success');
     } catch(e) {
         showToast('❌ فشل المزامنة: ' + e.message, 'error');
@@ -1496,11 +1525,8 @@ async function shareProject() {
         showToast('⚠️ بريد إلكتروني غير صحيح', 'warning');
         return;
     }
-
     const success = await shareProjectWithUser(projectId, email);
-    if (success) {
-        closeShareModal();
-    }
+    if (success) closeShareModal();
 }
 
 // ============================================================
@@ -1546,7 +1572,7 @@ function renderPreview(time) {
         document.getElementById('playbackTime').textContent = formatTime(time);
         document.getElementById('statusCurrentClip').textContent = '▶️';
 
-        syncAudio(time);
+        if (isPlaying) syncAudio(time);
 
     } else {
         ctx.fillStyle = 'rgba(255,255,255,0.03)';
@@ -1584,7 +1610,6 @@ function renderPreview(time) {
 }
 
 // ====== دوال الرسم ======
-
 function drawImageOnly(ctx, src, x, y, w, h) {
     if (!imageCache[src]) {
         const img = new Image();
@@ -1753,11 +1778,10 @@ function drawTextOnly(ctx, text, x, y, w, h) {
 // ============================================================
 //  SYNC AUDIO
 // ============================================================
-let audioContext = null;
-let audioBuffers = {};
-let audioNodes = [];
-
 function syncAudio(time) {
+    if (Math.abs(time - lastAudioSyncTime) < 0.03) return;
+    lastAudioSyncTime = time;
+
     const activeAudios = projectData.clips.filter(c => {
         const layer = projectData.layers[c.layer];
         return layer && layer.visible &&
@@ -1766,71 +1790,68 @@ function syncAudio(time) {
                time < c.start + c.duration;
     });
 
-    if (activeAudios.length > 0) {
-        if (!audioContext) {
-            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    const activeIds = new Set(activeAudios.map(c => c.id));
+
+    audioNodes.forEach(node => {
+        if (!activeIds.has(node.clipId)) {
+            try { node.source.stop(); } catch(e) {}
+            node.isPlaying = false;
         }
+    });
+    audioNodes = audioNodes.filter(n => n.isPlaying);
 
-        activeAudios.forEach(audioClip => {
-            const src = audioClip.content;
-            if (!src || src === 'blob') return;
-
-            if (!audioBuffers[src]) {
-                fetch(src)
-                    .then(res => res.arrayBuffer())
-                    .then(buffer => audioContext.decodeAudioData(buffer))
-                    .then(decoded => {
-                        audioBuffers[src] = decoded;
-                        playAudioBuffer(src, decoded, audioClip, time);
-                    })
-                    .catch(() => {});
-                return;
-            }
-
-            playAudioBuffer(src, audioBuffers[src], audioClip, time);
-        });
-
-        audioNodes = audioNodes.filter(node => {
-            if (node.isPlaying && node.clipId) {
-                const clip = projectData.clips.find(c => c.id === node.clipId);
-                if (clip && time >= clip.start && time < clip.start + clip.duration) {
-                    return true;
-                }
-            }
-            if (node.source) {
-                try { node.source.stop(); } catch(e) {}
-            }
-            return false;
-        });
-
-    } else {
-        audioNodes.forEach(node => {
-            if (node.source) {
-                try { node.source.stop(); } catch(e) {}
-            }
-        });
-        audioNodes = [];
-        if (audioPlayer && !audioPlayer.paused) {
-            audioPlayer.pause();
-        }
+    if (activeAudios.length === 0) {
+        if (audioPlayer && !audioPlayer.paused) audioPlayer.pause();
+        return;
     }
+
+    if (!audioContext) {
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    if (audioContext.state === 'suspended' && isPlaying) {
+        audioContext.resume();
+    }
+
+    activeAudios.forEach(audioClip => {
+        const src = audioClip.content;
+        if (!src || src.startsWith('blob:')) return;
+
+        const existing = audioNodes.find(n => n.clipId === audioClip.id && n.isPlaying);
+        const localTime = time - audioClip.start;
+
+        if (existing) {
+            const drift = Math.abs(
+                existing.startTime + (audioContext.currentTime - existing.ctxStart) - localTime
+            );
+            if (drift > 0.15) {
+                try { existing.source.stop(); } catch(e) {}
+                existing.isPlaying = false;
+                audioNodes = audioNodes.filter(n => n !== existing);
+                if (audioBuffers[src]) playAudioBuffer(src, audioBuffers[src], audioClip, time);
+            }
+            return;
+        }
+
+        if (!audioBuffers[src]) {
+            fetch(src)
+                .then(res => res.arrayBuffer())
+                .then(buf => audioContext.decodeAudioData(buf))
+                .then(decoded => {
+                    audioBuffers[src] = decoded;
+                    if (isPlaying) playAudioBuffer(src, decoded, audioClip, currentTime);
+                })
+                .catch(() => {});
+            return;
+        }
+
+        playAudioBuffer(src, audioBuffers[src], audioClip, time);
+    });
 }
 
 function playAudioBuffer(src, buffer, clip, time) {
+    if (!buffer || !audioContext) return;
     const localTime = time - clip.start;
     if (localTime < 0 || localTime > clip.duration) return;
-
-    const existingNode = audioNodes.find(n => n.clipId === clip.id && n.isPlaying);
-    if (existingNode) {
-        if (Math.abs(existingNode.startTime - localTime) > 0.1) {
-            existingNode.source.stop();
-            existingNode.isPlaying = false;
-        } else {
-            return;
-        }
-    }
-
-    if (!audioContext) return;
 
     try {
         const source = audioContext.createBufferSource();
@@ -1844,21 +1865,17 @@ function playAudioBuffer(src, buffer, clip, time) {
 
         source.start(0, localTime);
 
-        audioNodes.push({
+        const node = {
             clipId: clip.id,
             source: source,
             gain: gain,
             startTime: localTime,
+            ctxStart: audioContext.currentTime,
             isPlaying: true
-        });
-
-        source.onended = () => {
-            const idx = audioNodes.findIndex(n => n.clipId === clip.id);
-            if (idx !== -1) {
-                audioNodes[idx].isPlaying = false;
-            }
         };
+        audioNodes.push(node);
 
+        source.onended = () => { node.isPlaying = false; };
     } catch(e) {}
 }
 
@@ -1915,10 +1932,7 @@ function renderMediaGallery() {
             <button class="media-remove" onclick="event.stopPropagation();removeMediaFile(${index})" title="حذف">✕</button>
         `;
 
-        item.onclick = () => {
-            addMediaToTimeline(index);
-        };
-
+        item.onclick = () => addMediaToTimeline(index);
         gallery.appendChild(item);
     });
 }
@@ -1927,7 +1941,7 @@ function addMediaToTimeline(index) {
     const file = projectData.mediaFiles[index];
     if (!file) return;
 
-    let startTime = getLayerEndTime(selectedLayerIndex);
+    let startTime = currentTime; // ✅ يبدأ من المؤشر الحالي
     const type = file.type.split('/')[0];
     const duration = type === 'image' ? 3 : (type === 'video' ? 3 : 2);
 
@@ -1993,13 +2007,12 @@ function removeMediaFile(index) {
 }
 
 // ============================================================
-//  ADD MEDIA FILE — مع رفع فوري إلى Supabase
+//  ADD MEDIA FILE
 // ============================================================
 async function addMediaFile(file) {
     const fileSizeMB = (file.size / 1024 / 1024).toFixed(2);
     showToast(`⏳ جاري رفع ${file.name} (${fileSizeMB} MB)...`, 'info');
 
-    // 1) ارفع إلى Supabase
     const supabaseUrl = await uploadFileToSupabase(file, projectId);
 
     if (!supabaseUrl) {
@@ -2007,12 +2020,11 @@ async function addMediaFile(file) {
         return null;
     }
 
-    // 2) أضف mediaFile مع URL دائم
     const mediaFile = {
         name: file.name,
         size: file.size,
         type: file.type,
-        url: supabaseUrl,     // ✅ Supabase URL (دائم)
+        url: supabaseUrl,
     };
 
     projectData.mediaFiles.push(mediaFile);
@@ -2049,10 +2061,7 @@ function renderLayers() {
             </div>
         `;
 
-        div.onclick = () => {
-            selectLayer(index);
-        };
-
+        div.onclick = () => selectLayer(index);
         container.appendChild(div);
     });
 
@@ -2094,9 +2103,7 @@ function deleteLayer(index) {
 }
 
 function deleteSelectedLayer() {
-    if (selectedLayerIndex !== null) {
-        deleteLayer(selectedLayerIndex);
-    }
+    if (selectedLayerIndex !== null) deleteLayer(selectedLayerIndex);
 }
 
 function selectLayer(index) {
@@ -2146,18 +2153,33 @@ function renderTimeline() {
     const pxPerSec = projectData.cellWidth / 2;
     const totalWidth = projectData.totalDuration * pxPerSec + 120;
 
+    // ===== الرولر =====
     const rulerMarks = document.getElementById('rulerMarks');
     rulerMarks.innerHTML = '';
-    const step = projectData.totalDuration > 60 ? 5 : 2;
+    rulerMarks.style.display = 'flex';
+    rulerMarks.style.direction = 'ltr';
+
+    let step = 1;
+    if (pxPerSec < 30) step = 5;
+    else if (pxPerSec < 60) step = 2;
+    else step = 1;
+
     for (let t = 0; t <= projectData.totalDuration; t += step) {
         const mark = document.createElement('div');
-        mark.className = `ruler-mark${t % 10 === 0 ? ' major' : ''}`;
+        const isMajor = t % (step * 5) === 0;
+        mark.className = `ruler-mark${isMajor ? ' major' : ''}`;
         mark.style.width = (pxPerSec * step) + 'px';
-        const m = Math.floor(t/60), s = Math.floor(t%60);
-        mark.innerHTML = `<span class="label">${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}</span>`;
+        mark.style.flexShrink = '0';
+
+        if (isMajor || step >= 2) {
+            const m = Math.floor(t / 60);
+            const s = Math.floor(t % 60);
+            mark.innerHTML = `<span class="label">${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}</span>`;
+        }
         rulerMarks.appendChild(mark);
     }
 
+    // ===== المسارات =====
     container.innerHTML = '';
     projectData.layers.forEach((layer, layerIdx) => {
         if (!layer.visible) return;
@@ -2216,9 +2238,7 @@ function renderTimeline() {
                 seekTo(clip.start);
             };
 
-            block.ondblclick = () => {
-                editClipProperties(clip.id);
-            };
+            block.ondblclick = () => editClipProperties(clip.id);
 
             const resizeHandle = document.createElement('div');
             resizeHandle.style.cssText = 'position:absolute;right:-4px;top:0;width:8px;height:100%;cursor:ew-resize;z-index:5;';
@@ -2363,9 +2383,7 @@ function addClip(type) {
                        type === 'video' ? 'video/*' : 'audio/*';
         input.multiple = true;
         input.onchange = (e) => {
-            if (e.target.files.length > 0) {
-                handleFiles(e.target.files);
-            }
+            if (e.target.files.length > 0) handleFiles(e.target.files);
         };
         input.click();
         return;
@@ -2374,12 +2392,12 @@ function addClip(type) {
     if (type === 'text') {
         const text = prompt('نص المقطع:');
         if (!text) return;
-        let startTime = getLayerEndTime(selectedLayerIndex);
+
         const clip = {
             id: clipIdCounter++,
             type: 'text',
             layer: selectedLayerIndex,
-            start: startTime,
+            start: currentTime, // ✅ من المؤشر
             duration: 2,
             title: text.slice(0, 18),
             content: text,
@@ -2518,17 +2536,17 @@ function saveClipProperties() {
 //  PLAYBACK
 // ============================================================
 function togglePlay() {
-    if (isPlaying) {
-        pausePlay();
-    } else {
-        startPlay();
+    if (isRecording) {
+        showToast('⚠️ لا يمكن التشغيل أثناء التسجيل', 'warning');
+        return;
     }
+    if (isPlaying) pausePlay();
+    else startPlay();
 }
 
 function startPlay() {
-    if (currentTime >= projectData.totalDuration) {
-        currentTime = 0;
-    }
+    if (currentTime >= projectData.totalDuration) currentTime = 0;
+
     isPlaying = true;
     document.getElementById('playBtn').textContent = '⏸';
     document.getElementById('playhead').classList.add('active');
@@ -2546,8 +2564,11 @@ function startPlay() {
         v.play().catch(() => {});
     });
 
+    const intervalMs = 40;
     playInterval = setInterval(() => {
-        currentTime += 0.04 * playbackSpeed;
+        if (isRecording) return; // لا تتقدم أثناء التسجيل (المؤقت الخاص بذلك)
+        currentTime += (intervalMs / 1000) * playbackSpeed;
+
         if (currentTime >= projectData.totalDuration) {
             if (isLooping) {
                 currentTime = 0;
@@ -2566,41 +2587,36 @@ function startPlay() {
         }
         updatePlayhead();
         renderPreview(currentTime);
-    }, 40);
+    }, intervalMs);
 }
 
 function pausePlay() {
     isPlaying = false;
     document.getElementById('playBtn').textContent = '▶';
     document.getElementById('playhead').classList.remove('active');
-    if (audioPlayer) {
-        audioPlayer.pause();
-    }
-    Object.values(videoElements).forEach(v => {
-        v.pause();
+
+    if (audioPlayer) audioPlayer.pause();
+    Object.values(videoElements).forEach(v => { try { v.pause(); } catch(e) {} });
+
+    audioNodes.forEach(node => {
+        try { node.source.stop(); } catch(e) {}
+        node.isPlaying = false;
     });
+    audioNodes = [];
+
     if (playInterval) {
         clearInterval(playInterval);
         playInterval = null;
     }
 }
 
-function stepForward() {
-    seekTo(Math.min(currentTime + 0.5, projectData.totalDuration));
-}
-
-function stepBackward() {
-    seekTo(Math.max(currentTime - 0.5, 0));
-}
+function stepForward() { seekTo(Math.min(currentTime + 0.5, projectData.totalDuration)); }
+function stepBackward() { seekTo(Math.max(currentTime - 0.5, 0)); }
 
 function changeSpeed() {
     playbackSpeed = parseFloat(document.getElementById('speedSelect').value);
-    if (audioPlayer) {
-        audioPlayer.playbackRate = playbackSpeed;
-    }
-    Object.values(videoElements).forEach(v => {
-        v.playbackRate = playbackSpeed;
-    });
+    if (audioPlayer) audioPlayer.playbackRate = playbackSpeed;
+    Object.values(videoElements).forEach(v => { v.playbackRate = playbackSpeed; });
 }
 
 function toggleLoop() {
@@ -2611,11 +2627,10 @@ function toggleLoop() {
 function toggleMute() {
     isMuted = !isMuted;
     document.getElementById('muteBtn').textContent = isMuted ? '🔇' : '🔊';
-    if (audioPlayer) {
-        audioPlayer.muted = isMuted;
-    }
-    Object.values(videoElements).forEach(v => {
-        v.muted = isMuted;
+    if (audioPlayer) audioPlayer.muted = isMuted;
+    Object.values(videoElements).forEach(v => { v.muted = isMuted; });
+    audioNodes.forEach(node => {
+        if (node.gain) node.gain.gain.value = isMuted ? 0 : 0.8;
     });
 }
 
@@ -2641,6 +2656,10 @@ document.addEventListener('fullscreenchange', () => {
 });
 
 function seekTo(time) {
+    if (isRecording) {
+        showToast('⚠️ لا يمكن التمرير أثناء التسجيل', 'warning');
+        return;
+    }
     currentTime = Math.max(0, Math.min(time, projectData.totalDuration));
     if (isPlaying) {
         pausePlay();
@@ -2670,57 +2689,72 @@ document.getElementById('seekSlider').addEventListener('input', function() {
 });
 
 // ============================================================
-//  RECORDING — مع رفع تلقائي إلى Supabase
+//  RECORDING — يبدأ من المؤشر ويمتد تلقائياً
 // ============================================================
 async function toggleRecording() {
     const btn = document.getElementById('recordBtn');
+    const indicator = document.getElementById('recordingIndicator');
 
+    // ===== إيقاف التسجيل =====
     if (isRecording) {
         if (mediaRecorder && mediaRecorder.state !== 'inactive') {
             mediaRecorder.stop();
         }
+        if (recordingTimerInterval) {
+            clearInterval(recordingTimerInterval);
+            recordingTimerInterval = null;
+        }
         isRecording = false;
         btn.textContent = '🎙️';
         btn.classList.remove('recording');
-        showToast('⏹️ تم الإيقاف', 'info');
+        indicator.classList.remove('active');
+        document.getElementById('playhead').classList.remove('recording');
+        showToast('⏹️ تم إيقاف التسجيل', 'info');
         return;
     }
 
+    // ===== بدء التسجيل =====
     try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        recordingStream = stream;
 
         mediaRecorder = new MediaRecorder(stream);
         recordedChunks = [];
 
+        recordingStartTime = currentTime;
+
+        if (isPlaying) pausePlay();
+
+        recordingWallStart = performance.now();
+
         mediaRecorder.ondataavailable = (event) => {
-            if (event.data.size > 0) {
-                recordedChunks.push(event.data);
-            }
+            if (event.data.size > 0) recordedChunks.push(event.data);
         };
 
         mediaRecorder.onstop = async () => {
+            const wallElapsed = (performance.now() - recordingWallStart) / 1000;
+            const duration = Math.max(0.5, wallElapsed);
+
             if (recordedChunks.length === 0) {
-                stream.getTracks().forEach(track => track.stop());
+                stream.getTracks().forEach(t => t.stop());
+                recordingStream = null;
                 return;
             }
 
             const blob = new Blob(recordedChunks, { type: 'audio/webm' });
-            const duration = Math.min(10, Math.max(1, recordedChunks.length * 0.04));
-
             const fileName = `تسجيل ${new Date().toLocaleTimeString()}.webm`;
             const fileObj = new File([blob], fileName, { type: 'audio/webm' });
 
-            // ✅ ارفع التسجيل إلى Supabase
             showToast('⏳ جاري رفع التسجيل...', 'info');
             const supabaseUrl = await uploadFileToSupabase(fileObj, projectId);
 
             if (!supabaseUrl) {
                 showToast('❌ فشل رفع التسجيل', 'error');
-                stream.getTracks().forEach(track => track.stop());
+                stream.getTracks().forEach(t => t.stop());
+                recordingStream = null;
                 return;
             }
 
-            // أضف ملف الوسائط
             projectData.mediaFiles.push({
                 name: fileName,
                 size: blob.size,
@@ -2728,23 +2762,22 @@ async function toggleRecording() {
                 url: supabaseUrl,
             });
 
-            let startTime = getLayerEndTime(selectedLayerIndex);
-
             const clip = {
                 id: clipIdCounter++,
                 type: 'audio',
                 layer: selectedLayerIndex,
-                start: startTime,
+                start: recordingStartTime,
                 duration: duration,
                 title: `تسجيل ${new Date().toLocaleTimeString()}`,
-                content: supabaseUrl,   // ← Supabase URL
+                content: supabaseUrl,
                 color: COLORS.audio,
                 icon: '🎤',
                 metadata: {
                     recorded: true,
                     duration: duration,
                     file: fileName,
-                    type: 'audio/webm'
+                    type: 'audio/webm',
+                    recordingStart: recordingStartTime
                 }
             };
 
@@ -2754,24 +2787,68 @@ async function toggleRecording() {
             renderMediaGallery();
             updateStatus();
             saveProjectData();
-            showToast('✅ تم التسجيل ورفعه', 'success');
 
-            stream.getTracks().forEach(track => track.stop());
+            showToast(`✅ تم التسجيل (${duration.toFixed(1)}ث)`, 'success');
+            stream.getTracks().forEach(t => t.stop());
+            recordingStream = null;
+
+            // إعادة المؤشر إلى نهاية التسجيل
+            currentTime = recordingStartTime + duration;
+            updatePlayhead();
+            renderPreview(currentTime);
         };
 
-        mediaRecorder.start(1000);
+        mediaRecorder.start(100);
         isRecording = true;
         btn.textContent = '⏹️';
         btn.classList.add('recording');
-        showToast('🔴 جاري التسجيل...', 'info');
+        indicator.classList.add('active');
+        document.getElementById('recordingStartLabel').textContent = formatTime(recordingStartTime);
+        document.getElementById('playhead').classList.add('recording');
+
+        showToast(`🔴 بدء التسجيل من ${formatTime(recordingStartTime)}`, 'info');
+
+        // ===== تحريك المؤشر تلقائياً =====
+        recordingTimerInterval = setInterval(() => {
+            if (!isRecording) return;
+            const elapsed = (performance.now() - recordingWallStart) / 1000;
+            const newTime = recordingStartTime + elapsed;
+
+            currentTime = newTime;
+
+            // ✅ وسّع totalDuration أثناء التسجيل حتى لا يتوقف المؤشر
+            const neededDuration = currentTime + 2;
+            if (neededDuration > projectData.totalDuration) {
+                projectData.totalDuration = neededDuration;
+            }
+
+            updatePlayhead();
+
+            // ✅ مرّر تلقائياً
+            const scroll = document.getElementById('timelineContainer');
+            const pxPerSec = projectData.cellWidth / 2;
+            const playheadX = currentTime * pxPerSec + 60;
+            if (playheadX > scroll.scrollLeft + scroll.clientWidth - 120) {
+                scroll.scrollLeft = playheadX - scroll.clientWidth + 120;
+            }
+
+            // ✅ تحديث العدادات
+            document.getElementById('currentTimeDisplay').textContent = formatTime(currentTime);
+            document.getElementById('totalTimeDisplay').textContent = formatTime(projectData.totalDuration);
+            const slider = document.getElementById('seekSlider');
+            if (projectData.totalDuration > 0) {
+                slider.value = Math.min(100, (currentTime / projectData.totalDuration) * 100);
+            }
+        }, 50);
 
     } catch (err) {
+        console.error(err);
         showToast('⚠️ تعذر الوصول للميكروفون', 'error');
     }
 }
 
 // ============================================================
-//  FILE HANDLING — مع رفع تلقائي
+//  FILE HANDLING
 // ============================================================
 async function handleFiles(files) {
     const previewContainer = document.getElementById('importPreview');
@@ -2779,7 +2856,6 @@ async function handleFiles(files) {
 
     const fileArray = Array.from(files);
 
-    // ارفع الملفات واحداً تلو الآخر
     for (const file of fileArray) {
         const type = file.type.split('/')[0];
         if (['video', 'audio', 'image'].includes(type)) {
@@ -2788,7 +2864,6 @@ async function handleFiles(files) {
             preview.textContent = `⏳ ${file.name.slice(0, 12)}`;
             previewContainer.appendChild(preview);
 
-            // ارفع (await)
             await addMediaFile(file);
 
             preview.textContent = `${TYPE_ICONS[type] || '📄'} ${file.name.slice(0, 12)}`;
@@ -2838,9 +2913,7 @@ function setupDragDrop() {
     });
 
     fileInput.addEventListener('change', (e) => {
-        if (e.target.files.length > 0) {
-            handleFiles(e.target.files);
-        }
+        if (e.target.files.length > 0) handleFiles(e.target.files);
         fileInput.value = '';
     });
 
@@ -2903,6 +2976,10 @@ function setupKeyboardShortcuts() {
             case 'F':
                 toggleFullscreen();
                 break;
+            case 'r':
+            case 'R':
+                toggleRecording();
+                break;
         }
     });
 }
@@ -2918,26 +2995,22 @@ document.getElementById('zoom-slider').addEventListener('input', function() {
 });
 
 // ============================================================
-//  SAVE - ONLY SUPABASE
+//  SAVE
 // ============================================================
 function saveProjectData() {
     if (!isDataLoaded) return;
 
-    const data = {
+    saveProjectToSupabase(projectId, {
         clips: projectData.clips,
         layers: projectData.layers,
         totalDuration: projectData.totalDuration,
         cellWidth: projectData.cellWidth,
         mediaFiles: projectData.mediaFiles
-    };
-
-    saveProjectToSupabase(projectId, data).catch(() => {
-        updateSyncStatus('error');
-    });
+    }).catch(() => updateSyncStatus('error'));
 }
 
 // ============================================================
-//  LOAD - ONLY SUPABASE
+//  LOAD
 // ============================================================
 async function loadProjectData() {
     const overlay = document.getElementById('loadingOverlay');
@@ -2966,11 +3039,10 @@ async function loadProjectData() {
             updateSyncStatus('synced');
             isDataLoaded = true;
             overlay.classList.add('hidden');
-            showToast('✅ تم تحميل المشروع من Supabase', 'success');
+            showToast('✅ تم تحميل المشروع', 'success');
             return;
         }
 
-        // إذا كان هناك مشاهد من الخادم (مشروع جديد)
         if (scenes && scenes.length > 0) {
             scenes.forEach((scene, i) => {
                 const clip = {
@@ -2995,7 +3067,6 @@ async function loadProjectData() {
             renderMediaGallery();
             renderPreview(currentTime);
 
-            // حفظ المشروع الجديد على Supabase
             await saveProjectData();
 
             isDataLoaded = true;
@@ -3004,7 +3075,6 @@ async function loadProjectData() {
             return;
         }
 
-        // مشروع فارغ
         projectData.layers = [{ name: 'طبقة 1', visible: true, locked: false }];
         renderLayers();
         renderTimeline();
@@ -3021,7 +3091,6 @@ async function loadProjectData() {
         showToast('❌ تعذر تحميل المشروع: ' + e.message, 'error');
         updateSyncStatus('error');
 
-        // عرض واجهة فارغة
         projectData.layers = [{ name: 'طبقة 1', visible: true, locked: false }];
         renderLayers();
         renderTimeline();
@@ -3087,10 +3156,7 @@ function startRender(projectId) {
             start: c.start,
             duration: c.duration,
             layer: c.layer,
-            // ✅ URL فقط إذا كان http
-            content: (c.content && c.content.startsWith('http'))
-                ? c.content
-                : null,
+            content: (c.content && c.content.startsWith('http')) ? c.content : null,
             title: c.title,
             metadata: c.metadata
         })),
@@ -3156,7 +3222,6 @@ function pollRenderStatus(jobId) {
     const statusEl = document.getElementById('renderStatus');
     const progressFill = document.getElementById('renderProgressFill');
     const loading = document.getElementById('renderLoading');
-    const btn = document.getElementById('renderBtn');
 
     renderPollInterval = setInterval(() => {
         attempts++;
@@ -3189,8 +3254,6 @@ function pollRenderStatus(jobId) {
             .then(data => {
                 if (!data) return;
 
-                console.log('📊 Render status:', data);
-
                 if (progressFill && data.progress !== undefined) {
                     progressFill.style.width = Math.min(data.progress, 100) + '%';
                 }
@@ -3199,12 +3262,12 @@ function pollRenderStatus(jobId) {
                     clearInterval(renderPollInterval);
                     renderPollInterval = null;
 
-                    if (statusEl) statusEl.textContent = '✅ اكتمل الرندر بنجاح! جاري التحويل...';
+                    if (statusEl) statusEl.textContent = '✅ اكتمل الرندر بنجاح!';
                     if (loading) loading.classList.remove('active');
                     if (progressFill) progressFill.style.width = '100%';
 
                     resetRenderUI();
-                    showToast('✅ تم الرندر بنجاح! جاري فتح صفحة المشروع...', 'success');
+                    showToast('✅ تم الرندر بنجاح!', 'success');
 
                     setTimeout(() => {
                         window.location.href = `/projects/${projectId}`;
@@ -3222,15 +3285,12 @@ function pollRenderStatus(jobId) {
                 } else if (data.status === 'processing') {
                     if (statusEl) {
                         let msg = `🔄 جاري الرندر... ${Math.round(data.progress || 0)}%`;
-                        if (data.current_stage) {
-                            msg += ` - ${data.current_stage}`;
-                        }
+                        if (data.current_stage) msg += ` - ${data.current_stage}`;
                         statusEl.textContent = msg;
                     }
 
                 } else if (data.status === 'pending') {
                     if (statusEl) statusEl.textContent = '⏳ في انتظار البدء...';
-
                 } else {
                     if (statusEl) statusEl.textContent = `📊 الحالة: ${data.status}`;
                 }
@@ -3330,12 +3390,14 @@ window.addEventListener('beforeunload', function() {
     if (isRecording && mediaRecorder) {
         try { mediaRecorder.stop(); } catch(e) {}
     }
-    if (playInterval) {
-        clearInterval(playInterval);
+    if (recordingTimerInterval) {
+        clearInterval(recordingTimerInterval);
     }
-    if (renderPollInterval) {
-        clearInterval(renderPollInterval);
+    if (recordingStream) {
+        try { recordingStream.getTracks().forEach(t => t.stop()); } catch(e) {}
     }
+    if (playInterval) clearInterval(playInterval);
+    if (renderPollInterval) clearInterval(renderPollInterval);
 
     if (audioContext) {
         try { audioContext.close(); } catch(e) {}
@@ -3356,6 +3418,6 @@ window.addEventListener('beforeunload', function() {
     });
 });
 
-console.log('🎬 المحرر جاهز - رفع الوسائط إلى Supabase ✅');
+console.log('🎬 المحرر جاهز - LTR + تسجيل من المؤشر ✅');
 </script>
 {% endblock %}
