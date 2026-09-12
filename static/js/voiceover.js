@@ -3,19 +3,14 @@
  * Multi-Provider: Edge TTS + HuggingFace + ElevenLabs + D-ID
  *
  * ✅ إصلاح: state is not defined
- *    نستخدم متغيرات timeline-core.js مباشرة:
- *    - projectData
- *    - projectId
- *    - currentTime
+ * ✅ إصلاح: إضافة المقطع للخط الزمني
+ * ✅ إصلاح: توافق كامل مع timeline-core.js و timeline-timeline.js
  */
 
 // ============================================================
 // Safe Accessors — الوصول الآمن لمتغيرات timeline-core.js
 // ============================================================
 
-/**
- * الوصول الآمن إلى projectData
- */
 function safeGetProjectData() {
     if (typeof projectData !== 'undefined' && projectData) {
         return projectData;
@@ -30,9 +25,6 @@ function safeGetProjectData() {
     };
 }
 
-/**
- * الوصول الآمن إلى projectId
- */
 function safeGetProjectId() {
     if (typeof projectId !== 'undefined' && projectId) {
         return projectId;
@@ -40,9 +32,6 @@ function safeGetProjectId() {
     return '';
 }
 
-/**
- * الوصول الآمن إلى currentTime
- */
 function safeGetCurrentTime() {
     if (typeof currentTime !== 'undefined' && currentTime != null) {
         return currentTime;
@@ -75,9 +64,6 @@ const VoiceoverState = {
 };
 
 
-// ============================================================
-// حالة Voice Cloning
-// ============================================================
 const VoiceCloneState = {
     savedVoices: [],
     edgeVoices: [],
@@ -89,9 +75,6 @@ const VoiceCloneState = {
 };
 
 
-// ============================================================
-// حالة Sync / Process
-// ============================================================
 const SyncProcessState = {
     rawAudioBlob: null,
     rawAudioUrl: null,
@@ -115,9 +98,6 @@ const SyncProcessState = {
 };
 
 
-// ============================================================
-// حالة Talking Head
-// ============================================================
 const TalkingHeadState = {
     imageBlob: null,
     imageUrl: null,
@@ -172,7 +152,6 @@ function openVoiceoverStudio(clipId = null) {
 
     populateVoiceSelect();
 
-    // ✅ استخدام projectData بدلاً من state
     const pd = safeGetProjectData();
     if (clipId && pd.clips) {
         const clip = pd.clips.find(c => c.id === clipId);
@@ -821,12 +800,12 @@ async function saveRecordingToTimeline() {
 
     const formData = new FormData();
     formData.append('file', VoiceoverState.pendingBlob, `voiceover_${Date.now()}.webm`);
-    formData.append('project_id', safeGetProjectId());  // ✅
+    formData.append('project_id', safeGetProjectId());
     formData.append('title', title);
     formData.append('script', script);
     formData.append('script_segments', JSON.stringify(VoiceoverState.scriptSegments));
     formData.append('source', 'recording');
-    formData.append('start', String(safeGetCurrentTime()));  // ✅
+    formData.append('start', String(safeGetCurrentTime()));
 
     try {
         const res = await fetch('/api/media/upload-voiceover', {
@@ -845,7 +824,7 @@ async function saveRecordingToTimeline() {
             script: script,
             script_segments: VoiceoverState.scriptSegments,
             duration: data.duration || VoiceoverState.pendingDuration || 3,
-            start: safeGetCurrentTime(),  // ✅
+            start: safeGetCurrentTime(),
             source: 'recording',
         });
 
@@ -872,12 +851,12 @@ async function saveAudioFileToTimeline() {
     const formData = new FormData();
     formData.append('file', VoiceoverState.pendingBlob,
         VoiceoverState.pendingFileName || 'audio.webm');
-    formData.append('project_id', safeGetProjectId());  // ✅
+    formData.append('project_id', safeGetProjectId());
     formData.append('title', title);
     formData.append('script', script);
     formData.append('script_segments', JSON.stringify(VoiceoverState.scriptSegments));
     formData.append('source', 'file');
-    formData.append('start', String(safeGetCurrentTime()));  // ✅
+    formData.append('start', String(safeGetCurrentTime()));
 
     try {
         const res = await fetch('/api/media/upload-voiceover', {
@@ -896,7 +875,7 @@ async function saveAudioFileToTimeline() {
             script: script,
             script_segments: VoiceoverState.scriptSegments,
             duration: data.duration || VoiceoverState.pendingDuration || 3,
-            start: safeGetCurrentTime(),  // ✅
+            start: safeGetCurrentTime(),
             source: 'file',
             fileName: VoiceoverState.pendingFileName,
         });
@@ -910,23 +889,70 @@ async function saveAudioFileToTimeline() {
 
 
 // ============================================================
-// إضافة مقطع للخط الزمني
+// ✅ إضافة مقطع للخط الزمني — متوافق مع timeline-core.js
 // ============================================================
 async function addVoiceoverClip(clipData) {
-    // ✅ استخدام projectData بدلاً من state
-    const pd = safeGetProjectData();
-
-    if (!pd.clips) pd.clips = [];
-    if (!pd.layers) {
-        pd.layers = [{ id: 'layer-1', name: 'الطبقة 1', visible: true }];
+    // ── 1. التحقق من projectData ─────────────────────
+    if (typeof projectData === 'undefined') {
+        console.error('❌ projectData غير معرّف');
+        showToast('❌ خطأ في النظام — أعد تحميل الصفحة', 'error');
+        return null;
     }
 
+    if (!projectData.clips) projectData.clips = [];
+    if (!projectData.layers) {
+        projectData.layers = [{ name: 'طبقة 1', visible: true, locked: false }];
+    }
+
+    // ── 2. تحديد الطبقة كرقم ────────────────────────
+    let layerIndex = 0;
+    if (typeof selectedLayerIndex !== 'undefined' && selectedLayerIndex != null) {
+        layerIndex = selectedLayerIndex;
+    }
+    if (clipData.layer !== undefined && clipData.layer !== null) {
+        layerIndex = clipData.layer;
+    }
+
+    // ── 3. توليد ID رقمي ────────────────────────────
+    let newId;
+    if (typeof clipIdCounter !== 'undefined') {
+        newId = clipIdCounter++;
+    } else {
+        const existingIds = projectData.clips
+            .map(c => typeof c.id === 'number' ? c.id : 0)
+            .filter(id => id > 0);
+        newId = existingIds.length > 0 ? Math.max(...existingIds) + 1 : 1;
+        window.clipIdCounter = newId + 1;
+    }
+
+    // ── 4. حساب البداية والمدة ──────────────────────
+    const startTime = (typeof clipData.start === 'number' && clipData.start >= 0)
+        ? clipData.start
+        : safeGetCurrentTime();
+
+    let duration = clipData.duration || 0;
+    if (duration <= 0 && clipData.script) {
+        duration = estimateSpeechDuration(clipData.script);
+    }
+    if (duration <= 0) duration = 3;
+
+    // ── 5. بناء المقطع ──────────────────────────────
     const clip = {
-        id: 'clip-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7),
-        layerId: pd.layers[pd.layers.length - 1].id || 0,
-        start: clipData.start || 0,
-        duration: clipData.duration || 3,
-        ...clipData,
+        // حقول أساسية (مطلوبة)
+        id: newId,
+        type: clipData.type || 'audio',
+        layer: layerIndex,
+        start: round2(startTime),
+        duration: round2(duration),
+        title: clipData.title || `مقطع صوتي ${newId}`,
+        content: clipData.url || null,
+        color: clipData.color || '#059669',
+        icon: clipData.icon || '🎤',
+
+        // حقول إضافية
+        url: clipData.url || null,
+        path: clipData.path || null,
+        mediaId: clipData.mediaId || null,
         script: clipData.script || '',
         scriptSegments: clipData.script_segments || clipData.scriptSegments || [],
         tts: clipData.tts || null,
@@ -935,30 +961,83 @@ async function addVoiceoverClip(clipData) {
         voice_id: clipData.voice_id || null,
         processed: clipData.processed || false,
         processingOptions: clipData.processingOptions || null,
+        metadata: clipData.metadata || {},
     };
 
-    pd.clips.push(clip);
+    // ── 6. أضف المقطع ──────────────────────────────
+    projectData.clips.push(clip);
+    console.log(`✅ [addVoiceoverClip] مقطع جديد id=${newId}`, clip);
 
-    // إعادة الرسم
-    if (typeof renderTimeline === 'function') {
-        try { renderTimeline(); } catch (e) { console.warn('renderTimeline:', e); }
-    }
-    if (typeof renderLayers === 'function') {
-        try { renderLayers(); } catch (e) { console.warn('renderLayers:', e); }
-    }
-    if (typeof updateStatus === 'function') {
-        try { updateStatus(); } catch (e) { console.warn('updateStatus:', e); }
-    }
-    if (typeof renderPreview === 'function') {
-        try { renderPreview(safeGetCurrentTime()); } catch (e) { console.warn('renderPreview:', e); }
+    // ── 7. حدّث المدة الإجمالية ─────────────────────
+    const endTime = clip.start + clip.duration;
+    if (endTime > (projectData.totalDuration || 0)) {
+        projectData.totalDuration = endTime + 2;
     }
 
-    // حفظ في السحابة
+    // ── 8. إعادة الرسم ─────────────────────────────
+    try {
+        if (typeof renderTimeline === 'function') {
+            renderTimeline();
+            console.log('🔄 [addVoiceoverClip] renderTimeline() نُفِّذ');
+        } else {
+            console.warn('⚠️ renderTimeline غير معرّفة');
+        }
+    } catch (e) {
+        console.error('❌ خطأ في renderTimeline:', e);
+    }
+
+    try {
+        if (typeof renderLayers === 'function') renderLayers();
+    } catch (e) { console.warn('renderLayers:', e); }
+
+    try {
+        if (typeof updateStatus === 'function') updateStatus();
+    } catch (e) { console.warn('updateStatus:', e); }
+
+    try {
+        if (typeof renderPreview === 'function') renderPreview(safeGetCurrentTime());
+    } catch (e) { console.warn('renderPreview:', e); }
+
+    // ── 9. احفظ في السحابة ─────────────────────────
     if (typeof saveProjectData === 'function') {
-        try { await saveProjectData(); } catch (e) { console.warn('saveProjectData:', e); }
+        try {
+            await saveProjectData();
+            console.log('✅ [addVoiceoverClip] تم الحفظ');
+        } catch (e) {
+            console.warn('⚠️ فشل الحفظ:', e);
+        }
     }
+
+    // ── 10. Scroll للمقطع الجديد ────────────────────
+    setTimeout(() => {
+        try { scrollToClipById(newId); } catch (e) { }
+    }, 300);
 
     return clip;
+}
+
+
+/**
+ * تمرير الخط الزمني لمقطع + وميض
+ */
+function scrollToClipById(clipId) {
+    const clipEl = document.querySelector(`.clip-block[data-id="${clipId}"]`) ||
+                   document.querySelector(`[data-clip-id="${clipId}"]`);
+
+    if (!clipEl) {
+        console.log(`ℹ️ لم يُعثر على clip-block للمقطع ${clipId}`);
+        return;
+    }
+
+    clipEl.scrollIntoView({
+        behavior: 'smooth',
+        block: 'nearest',
+        inline: 'center',
+    });
+
+    clipEl.style.transition = 'box-shadow 0.5s';
+    clipEl.style.boxShadow = '0 0 20px 4px rgba(59, 130, 246, 0.8)';
+    setTimeout(() => { clipEl.style.boxShadow = ''; }, 1500);
 }
 
 
@@ -987,7 +1066,6 @@ function estimateSpeechDuration(script, wordsPerSecond = 2.5) {
 }
 
 function getCurrentPlayheadTime() {
-    // ✅ استخدام currentTime بدلاً من state.currentTime
     return safeGetCurrentTime();
 }
 
@@ -1010,7 +1088,6 @@ function escapeHtml(text) {
 // تشغيل النص أثناء العرض
 // ============================================================
 function syncScriptWithPlayback(playbackTime) {
-    // ✅ استخدام projectData بدلاً من state
     const pd = safeGetProjectData();
     if (!pd.clips) return;
 
@@ -1048,7 +1125,7 @@ function showScriptOverlay(text, title) {
 
 
 // ============================================================
-// 🎙️ VOICE CLONING — فتح/إغلاق
+// 🎙️ VOICE CLONING
 // ============================================================
 function initSavedVoices() {
     try {
@@ -1273,7 +1350,7 @@ async function cloneVoiceAndSave() {
         formData.append('file', VoiceoverState.pendingBlob, 'my_voice.webm');
         formData.append('name', displayName);
         formData.append('description', displayName);
-        formData.append('project_id', safeGetProjectId());  // ✅
+        formData.append('project_id', safeGetProjectId());
 
         const res = await fetch('/api/voice/clone', {
             method: 'POST',
@@ -1292,8 +1369,7 @@ async function cloneVoiceAndSave() {
             throw new Error(data.error || data.detail || 'فشل الاستنساخ');
         }
 
-        // احفظ في المشروع
-        const saveRes = await fetch(`/api/voice/saved/${safeGetProjectId()}`, {  // ✅
+        const saveRes = await fetch(`/api/voice/saved/${safeGetProjectId()}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -1482,13 +1558,12 @@ async function generateWithCache() {
     try {
         let res, remoteUrl, duration, cacheHit, provider;
 
-        // HuggingFace
         if (isHuggingFace && VoiceoverState.pendingBlob) {
             const formData = new FormData();
             formData.append('file', VoiceoverState.pendingBlob, 'reference.webm');
             formData.append('text', script);
             formData.append('language', 'ar');
-            formData.append('project_id', safeGetProjectId());  // ✅
+            formData.append('project_id', safeGetProjectId());
 
             res = await fetch('/api/voice/hf-clone', {
                 method: 'POST',
@@ -1505,12 +1580,11 @@ async function generateWithCache() {
             cacheHit = false;
             provider = 'huggingface';
         }
-        // Edge TTS
         else {
             const formData = new FormData();
             formData.append('voice_id', VoiceCloneState.selectedVoiceId);
             formData.append('script', script);
-            formData.append('project_id', safeGetProjectId());  // ✅
+            formData.append('project_id', safeGetProjectId());
             formData.append('use_cache', useCache ? 'true' : 'false');
             formData.append('speed', '1.0');
 
@@ -1572,12 +1646,13 @@ async function generateWithCache() {
                     <br>📡 المزود: <strong>${provider}</strong>
                     <br>⏱️ المدة: ${duration.toFixed(1)} ثانية
                     <br>📝 الأحرف: ${script.length}
+                    <br><br>💡 اضغط "حفظ في المشروع" لإضافته للخط الزمني
                 </div>
             `;
         }
 
         showToast(
-            cacheHit ? '💾 تم الجلب من Cache' : '🎙️ تم التوليد بنجاح',
+            cacheHit ? '💾 تم الجلب من Cache' : '🎙️ تم التوليد — اضغط حفظ',
             'success'
         );
 
@@ -1626,7 +1701,7 @@ function renderGeneratedAudio(localUrl, duration, script, cacheHit = false, prov
             </div>
             <div style="display:flex;gap:8px;margin-top:10px;">
                 <button onclick="saveGeneratedToProject()" class="btn-primary btn-sm" style="flex:1;">
-                    💾 حفظ في المشروع
+                    💾 حفظ في المشروع (أضف للخط الزمني)
                 </button>
                 <button onclick="downloadGenerated()" class="btn-secondary btn-sm">
                     ⬇️ تحميل
@@ -1643,7 +1718,7 @@ function renderGeneratedAudio(localUrl, duration, script, cacheHit = false, prov
 
 
 // ============================================================
-// 💾 حفظ الصوت المُولَّد
+// 💾 حفظ الصوت المُولَّد — مع إغلاق تلقائي
 // ============================================================
 async function saveGeneratedToProject() {
     if (!SyncProcessState.processedBlob) {
@@ -1662,12 +1737,12 @@ async function saveGeneratedToProject() {
 
     const formData = new FormData();
     formData.append('file', SyncProcessState.processedBlob, 'generated.mp3');
-    formData.append('project_id', safeGetProjectId());  // ✅
+    formData.append('project_id', safeGetProjectId());
     formData.append('title', title);
     formData.append('script', script);
     formData.append('script_segments', JSON.stringify(VoiceoverState.scriptSegments));
     formData.append('source', source);
-    formData.append('start', String(safeGetCurrentTime()));  // ✅
+    formData.append('start', String(safeGetCurrentTime()));
     formData.append('processed', 'true');
     formData.append('processing_options', JSON.stringify({
         voice_id: VoiceCloneState.selectedVoiceId,
@@ -1682,7 +1757,8 @@ async function saveGeneratedToProject() {
         const data = await res.json();
         if (!data.success) throw new Error(data.error || 'فشل الحفظ');
 
-        await addVoiceoverClip({
+        // ✅ إضافة المقطع للخط الزمني
+        const addedClip = await addVoiceoverClip({
             type: 'audio',
             title: title,
             url: data.url,
@@ -1691,17 +1767,26 @@ async function saveGeneratedToProject() {
             script: script,
             script_segments: VoiceoverState.scriptSegments,
             duration: data.duration || SyncProcessState.clonedDuration || 0,
-            start: safeGetCurrentTime(),  // ✅
+            start: safeGetCurrentTime(),
             source: source,
             processed: true,
             voice_id: VoiceCloneState.selectedVoiceId,
         });
 
-        showToast('✅ تم حفظ الصوت المُولَّد في المشروع', 'success');
-        closeVoiceCloneModal();
-        closeVoiceoverStudio();
+        if (addedClip) {
+            showToast('✅ تم إضافة المقطع للخط الزمني', 'success');
+        } else {
+            showToast('⚠️ تم الحفظ لكن فشلت الإضافة للخط الزمني', 'warning');
+        }
+
+        // ✅ أغلق النافذة تلقائياً بعد الحفظ
+        setTimeout(() => {
+            closeVoiceCloneModal();
+            closeVoiceoverStudio();
+        }, 500);
 
     } catch (err) {
+        console.error(err);
         showToast('❌ فشل الحفظ: ' + err.message, 'error');
     }
 }
@@ -1779,7 +1864,7 @@ async function renameVoice(recordId, currentName) {
     if (!newName || newName === currentName) return;
 
     try {
-        const res = await fetch(`/api/voice/saved/${safeGetProjectId()}/${recordId}`, {  // ✅
+        const res = await fetch(`/api/voice/saved/${safeGetProjectId()}/${recordId}`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ display_name: newName }),
@@ -1804,7 +1889,7 @@ async function deleteSavedVoice(recordId, name) {
     if (!confirm(`حذف الصوت "${name}"؟`)) return;
 
     try {
-        const res = await fetch(`/api/voice/saved/${safeGetProjectId()}/${recordId}`, {  // ✅
+        const res = await fetch(`/api/voice/saved/${safeGetProjectId()}/${recordId}`, {
             method: 'DELETE',
         });
         const data = await res.json();
@@ -2112,7 +2197,7 @@ function renderSegmentsForSync() {
 
 
 // ============================================================
-// 🎭 TALKING HEAD — فتح/إغلاق
+// 🎭 TALKING HEAD
 // ============================================================
 function openTalkingHeadModal() {
     const modal = document.getElementById('talkingHeadModal');
@@ -2178,9 +2263,6 @@ function resetTalkingHeadUI() {
 }
 
 
-// ============================================================
-// 🎭 اختيار الصورة
-// ============================================================
 function pickTalkingHeadImage() {
     const input = document.getElementById('talkingHeadImageInput');
     if (input) input.click();
@@ -2247,9 +2329,6 @@ function clearTalkingHeadImage() {
 }
 
 
-// ============================================================
-// 🎭 تعبئة الأصوات
-// ============================================================
 function populateTalkingHeadVoices() {
     const select = document.getElementById('talkingHeadVoice');
     if (!select) return;
@@ -2282,9 +2361,6 @@ function populateTalkingHeadVoices() {
 }
 
 
-// ============================================================
-// 🎭 عداد الأحرف
-// ============================================================
 function updateTalkingHeadCharCount() {
     const ta = document.getElementById('talkingHeadScript');
     const counter = document.getElementById('talkingHeadCharCount');
@@ -2304,9 +2380,6 @@ function updateTalkingHeadCharCount() {
 }
 
 
-// ============================================================
-// 🎭 تفعيل زر التوليد
-// ============================================================
 function updateTalkingHeadGenerateBtn() {
     const btn = document.getElementById('btnGenerateTalkingHead');
     if (!btn) return;
@@ -2321,9 +2394,6 @@ function updateTalkingHeadGenerateBtn() {
 }
 
 
-// ============================================================
-// 🎭 توليد الفيديو
-// ============================================================
 async function generateTalkingHead() {
     if (!TalkingHeadState.imageBlob) {
         return showToast('⚠️ اختر صورة أولاً', 'warning');
@@ -2374,7 +2444,7 @@ async function generateTalkingHead() {
         formData.append('text', text);
         formData.append('voice_id', voiceId);
         formData.append('language', 'ar');
-        formData.append('project_id', safeGetProjectId());  // ✅
+        formData.append('project_id', safeGetProjectId());
 
         updateTHProgress(10, '🎭 جاري الرفع للخادم...');
 
@@ -2413,9 +2483,6 @@ async function generateTalkingHead() {
 }
 
 
-// ============================================================
-// 🎭 Polling
-// ============================================================
 function startTalkingHeadPolling(talkId) {
     let attempts = 0;
     const maxAttempts = 60;
@@ -2470,9 +2537,6 @@ function updateTHProgress(percent, text) {
 }
 
 
-// ============================================================
-// 🎭 معالجة النجاح
-// ============================================================
 function handleTalkingHeadSuccess(videoUrl) {
     const btn = document.getElementById('btnGenerateTalkingHead');
     const statusEl = document.getElementById('talkingHeadStatus');
@@ -2522,9 +2586,6 @@ function handleTalkingHeadSuccess(videoUrl) {
 }
 
 
-// ============================================================
-// 🎭 معالجة الخطأ
-// ============================================================
 function handleTalkingHeadError(message) {
     const btn = document.getElementById('btnGenerateTalkingHead');
     const statusEl = document.getElementById('talkingHeadStatus');
@@ -2550,9 +2611,6 @@ function handleTalkingHeadError(message) {
 }
 
 
-// ============================================================
-// 🎭 حفظ الفيديو في المشروع
-// ============================================================
 async function saveTalkingHeadToProject() {
     if (!TalkingHeadState.resultUrl) {
         return showToast('⚠️ لا يوجد فيديو', 'warning');
@@ -2564,7 +2622,7 @@ async function saveTalkingHeadToProject() {
     const voiceId = voiceSelect?.value;
 
     try {
-        const res = await fetch(`/api/talking-head/save/${safeGetProjectId()}`, {  // ✅
+        const res = await fetch(`/api/talking-head/save/${safeGetProjectId()}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -2572,7 +2630,7 @@ async function saveTalkingHeadToProject() {
                 title: `Talking Head - ${new Date().toLocaleTimeString('ar')}`,
                 text: text,
                 voice_id: voiceId,
-                start: safeGetCurrentTime(),  // ✅
+                start: safeGetCurrentTime(),
                 duration: 5,
             }),
         });
@@ -2591,6 +2649,8 @@ async function saveTalkingHeadToProject() {
             start: data.clip.start,
             source: 'talking_head',
             voice_id: voiceId,
+            color: '#7c3aed',
+            icon: '🎭',
         });
 
         showToast('✅ تم حفظ الفيديو في المشروع', 'success');
@@ -2603,9 +2663,6 @@ async function saveTalkingHeadToProject() {
 }
 
 
-// ============================================================
-// 🎭 تحميل الفيديو
-// ============================================================
 function downloadTalkingHead() {
     if (!TalkingHeadState.resultUrl) return;
 
@@ -2669,15 +2726,13 @@ document.addEventListener('DOMContentLoaded', () => {
     initSavedVoices();
     loadEdgeVoices();
 
-    console.log('✅ voiceover.js loaded (no state dependency)');
+    console.log('✅ voiceover.js loaded — بدون state، متوافق مع timeline-core.js');
 });
 
 
 // ============================================================
 // تصدير الدوال للنطاق العام
 // ============================================================
-
-// الاستوديو
 window.openVoiceoverStudio = openVoiceoverStudio;
 window.closeVoiceoverStudio = closeVoiceoverStudio;
 window.previewTTS = previewTTS;
@@ -2702,7 +2757,6 @@ window.extractTranscriptServer = extractTranscriptServer;
 window.extractTranscriptLocal = extractTranscriptLocal;
 window.loadAudioFile = loadAudioFile;
 
-// Voice Cloning
 window.showSyncButton = showSyncButton;
 window.hideSyncButton = hideSyncButton;
 window.openVoiceCloneModal = openVoiceCloneModal;
@@ -2719,19 +2773,15 @@ window.saveGeneratedToProject = saveGeneratedToProject;
 window.reloadSavedVoices = reloadSavedVoices;
 window.updateCharCounter = updateCharCounter;
 
-// Edge TTS
 window.loadEdgeVoices = loadEdgeVoices;
 window.selectEdgeVoice = selectEdgeVoice;
 
-// Export / Import
 window.exportVoices = exportVoices;
 window.triggerImportVoices = triggerImportVoices;
 window.importVoicesFromFile = importVoicesFromFile;
 
-// Cache
 window.showCacheStats = showCacheStats;
 
-// Sync / Process
 window.processAudio = processAudio;
 window.renderSegmentsForSync = renderSegmentsForSync;
 window.updateSyncSegmentText = updateSyncSegmentText;
@@ -2739,7 +2789,6 @@ window.updateSyncSegmentTime = updateSyncSegmentTime;
 window.deleteSyncSegment = deleteSyncSegment;
 window.autoSegmentFromScript = autoSegmentFromScript;
 
-// Talking Head
 window.openTalkingHeadModal = openTalkingHeadModal;
 window.closeTalkingHeadModal = closeTalkingHeadModal;
 window.pickTalkingHeadImage = pickTalkingHeadImage;
@@ -2752,9 +2801,9 @@ window.updateTalkingHeadCharCount = updateTalkingHeadCharCount;
 window.populateTalkingHeadVoices = populateTalkingHeadVoices;
 window.updateTalkingHeadGenerateBtn = updateTalkingHeadGenerateBtn;
 
-// Helpers
 window.escapeHtml = escapeHtml;
 window.getCurrentPlayheadTime = getCurrentPlayheadTime;
 window.safeGetProjectData = safeGetProjectData;
 window.safeGetProjectId = safeGetProjectId;
 window.safeGetCurrentTime = safeGetCurrentTime;
+window.scrollToClipById = scrollToClipById;
