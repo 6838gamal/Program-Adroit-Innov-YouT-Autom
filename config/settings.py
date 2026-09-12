@@ -37,51 +37,49 @@ class Settings(BaseSettings):
     # ============================================
     # SUPABASE - MODERN CONFIGURATION (ONLY)
     # ============================================
-    
+
     # 1. SUPABASE_URL: رابط مشروع Supabase
     SUPABASE_URL: Optional[str] = Field(
         default=None,
         description="Supabase project URL (e.g., https://project.supabase.co)"
     )
-    
+
     # 2. SUPABASE_DIRECT_URL: رابط مباشر لقاعدة البيانات
     SUPABASE_DIRECT_URL: Optional[str] = Field(
         default=None,
         description="Direct PostgreSQL connection URL for Supabase"
     )
-    
+
     # 3. SUPABASE_PUBLIC_KEY: المفتاح العام (Anon/Public Key)
-    # يبدأ بـ sb_publishable_ أو eyJh
     SUPABASE_PUBLIC_KEY: Optional[SecretStr] = Field(
         default=None,
         description="Supabase public key (starts with sb_publishable_ or eyJh)"
     )
-    
+
     # 4. SUPABASE_SECRET_KEY: المفتاح السري (Service Role/Secret Key)
-    # يبدأ بـ sb_secret_ أو eyJh
     SUPABASE_SECRET_KEY: Optional[SecretStr] = Field(
         default=None,
         description="Supabase secret key for server-side (starts with sb_secret_ or eyJh)"
     )
-    
+
     # 5. SUPABASE_DB_SCHEMA: مخطط قاعدة البيانات
     SUPABASE_DB_SCHEMA: str = Field(
         default="public",
         description="Supabase database schema"
     )
-    
+
     # 6. SUPABASE_DB_POOL_SIZE: حجم تجمع الاتصالات
     SUPABASE_DB_POOL_SIZE: int = Field(
         default=10,
         description="Supabase connection pool size"
     )
-    
+
     # 7. SUPABASE_STORAGE: نوع التخزين
     SUPABASE_STORAGE: str = Field(
         default="s3",
         description="Supabase storage type"
     )
-    
+
     # 8. SUPABASE_BUCKET: دلاء التخزين
     SUPABASE_BUCKET: str = Field(
         default="videos",
@@ -99,56 +97,121 @@ class Settings(BaseSettings):
         default="exports",
         description="Supabase storage bucket for exported files"
     )
-    
+
     @property
     def supabase_database_url(self) -> Optional[str]:
         """Construct Supabase database connection URL using the REST API"""
         if not self.SUPABASE_URL:
             return None
         return f"{self.SUPABASE_URL}/rest/v1"
-    
+
     @property
     def supabase_configured(self) -> bool:
         """Check if Supabase is properly configured with modern keys ONLY"""
         has_url = bool(
-            self.SUPABASE_URL and 
+            self.SUPABASE_URL and
             self.SUPABASE_URL not in [None, "", "https://your-project.supabase.co"]
         )
-        
+
         has_direct_url = bool(
-            self.SUPABASE_DIRECT_URL and 
+            self.SUPABASE_DIRECT_URL and
             self.SUPABASE_DIRECT_URL not in [None, "", "postgresql://postgres:password@db.project.supabase.co:5432/postgres"]
         )
-        
-        # التحقق من المفتاح العام
+
         public_key_value = self.SUPABASE_PUBLIC_KEY.get_secret_value() if self.SUPABASE_PUBLIC_KEY else None
         has_public_key = bool(
-            public_key_value and 
+            public_key_value and
             public_key_value not in [None, "", "your-supabase-public-key", "your-supabase-anon-key"]
         )
-        
-        # التحقق من المفتاح السري
+
         secret_key_value = self.SUPABASE_SECRET_KEY.get_secret_value() if self.SUPABASE_SECRET_KEY else None
         has_secret_key = bool(
-            secret_key_value and 
+            secret_key_value and
             secret_key_value not in [None, "", "your-supabase-secret-key", "your-supabase-service-role-key"]
         )
-        
+
         return (has_url or has_direct_url) and (has_public_key or has_secret_key)
-    
+
     @property
     def supabase_public_key_value(self) -> Optional[str]:
         """Get the public key value"""
         if self.SUPABASE_PUBLIC_KEY:
             return self.SUPABASE_PUBLIC_KEY.get_secret_value()
         return None
-    
+
     @property
     def supabase_secret_key_value(self) -> Optional[str]:
         """Get the secret key value"""
         if self.SUPABASE_SECRET_KEY:
             return self.SUPABASE_SECRET_KEY.get_secret_value()
         return None
+
+    # ============================================
+    # 🎙️ ELEVENLABS — VOICE CLONING
+    # ============================================
+    ELEVENLABS_API_KEY: Optional[SecretStr] = Field(
+        default=None,
+        description=(
+            "ElevenLabs API key for voice cloning "
+            "(starts with sk_...). Get it from https://elevenlabs.io"
+        )
+    )
+    ELEVENLABS_MODEL_ID: str = Field(
+        default="eleven_multilingual_v2",
+        description="ElevenLabs model ID for TTS"
+    )
+    ELEVENLABS_DEFAULT_STABILITY: float = Field(
+        default=0.5,
+        ge=0.0, le=1.0,
+        description="Default voice stability (0.0-1.0)"
+    )
+    ELEVENLABS_DEFAULT_SIMILARITY: float = Field(
+        default=0.75,
+        ge=0.0, le=1.0,
+        description="Default similarity boost (0.0-1.0)"
+    )
+    ELEVENLABS_MAX_CHARS: int = Field(
+        default=5000,
+        description="Max characters per TTS request (free tier = 5000)"
+    )
+
+    @property
+    def elevenlabs_api_key_value(self) -> Optional[str]:
+        """Get the ElevenLabs API key value"""
+        if self.ELEVENLABS_API_KEY:
+            return self.ELEVENLABS_API_KEY.get_secret_value()
+        return None
+
+    @property
+    def elevenlabs_configured(self) -> bool:
+        """Check if ElevenLabs is properly configured"""
+        key = self.elevenlabs_api_key_value
+        return bool(
+            key and
+            key not in [
+                None, "",
+                "your-elevenlabs-api-key",
+                "sk_your_key_here",
+                "sk_xxx",
+            ] and
+            key.startswith("sk_")
+        )
+
+    # ============================================
+    # 🎙️ WHISPER — SPEECH TO TEXT (اختياري)
+    # ============================================
+    WHISPER_ENABLED: bool = Field(
+        default=True,
+        description="Enable Whisper transcription (requires faster-whisper)"
+    )
+    WHISPER_MODEL_SIZE: str = Field(
+        default="base",
+        description="Whisper model size: tiny, base, small, medium, large"
+    )
+    WHISPER_DEVICE: str = Field(
+        default="cpu",
+        description="Whisper device: cpu or cuda"
+    )
 
     # ============================================
     # POSTGRESQL DATABASE
@@ -162,13 +225,13 @@ class Settings(BaseSettings):
     )
     POSTGRES_DB: str = "postgres"
     POSTGRES_SSL_MODE: str = "prefer"
-    
+
     @property
     def POSTGRES_URL(self) -> str:
         """Construct PostgreSQL connection URL"""
         ssl_param = f"?sslmode={self.POSTGRES_SSL_MODE}" if self.POSTGRES_SSL_MODE else ""
         return f"postgresql+asyncpg://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}{ssl_param}"
-    
+
     @property
     def SYNC_POSTGRES_URL(self) -> str:
         """Construct sync PostgreSQL connection URL (for migrations)"""
@@ -190,19 +253,21 @@ class Settings(BaseSettings):
     EXPORTS_DIR: Path = BASE_DIR / "exports"
     THUMBNAILS_DIR: Path = BASE_DIR / "media" / "thumbnails"
     CACHE_DIR: Path = BASE_DIR / "cache"
-    
+
     STORAGE_TYPE: str = Field(
         default="auto",
         description="Storage type: auto, local, supabase"
     )
-    
+
     # ============================================
     # STORAGE LIMITS
     # ============================================
     MAX_FILE_SIZE: int = 500 * 1024 * 1024  # 500MB
     MAX_THUMBNAIL_SIZE: int = 5 * 1024 * 1024  # 5MB
+    MAX_VOICEOVER_SIZE: int = 100 * 1024 * 1024  # 100MB
     ALLOWED_VIDEO_EXTENSIONS: List[str] = [".mp4", ".mov", ".avi", ".mkv", ".webm", ".flv", ".wmv"]
     ALLOWED_IMAGE_EXTENSIONS: List[str] = [".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"]
+    ALLOWED_AUDIO_EXTENSIONS: List[str] = [".mp3", ".wav", ".m4a", ".ogg", ".webm", ".aac", ".flac"]
 
     # ============================================
     # VIDEO PROCESSING
@@ -213,6 +278,18 @@ class Settings(BaseSettings):
     FFMPEG_PATH: str = "ffmpeg"
     FFMPEG_PRESET: str = "medium"
     VIDEO_THUMBNAIL_TIME: float = 5.0
+
+    # ============================================
+    # AUDIO PROCESSING
+    # ============================================
+    AUDIO_TARGET_LUFS: float = Field(
+        default=-16.0,
+        description="Target loudness for audio normalization (LUFS)"
+    )
+    AUDIO_PROCESSING_TIMEOUT: int = Field(
+        default=300,
+        description="Timeout for audio processing (seconds)"
+    )
 
     # ============================================
     # SECURITY
@@ -272,7 +349,7 @@ class Settings(BaseSettings):
     @property
     def is_testing(self) -> bool:
         return self.ENVIRONMENT.lower() == "testing"
-    
+
     @property
     def using_supabase_db(self) -> bool:
         """Check if using Supabase as database"""
@@ -334,6 +411,22 @@ class Settings(BaseSettings):
                 )
         return v
 
+    @field_validator("ELEVENLABS_API_KEY")
+    def validate_elevenlabs_key(cls, v: Optional[SecretStr]) -> Optional[SecretStr]:
+        if v:
+            value = v.get_secret_value()
+            if value in ["your-elevenlabs-api-key", "sk_your_key_here", "sk_xxx"]:
+                warnings.warn(
+                    "ELEVENLABS_API_KEY is set to placeholder value! Please update it.",
+                    UserWarning
+                )
+            elif not value.startswith("sk_"):
+                warnings.warn(
+                    "ELEVENLABS_API_KEY does not start with 'sk_' — it may be invalid.",
+                    UserWarning
+                )
+        return v
+
     @field_validator("POSTGRES_PASSWORD")
     def validate_postgres_password(cls, v: str) -> str:
         if v == "postgres":
@@ -380,12 +473,17 @@ def ensure_dirs() -> None:
         settings.EXPORTS_DIR,
         settings.THUMBNAILS_DIR,
         settings.CACHE_DIR,
+        # مجلدات الصوت
+        settings.MEDIA_DIR / "voiceovers",
+        settings.MEDIA_DIR / "cloned_voices",
+        settings.MEDIA_DIR / "tts",
+        # عامة
         BASE_DIR / "data",
         BASE_DIR / "logs",
         BASE_DIR / "config",
         settings.PLUGIN_CONFIG_PATH.parent,
     ]
-    
+
     for d in directories:
         try:
             d.mkdir(parents=True, exist_ok=True)
@@ -406,30 +504,38 @@ def validate_config() -> bool:
         if settings.is_production:
             if settings.SECRET_KEY.get_secret_value() == "change-me-in-production":
                 raise ValueError("SECRET_KEY must be changed from default in production!")
-            
+
             if not settings.supabase_configured:
                 raise ValueError(
                     "Supabase must be configured for production! "
                     "Set SUPABASE_URL or SUPABASE_DIRECT_URL and both PUBLIC and SECRET keys."
                 )
-        
+
         # Validate based on database type
         if settings.using_supabase_db:
             if not settings.supabase_configured:
                 raise ValueError(
                     "DATABASE_TYPE is set to 'supabase' but Supabase is not properly configured!"
                 )
-        
+
         # Validate video processing settings
         if settings.MAX_CONCURRENT_PROCESSING < 1:
             raise ValueError("MAX_CONCURRENT_PROCESSING must be at least 1")
-        
+
         if settings.MAX_FILE_SIZE <= 0:
             raise ValueError("MAX_FILE_SIZE must be greater than 0")
-        
+
+        # تحذير فقط إن لم يكن ElevenLabs مهيأ (لا يمنع التشغيل)
+        if not settings.elevenlabs_configured:
+            warnings.warn(
+                "ELEVENLABS_API_KEY not configured — Voice Cloning feature will be disabled. "
+                "Get a free key from https://elevenlabs.io",
+                UserWarning
+            )
+
         ensure_dirs()
         return True
-        
+
     except Exception as e:
         if settings.is_production:
             raise
