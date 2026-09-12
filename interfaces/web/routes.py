@@ -13,7 +13,7 @@ from fastapi import (
     APIRouter, Request, Depends, HTTPException,
     UploadFile, File, Form, BackgroundTasks
 )
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -420,6 +420,8 @@ async def upload_voiceover(
     source: str = Form("recording"),  # recording | file | tts
     start: float = Form(0.0),
     duration: float = Form(0.0),
+    processed: str = Form("false"),
+    processing_options: str = Form("{}"),
 ):
     """
     رفع تسجيل صوتي مخصص + النص المُزامن.
@@ -470,9 +472,16 @@ async def upload_voiceover(
             except json.JSONDecodeError:
                 segments = []
 
+            # ── حلّل خيارات المعالجة ────────────────────
+            try:
+                proc_opts = json.loads(processing_options) if processing_options else {}
+            except json.JSONDecodeError:
+                proc_opts = {}
+
             logger.info(
                 f"✅ Voiceover uploaded: {uploaded['url']} "
-                f"(duration={duration:.2f}s, segments={len(segments)})"
+                f"(duration={duration:.2f}s, segments={len(segments)}, "
+                f"processed={processed})"
             )
 
             return {
@@ -486,6 +495,8 @@ async def upload_voiceover(
                 "script_segments": segments,
                 "source": source,
                 "start": start,
+                "processed": processed.lower() == "true",
+                "processing_options": proc_opts,
             }
         finally:
             tmp_path.unlink(missing_ok=True)
@@ -629,6 +640,269 @@ async def transcribe_voiceover(
             tmp_path.unlink(missing_ok=True)
 
 
+# ============================================================
+# 🎯 SCRIPT ALIGNMENT — Force Alignment
+# ============================================================
+
+@router.post("/api/media/align-script")
+async def align_script_with_audio(
+    file: UploadFile = File(...),
+    script: str = Form(...),
+    language: str = Form("ar"),
+):
+    """
+    مزامنة دقيقة للنص مع الصوت.
+
+    الاستراتيجية:
+      1. احسب مدة الصوت (ffprobe)
+      2. قسّم النص إلى جمل
+      3. وزّع المدة على الجمل حسب طول كل جملة
+
+    يمكن تحسينها لاحقاً باستخدام Whisper word_timestamps.
+    """
+    tmp_path = None
+    try:
+        content = await file.read()
+        if not content:
+            return JSONResponse(
+                {"success": False, "error": "الملف فارغ"},
+                status_code=400,
+            )
+
+        suffix = Path(file.filename or "audio.webm").suffix.lower() or ".webm"
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+            tmp.write(content)
+            tmp_path = Path(tmp.name)
+
+        logger.info(f"🎯 Aligning script ({len(script)} chars) with audio")
+
+        # ── احسب مدة الصوت ──────────────────────────────
+        audio_duration = await _get_audio_duration(tmp_path)
+
+        # إذا فشل ffprobe، جرّب Whisper
+        if audio_duration <= 0:
+            try:
+                from faster_whisper import WhisperModel
+                model = WhisperModel("tiny", device="cpu", compute_type="int8")
+                segs_gen, info = model.transcribe(
+                    str(tmp_path),
+                    language=language if language != "auto" else None,
+                )
+                segs_list = list(segs_gen)
+                if segs_list:
+                    audio_duration = segs_list[-1].end
+            except Exception as e:
+                logger.warning(f"Could not determine duration via Whisper: {e}")
+
+        if audio_duration <= 0:
+            return JSONResponse(
+                {"success": False, "error": "لا يمكن قراءة مدة الصوت"},
+                status_code=400,
+            )
+
+        # ── قسّم النص إلى جمل ───────────────────────────
+        import re
+        sentences = [
+            s.strip() for s in
+            re.split(r'[.!?؟।\n]+', script)
+            if s.strip()
+        ]
+
+        if not sentences:
+            return JSONResponse(
+                {"success": False, "error": "النص فارغ"},
+                status_code=400,
+            )
+
+        # ── وزّع المدة على الجمل حسب طول كل جملة ────────
+        total_chars = sum(len(s) for s in sentences)
+        segments = []
+        cursor = 0.0
+
+        for sentence in sentences:
+            ratio = len(sentence) / total_chars
+            duration = audio_duration * ratio
+            segments.append({
+                "text": sentence,
+                "start": round(cursor, 3),
+                "end": round(min(cursor + duration, audio_duration), 3),
+                "confidence": 0.8,
+            })
+            cursor += duration
+
+        # تأكد أن آخر مقطع ينتهي عند نهاية الصوت
+        if segments:
+            segments[-1]["end"] = round(audio_duration, 3)
+
+        logger.info(
+            f"✅ Aligned {len(segments)} segments over "
+            f"{audio_duration:.2f}s"
+        )
+
+        return {
+            "success": True,
+            "method": "proportional-distribution",
+            "language": language,
+            "audio_duration": round(audio_duration, 3),
+            "segments": segments,
+        }
+
+    except Exception as e:
+        logger.exception("Alignment failed")
+        return JSONResponse(
+            {"success": False, "error": str(e)},
+            status_code=500,
+        )
+    finally:
+        if tmp_path:
+            tmp_path.unlink(missing_ok=True)
+
+
+# ============================================================
+# 🎚️ AUDIO PROCESSING — FFmpeg Filters
+# ============================================================
+
+@router.post("/api/media/process-audio")
+async def process_audio_endpoint(
+    file: UploadFile = File(...),
+    options: str = Form("{}"),
+):
+    """
+    معالجة الصوت باستخدام ffmpeg:
+      - normalize: تطبيع مستوى الصوت (loudnorm)
+      - denoise: إزالة ضوضاء (afftdn)
+      - trim_silence: قص الصمت (silenceremove)
+      - compress: ضغط ديناميكي (acompressor)
+      - target_lufs: مستوى الاستهداف (افتراضي -16)
+
+    يعيد الملف المعالج مباشرة كـ audio/webm.
+    """
+    tmp_in = None
+    tmp_out = None
+    try:
+        content = await file.read()
+        if not content:
+            return JSONResponse(
+                {"success": False, "error": "الملف فارغ"},
+                status_code=400,
+            )
+
+        # ── حلّل الخيارات ────────────────────────────────
+        try:
+            opts = json.loads(options) if options else {}
+        except json.JSONDecodeError:
+            opts = {}
+
+        normalize = opts.get("normalize", True)
+        denoise = opts.get("denoise", False)
+        trim_silence = opts.get("trim_silence", True)
+        compress = opts.get("compress", False)
+        target_lufs = float(opts.get("target_lufs", -16))
+
+        # ── احفظ الملف المدخل ────────────────────────────
+        suffix = Path(file.filename or "audio.webm").suffix.lower() or ".webm"
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+            tmp.write(content)
+            tmp_in = Path(tmp.name)
+
+        # ── ملف الإخراج (webm/opus) ─────────────────────
+        tmp_out = tmp_in.with_name(f"processed_{uuid.uuid4().hex[:8]}.webm")
+
+        # ── ابنِ فلتر ffmpeg ─────────────────────────────
+        filters = []
+
+        if denoise:
+            filters.append("afftdn=nf=-25")
+
+        if trim_silence:
+            filters.append(
+                "silenceremove=start_periods=1:start_duration=0.1:"
+                "start_threshold=-45dB:detection=peak,"
+                "areverse,"
+                "silenceremove=start_periods=1:start_duration=0.1:"
+                "start_threshold=-45dB:detection=peak,"
+                "areverse"
+            )
+
+        if compress:
+            filters.append(
+                "acompressor=threshold=-18dB:ratio=3:attack=5:release=50"
+            )
+
+        if normalize:
+            filters.append(
+                f"loudnorm=I={target_lufs}:TP=-1.5:LRA=11"
+            )
+
+        # ── نفّذ ffmpeg ──────────────────────────────────
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", str(tmp_in),
+            "-vn",
+            "-c:a", "libopus",
+            "-b:a", "128k",
+        ]
+
+        if filters:
+            cmd += ["-af", ",".join(filters)]
+
+        cmd.append(str(tmp_out))
+
+        logger.info(
+            f"🎚️ Processing audio with filters: "
+            f"{' | '.join(filters) if filters else 'passthrough'}"
+        )
+
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await proc.communicate()
+
+        if proc.returncode != 0:
+            error_msg = stderr.decode()[-800:]
+            logger.error(f"ffmpeg failed (rc={proc.returncode}): {error_msg}")
+            raise RuntimeError(f"ffmpeg error: {error_msg}")
+
+        if not tmp_out.exists():
+            raise RuntimeError("لم يتم إنشاء الملف المعالج")
+
+        logger.info(
+            f"✅ Audio processed: {tmp_out.stat().st_size} bytes"
+        )
+
+        # ── أعد الملف ────────────────────────────────────
+        return FileResponse(
+            path=str(tmp_out),
+            media_type="audio/webm",
+            filename="processed.webm",
+            headers={
+                "Cache-Control": "no-cache",
+                "Access-Control-Allow-Origin": "*",
+            },
+        )
+
+    except FileNotFoundError:
+        return JSONResponse(
+            {
+                "success": False,
+                "error": "ffmpeg غير مثبّت على الخادم. تأكد من تثبيته.",
+            },
+            status_code=500,
+        )
+    except Exception as e:
+        logger.exception("Audio processing failed")
+        return JSONResponse(
+            {"success": False, "error": str(e)},
+            status_code=500,
+        )
+    finally:
+        if tmp_in:
+            tmp_in.unlink(missing_ok=True)
+        # لا تحذف tmp_out — FileResponse يحتاجه
+
+
 @router.get("/api/media/voiceover/{project_id}")
 async def list_voiceovers(
     project_id: str,
@@ -663,6 +937,8 @@ async def list_voiceovers(
             "tts": c.get("tts"),
             "fileName": c.get("fileName"),
             "layerId": c.get("layerId"),
+            "processed": c.get("processed", False),
+            "processingOptions": c.get("processingOptions"),
         }
         for c in clips
         if isinstance(c, dict) and c.get("type") == "audio"
@@ -1297,6 +1573,16 @@ async def logs_page(request: Request):
         "message": f"Whisper engine: {whisper_status}"
     })
 
+    # سجّل حالة ffmpeg
+    import shutil
+    ffmpeg_ok = shutil.which("ffmpeg") is not None
+    log_entries.append({
+        "level": "INFO" if ffmpeg_ok else "WARNING",
+        "source": "voiceover",
+        "timestamp": now,
+        "message": f"FFmpeg: {'✅ متاح' if ffmpeg_ok else '❌ غير مثبّت (المعالجة لن تعمل)'}"
+    })
+
     return templates.TemplateResponse(request, "logs.html", {
         "log_entries": log_entries,
         "active_page": "logs",
@@ -1366,7 +1652,7 @@ async def health_page(request: Request, session: AsyncSession = Depends(get_db))
         {
             "name": "FFmpeg",
             "status": "ok" if ffmpeg_ok else "degraded",
-            "detail": "متاح" if ffmpeg_ok else "غير مثبت — الرندر لن يعمل",
+            "detail": "متاح" if ffmpeg_ok else "غير مثبت — الرندر والمعالجة لن يعملان",
             "icon": '<svg class="w-4 h-4 text-slate-300" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.069A1 1 0 0121 8.87v6.26a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>',
         },
         {
@@ -1406,6 +1692,7 @@ async def health_page(request: Request, session: AsyncSession = Depends(get_db))
         {"label": "Secret Key",   "value": "✅ موجود" if settings.supabase_secret_key_value else "❌ مفقود"},
         {"label": "Storage Type", "value": settings.STORAGE_TYPE},
         {"label": "Whisper",      "value": whisper_detail},
+        {"label": "FFmpeg",       "value": "✅ متاح" if ffmpeg_ok else "❌ غير مثبّت"},
     ]
 
     return templates.TemplateResponse(request, "health.html", {
@@ -1575,10 +1862,11 @@ async def debug_project(project_id: str, session: AsyncSession = Depends(get_db)
                 k: (str(v)[:120] if v else None)
                 for k, v in url_candidates.items()
             },
-            # حقول الصوت الجديدة
+            # حقول الصوت
             "script_preview": (c.get("script") or "")[:100] or None,
             "script_segments_count": len(c.get("script_segments") or []),
             "source": c.get("source"),
+            "processed": c.get("processed"),
         })
 
     video_url_direct = getattr(project, "video_url", None)
@@ -1592,6 +1880,7 @@ async def debug_project(project_id: str, session: AsyncSession = Depends(get_db)
         "count": len(audio_clips),
         "with_script": sum(1 for c in audio_clips if c.get("script")),
         "with_segments": sum(1 for c in audio_clips if c.get("script_segments")),
+        "processed": sum(1 for c in audio_clips if c.get("processed")),
         "sources": list({c.get("source", "unknown") for c in audio_clips}),
     }
 
@@ -1720,6 +2009,7 @@ async def debug_voiceovers(project_id: str, session: AsyncSession = Depends(get_
             "has_tts": bool(c.get("tts")),
             "tts": c.get("tts"),
             "fileName": c.get("fileName"),
+            "processed": c.get("processed", False),
         })
 
     # حالة Whisper
@@ -1734,10 +2024,15 @@ async def debug_voiceovers(project_id: str, session: AsyncSession = Depends(get_
         except ImportError:
             whisper_engine = None
 
+    # حالة FFmpeg
+    import shutil
+    ffmpeg_ok = shutil.which("ffmpeg") is not None
+
     return {
         "project_id": project_id,
         "voiceover_count": len(voiceovers),
         "whisper_available": whisper_engine is not None,
         "whisper_engine": whisper_engine,
+        "ffmpeg_available": ffmpeg_ok,
         "voiceovers": voiceovers,
     }
