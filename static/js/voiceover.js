@@ -1,13 +1,19 @@
 /**
- * voiceover.js — نظام تسجيل/توليد/اختيار الصوت مع النص المخصص
+ * voiceover.js — نظام شامل لتسجيل/توليد/استنساخ الصوت
  * يعتمد على: timeline-core.js (state, API)
  *
- * يدعم:
- *   1) TTS — صوت جاهز من Web Speech API
- *   2) Record — تسجيل مباشر من الميكروفون مع STT
- *   3) File — اختيار ملف صوتي موجود + استخراج النص (Whisper)
- *   4) Voice Cloning — استنساخ صوت المستخدم (ElevenLabs)
- *   5) Talking Head — تحريك صورة الشخص (D-ID)
+ * المزودين المدعومين:
+ *   1) Edge TTS — مجاني تماماً (أصوات جاهزة)
+ *   2) HuggingFace XTTS — مجاني (استنساخ صوتك)
+ *   3) ElevenLabs — مدفوع (اختياري، أفضل جودة)
+ *   4) D-ID — Talking Head (تحريك صور)
+ *
+ * الأوضاع:
+ *   - TTS: أصوات جاهزة (Web Speech + Edge TTS)
+ *   - Record: تسجيل مباشر + STT
+ *   - File: رفع ملف صوتي
+ *   - Cloning: استنساخ صوتك
+ *   - Talking Head: تحريك صورة
  */
 
 // ============================================================
@@ -39,7 +45,9 @@ const VoiceoverState = {
 // ============================================================
 const VoiceCloneState = {
     savedVoices: [],
+    edgeVoices: [],
     selectedVoiceId: null,
+    selectedProvider: 'auto',
     isCloning: false,
     isGenerating: false,
     lastTextHash: null,
@@ -73,7 +81,7 @@ const SyncProcessState = {
 
 
 // ============================================================
-// 🎭 حالة Talking Head
+// حالة Talking Head
 // ============================================================
 const TalkingHeadState = {
     imageBlob: null,
@@ -194,7 +202,7 @@ function hideSyncButton() {
 
 
 // ============================================================
-// تعبئة قائمة أصوات TTS
+// تعبئة قائمة أصوات TTS (Web Speech API)
 // ============================================================
 function populateVoiceSelect() {
     const select = document.getElementById('voiceoverVoiceSelect');
@@ -220,7 +228,7 @@ function populateVoiceSelect() {
 
 
 // ============================================================
-// معاينة TTS
+// معاينة TTS (Web Speech API)
 // ============================================================
 function previewTTS() {
     const script = document.getElementById('voiceoverScript').value.trim();
@@ -576,7 +584,7 @@ function clearAudioFile() {
 
 
 // ============================================================
-// 🎬 استخراج النص
+// 🎬 استخراج النص (Whisper)
 // ============================================================
 async function extractTranscriptFromFile() {
     if (!VoiceoverState.pendingBlob) {
@@ -1096,6 +1104,9 @@ function renderSavedVoicesList() {
                 <div style="color:#64748b;font-size:10px;margin-top:4px;">
                     اضغط "استنسخ صوتي" لإنشاء صوتك الأول
                 </div>
+                <div style="color:#64748b;font-size:10px;margin-top:4px;">
+                    أو اختر صوتاً جاهزاً من الأسفل
+                </div>
             </div>
         `;
         return;
@@ -1108,6 +1119,16 @@ function renderSavedVoicesList() {
             ? new Date(voice.created_at).toLocaleDateString('ar-EG')
             : '';
 
+        // شارة المزود
+        let providerBadge = '';
+        if (voice.provider === 'edge_tts') {
+            providerBadge = '<span style="background:rgba(16,185,129,0.2);color:#34d399;padding:1px 6px;border-radius:8px;font-size:9px;margin-right:4px;">🔊 Edge TTS</span>';
+        } else if (voice.provider === 'huggingface') {
+            providerBadge = '<span style="background:rgba(59,130,246,0.2);color:#60a5fa;padding:1px 6px;border-radius:8px;font-size:9px;margin-right:4px;">🤗 HuggingFace</span>';
+        } else if (voice.provider === 'elevenlabs') {
+            providerBadge = '<span style="background:rgba(124,58,237,0.2);color:#a78bfa;padding:1px 6px;border-radius:8px;font-size:9px;margin-right:4px;">✨ ElevenLabs</span>';
+        }
+
         return `
             <div class="saved-voice-item ${isSelected ? 'selected' : ''} ${voice.imported ? 'imported' : ''}"
                  data-voice-id="${voice.voice_id}"
@@ -1116,10 +1137,14 @@ function renderSavedVoicesList() {
                 <div class="saved-voice-icon">🎙️</div>
 
                 <div class="saved-voice-info">
-                    <div class="saved-voice-name">${escapeHtml(displayName)}</div>
+                    <div class="saved-voice-name">
+                        ${providerBadge}
+                        ${escapeHtml(displayName)}
+                    </div>
                     <div class="saved-voice-meta">
                         ${dateStr}
                         ${voice.imported ? ' • 📥 مستورد' : ''}
+                        ${voice.temporary ? ' • ⏱️ مؤقت' : ''}
                     </div>
                 </div>
 
@@ -1155,6 +1180,7 @@ function selectSavedVoice(voiceId) {
         statusEl.innerHTML = `
             <div style="color:#34d399;font-size:12px;">
                 ✅ تم اختيار: <strong>${escapeHtml(voice?.display_name || voice?.name || voiceId)}</strong>
+                ${voice?.provider ? `<span style="color:#64748b;"> (${voice.provider})</span>` : ''}
             </div>
         `;
     }
@@ -1190,19 +1216,28 @@ async function cloneVoiceAndSave() {
     try {
         const formData = new FormData();
         formData.append('file', VoiceoverState.pendingBlob, 'my_voice.webm');
-        formData.append('name', `Voice_${Date.now()}`);
+        formData.append('name', displayName);
         formData.append('description', displayName);
+        formData.append('project_id', state.projectId || '');
 
         const res = await fetch('/api/voice/clone', {
             method: 'POST',
             body: formData,
         });
 
-        const data = await res.json();
-        if (!data.success) {
-            throw new Error(data.error || 'فشل الاستنساخ');
+        let data;
+        try {
+            data = await res.json();
+        } catch (e) {
+            const text = await res.text();
+            throw new Error(text || `HTTP ${res.status}`);
         }
 
+        if (!data.success) {
+            throw new Error(data.error || data.detail || 'فشل الاستنساخ');
+        }
+
+        // احفظ في المشروع
         const saveRes = await fetch(`/api/voice/saved/${state.projectId}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -1211,6 +1246,8 @@ async function cloneVoiceAndSave() {
                 name: data.name,
                 display_name: displayName,
                 description: displayName,
+                provider: data.provider || 'huggingface',
+                temporary: data.temporary || false,
             }),
         });
 
@@ -1225,10 +1262,18 @@ async function cloneVoiceAndSave() {
         renderSavedVoicesList();
 
         if (statusEl) {
+            const providerMsg = data.provider === 'huggingface' && data.temporary
+                ? '<br><small style="color:#f59e0b;">⚠️ HuggingFace: ستحتاج رفع المرجع في كل مرة</small>'
+                : '';
+
             statusEl.innerHTML = `
-                <div style="color:#34d399;">
-                    ✅ تم استنساخ الصوت وحفظه بنجاح!
+                <div style="color:#34d399;background:rgba(52,211,153,0.1);
+                            border:1px solid rgba(52,211,153,0.3);
+                            border-radius:8px;padding:10px;font-size:12px;line-height:1.8;">
+                    ✅ تم استنساخ الصوت!
                     <br>🎙️ <strong>${escapeHtml(displayName)}</strong>
+                    <br>📡 المزود: <strong>${data.provider || 'auto'}</strong>
+                    ${providerMsg}
                     <br>💡 يمكنك الآن توليد النص بصوتك
                 </div>
             `;
@@ -1245,12 +1290,15 @@ async function cloneVoiceAndSave() {
         console.error(err);
         if (statusEl) {
             statusEl.innerHTML = `
-                <div style="color:#ef4444;">
-                    ❌ فشل الاستنساخ: ${err.message}
+                <div style="color:#ef4444;background:rgba(239,68,68,0.1);
+                            border:1px solid rgba(239,68,68,0.3);
+                            border-radius:8px;padding:10px;font-size:11px;
+                            line-height:1.8;white-space:pre-wrap;direction:rtl;">
+                    ❌ ${err.message}
                 </div>
             `;
         }
-        showToast('❌ فشل الاستنساخ: ' + err.message, 'error');
+        showToast('❌ فشل الاستنساخ', 'error');
     } finally {
         btn.disabled = false;
         btn.innerHTML = '🎙️ استنسخ صوتي';
@@ -1259,7 +1307,89 @@ async function cloneVoiceAndSave() {
 
 
 // ============================================================
-// 🎙️ توليد النص بالصوت (مع Cache)
+// 🔊 تحميل أصوات Edge TTS
+// ============================================================
+async function loadEdgeVoices() {
+    const select = document.getElementById('edgeVoiceSelect');
+    if (!select) return;
+
+    try {
+        const res = await fetch('/api/voice/edge-voices');
+        const data = await res.json();
+
+        if (data.success && data.voices) {
+            VoiceCloneState.edgeVoices = data.voices;
+            select.innerHTML = '<option value="">— اختر صوتاً جاهزاً —</option>';
+            data.voices.forEach(v => {
+                const opt = document.createElement('option');
+                opt.value = v.id;
+                opt.textContent = `${v.name} (${v.lang})`;
+                select.appendChild(opt);
+            });
+        }
+    } catch (e) {
+        console.warn('Failed to load edge voices:', e);
+        // fallback: قائمة ثابتة
+        const fallbackVoices = [
+            { id: 'ar-SA-HamedNeural', name: 'حامد (سعودي)', lang: 'ar-SA' },
+            { id: 'ar-SA-ZariyahNeural', name: 'زارية (سعودية)', lang: 'ar-SA' },
+            { id: 'ar-EG-ShakirNeural', name: 'شاكر (مصري)', lang: 'ar-EG' },
+            { id: 'ar-EG-SalmaNeural', name: 'سلمى (مصرية)', lang: 'ar-EG' },
+        ];
+        VoiceCloneState.edgeVoices = fallbackVoices;
+        select.innerHTML = '<option value="">— اختر صوتاً جاهزاً —</option>';
+        fallbackVoices.forEach(v => {
+            const opt = document.createElement('option');
+            opt.value = v.id;
+            opt.textContent = `${v.name} (${v.lang})`;
+            select.appendChild(opt);
+        });
+    }
+}
+
+
+function selectEdgeVoice(voiceId) {
+    if (!voiceId) return;
+
+    const voiceInfo = VoiceCloneState.edgeVoices.find(v => v.id === voiceId);
+    const displayName = voiceInfo ? `🔊 ${voiceInfo.name}` : `🔊 ${voiceId}`;
+
+    // تحقق من عدم وجوده
+    let voice = VoiceCloneState.savedVoices.find(v => v.voice_id === voiceId);
+    if (!voice) {
+        voice = {
+            id: `edge-${voiceId}`,
+            voice_id: voiceId,
+            name: voiceId,
+            display_name: displayName,
+            provider: 'edge_tts',
+            created_at: new Date().toISOString(),
+            temporary: false,
+        };
+        VoiceCloneState.savedVoices.push(voice);
+        renderSavedVoicesList();
+    }
+
+    VoiceCloneState.selectedVoiceId = voiceId;
+
+    const genBtn = document.getElementById('btnGenerateWithVoice');
+    if (genBtn) genBtn.disabled = false;
+
+    const statusEl = document.getElementById('voiceCloneStatus');
+    if (statusEl) {
+        statusEl.innerHTML = `
+            <div style="color:#34d399;font-size:12px;">
+                ✅ تم اختيار صوت Edge TTS: <strong>${displayName}</strong>
+            </div>
+        `;
+    }
+
+    showToast(`🔊 تم اختيار: ${displayName}`, 'success');
+}
+
+
+// ============================================================
+// 🎙️ توليد النص بالصوت المُختار
 // ============================================================
 async function generateWithCache() {
     if (!VoiceCloneState.selectedVoiceId) {
@@ -1271,8 +1401,8 @@ async function generateWithCache() {
         return showToast('⚠️ اكتب النص أولاً', 'warning');
     }
 
-    if (script.length > 5000) {
-        return showToast('⚠️ النص طويل جداً (الحد 5000 حرف)', 'warning');
+    if (script.length > 10000) {
+        return showToast('⚠️ النص طويل جداً (الحد 10000 حرف)', 'warning');
     }
 
     const btn = document.getElementById('btnGenerateWithVoice');
@@ -1282,54 +1412,86 @@ async function generateWithCache() {
     btn.disabled = true;
     btn.innerHTML = '⏳ جاري التوليد...';
 
+    const selectedVoice = VoiceCloneState.savedVoices.find(
+        v => v.voice_id === VoiceCloneState.selectedVoiceId
+    );
+    const isHuggingFace = selectedVoice?.provider === 'huggingface';
+
     if (statusEl) {
         statusEl.innerHTML = `
             <div style="color:#fbbf24;">
-                🎙️ ${useCache ? 'جاري البحث في Cache...' : 'جاري التوليد عبر ElevenLabs...'}
+                🎙️ ${isHuggingFace ? 'جاري الاستنساخ عبر HuggingFace (قد يستغرق 1-3 دقائق)...' : 'جاري التوليد...'}
+                ${useCache && !isHuggingFace ? '<br><small>💾 سيُستخدم Cache إن وُجد</small>' : ''}
             </div>
         `;
     }
 
     try {
-        const formData = new FormData();
-        formData.append('voice_id', VoiceCloneState.selectedVoiceId);
-        formData.append('script', script);
-        formData.append('project_id', state.projectId || '');
-        formData.append('stability', '0.5');
-        formData.append('similarity_boost', '0.75');
-        formData.append('style', '0.0');
-        formData.append('speed', '1.0');
-        formData.append('model_id', 'eleven_multilingual_v2');
-        formData.append('use_cache', useCache ? 'true' : 'false');
+        let res, remoteUrl, duration, cacheHit, provider;
 
-        const res = await fetch('/api/voice/generate-cached', {
-            method: 'POST',
-            body: formData,
-        });
+        // ── HuggingFace: يحتاج إعادة رفع المرجع ──
+        if (isHuggingFace && VoiceoverState.pendingBlob) {
+            const formData = new FormData();
+            formData.append('file', VoiceoverState.pendingBlob, 'reference.webm');
+            formData.append('text', script);
+            formData.append('language', 'ar');
+            formData.append('project_id', state.projectId || '');
 
-        if (!res.ok) {
-            const errText = await res.text();
-            throw new Error(`HTTP ${res.status}: ${errText.substring(0, 200)}`);
+            res = await fetch('/api/voice/hf-clone', {
+                method: 'POST',
+                body: formData,
+            });
+
+            if (!res.ok) {
+                const errData = await res.json().catch(() => ({}));
+                throw new Error(errData.error || errData.detail || `HTTP ${res.status}`);
+            }
+
+            remoteUrl = res.headers.get('X-Cloned-URL');
+            duration = parseFloat(res.headers.get('X-Duration') || '0');
+            cacheHit = false;
+            provider = 'huggingface';
+
         }
+        // ── Edge TTS: مع Cache ──
+        else {
+            const formData = new FormData();
+            formData.append('voice_id', VoiceCloneState.selectedVoiceId);
+            formData.append('script', script);
+            formData.append('project_id', state.projectId || '');
+            formData.append('use_cache', useCache ? 'true' : 'false');
+            formData.append('speed', '1.0');
 
-        const remoteUrl = res.headers.get('X-Cloned-URL');
-        const duration = parseFloat(res.headers.get('X-Duration') || '0');
-        const cacheHit = res.headers.get('X-Cache-Hit') === 'true';
-        const textHash = res.headers.get('X-Text-Hash');
+            res = await fetch('/api/voice/generate-cached', {
+                method: 'POST',
+                body: formData,
+            });
+
+            if (!res.ok) {
+                const errData = await res.json().catch(() => ({}));
+                throw new Error(errData.error || errData.detail || `HTTP ${res.status}`);
+            }
+
+            remoteUrl = res.headers.get('X-Cloned-URL');
+            duration = parseFloat(res.headers.get('X-Duration') || '0');
+            cacheHit = res.headers.get('X-Cache-Hit') === 'true';
+            provider = res.headers.get('X-Provider') || 'edge_tts';
+        }
 
         const blob = await res.blob();
         const localUrl = URL.createObjectURL(blob);
 
+        // احفظ الحالة
         SyncProcessState.processedBlob = blob;
         SyncProcessState.processedUrl = localUrl;
         SyncProcessState.clonedRemoteUrl = remoteUrl;
         SyncProcessState.clonedDuration = duration;
         SyncProcessState.clonedVoiceId = VoiceCloneState.selectedVoiceId;
-        SyncProcessState.lastTextHash = textHash;
-        VoiceCloneState.lastTextHash = textHash;
 
+        // املأ النص
         document.getElementById('voiceoverScript').value = script;
 
+        // زامن المقاطع
         if (!VoiceoverState.scriptSegments.length) {
             VoiceoverState.scriptSegments = autoSegmentScript(script);
         }
@@ -1349,25 +1511,24 @@ async function generateWithCache() {
 
         SyncProcessState.isAligned = true;
 
-        renderGeneratedAudio(localUrl, duration, script, cacheHit);
+        // اعرض الصوت
+        renderGeneratedAudio(localUrl, duration, script, cacheHit, provider);
 
         if (statusEl) {
             statusEl.innerHTML = `
-                <div style="color:#34d399;">
-                    ${cacheHit
-                        ? '💾 من Cache (بدون استهلاك رصيد)'
-                        : '✅ تم التوليد من ElevenLabs'}
+                <div style="color:#34d399;background:rgba(52,211,153,0.1);
+                            border:1px solid rgba(52,211,153,0.3);
+                            border-radius:8px;padding:10px;font-size:12px;line-height:1.8;">
+                    ${cacheHit ? '💾 من Cache (بدون استهلاك)' : '✅ تم التوليد بنجاح!'}
+                    <br>📡 المزود: <strong>${provider}</strong>
                     <br>⏱️ المدة: ${duration.toFixed(1)} ثانية
                     <br>📝 الأحرف: ${script.length}
-                    ${cacheHit ? `<br><small style="color:#64748b;">hash: ${textHash}</small>` : ''}
                 </div>
             `;
         }
 
         showToast(
-            cacheHit
-                ? '💾 تم الجلب من Cache (بدون استهلاك)'
-                : '🎙️ تم التوليد من ElevenLabs',
+            cacheHit ? '💾 تم الجلب من Cache' : '🎙️ تم التوليد بنجاح',
             'success'
         );
 
@@ -1375,12 +1536,15 @@ async function generateWithCache() {
         console.error(err);
         if (statusEl) {
             statusEl.innerHTML = `
-                <div style="color:#ef4444;">
-                    ❌ فشل التوليد: ${err.message}
+                <div style="color:#ef4444;background:rgba(239,68,68,0.1);
+                            border:1px solid rgba(239,68,68,0.3);
+                            border-radius:8px;padding:10px;font-size:11px;
+                            line-height:1.8;white-space:pre-wrap;direction:rtl;">
+                    ❌ ${err.message}
                 </div>
             `;
         }
-        showToast('❌ فشل التوليد: ' + err.message, 'error');
+        showToast('❌ فشل التوليد', 'error');
     } finally {
         btn.disabled = false;
         btn.innerHTML = '🎙️ توليد النص بصوتي';
@@ -1391,9 +1555,15 @@ async function generateWithCache() {
 // ============================================================
 // 🎬 عرض الصوت المُولَّد
 // ============================================================
-function renderGeneratedAudio(localUrl, duration, script, cacheHit = false) {
+function renderGeneratedAudio(localUrl, duration, script, cacheHit = false, provider = 'edge_tts') {
     const el = document.getElementById('generatedAudioPlayer');
     if (!el) return;
+
+    const providerBadge = {
+        'edge_tts': '<span class="sync-badge-green">🔊 Edge TTS</span>',
+        'huggingface': '<span class="sync-badge-green">🤗 HuggingFace</span>',
+        'elevenlabs': '<span class="sync-badge-green">✨ ElevenLabs</span>',
+    }[provider] || '<span class="sync-badge-green">✨ AI</span>';
 
     el.style.display = 'block';
     el.innerHTML = `
@@ -1403,9 +1573,7 @@ function renderGeneratedAudio(localUrl, duration, script, cacheHit = false) {
             <div class="sync-audio-meta">
                 <span>🎙️ صوت مُولَّد</span>
                 <span>⏱️ ${formatTime(duration)}</span>
-                ${cacheHit
-                    ? '<span class="cache-badge">من Cache</span>'
-                    : '<span class="sync-badge-green">✨ AI</span>'}
+                ${cacheHit ? '<span class="cache-badge">من Cache</span>' : providerBadge}
             </div>
             <div style="display:flex;gap:8px;margin-top:10px;">
                 <button onclick="saveGeneratedToProject()" class="btn-primary btn-sm" style="flex:1;">
@@ -1437,17 +1605,23 @@ async function saveGeneratedToProject() {
     const titleInput = document.getElementById('voiceoverTitle');
     const title = (titleInput?.value || '').trim() || 'صوت مُولَّد';
 
+    const selectedVoice = VoiceCloneState.savedVoices.find(
+        v => v.voice_id === VoiceCloneState.selectedVoiceId
+    );
+    const source = selectedVoice?.provider === 'edge_tts' ? 'tts' : 'cloned';
+
     const formData = new FormData();
     formData.append('file', SyncProcessState.processedBlob, 'generated.mp3');
     formData.append('project_id', state.projectId);
     formData.append('title', title);
     formData.append('script', script);
     formData.append('script_segments', JSON.stringify(VoiceoverState.scriptSegments));
-    formData.append('source', 'cloned');
+    formData.append('source', source);
     formData.append('start', String(getCurrentPlayheadTime()));
     formData.append('processed', 'true');
     formData.append('processing_options', JSON.stringify({
         voice_id: VoiceCloneState.selectedVoiceId,
+        provider: selectedVoice?.provider || 'edge_tts',
     }));
 
     try {
@@ -1468,7 +1642,7 @@ async function saveGeneratedToProject() {
             script_segments: VoiceoverState.scriptSegments,
             duration: data.duration || SyncProcessState.clonedDuration || 0,
             start: getCurrentPlayheadTime(),
-            source: 'cloned',
+            source: source,
             processed: true,
             voice_id: VoiceCloneState.selectedVoiceId,
         });
@@ -1577,7 +1751,7 @@ async function renameVoice(recordId, currentName) {
 // 🗑️ حذف صوت
 // ============================================================
 async function deleteSavedVoice(recordId, name) {
-    if (!confirm(`حذف الصوت "${name}"؟\n\nسيُحذف من ElevenLabs أيضاً.`)) return;
+    if (!confirm(`حذف الصوت "${name}"؟`)) return;
 
     try {
         const res = await fetch(`/api/voice/saved/${state.projectId}/${recordId}`, {
@@ -1893,7 +2067,6 @@ function openTalkingHeadModal() {
         return;
     }
 
-    // أعد تعيين الحالة
     TalkingHeadState.imageBlob = null;
     TalkingHeadState.imageUrl = null;
     TalkingHeadState.currentTalkId = null;
@@ -1908,7 +2081,6 @@ function openTalkingHeadModal() {
     resetTalkingHeadUI();
     populateTalkingHeadVoices();
 
-    // املأ النص من الاستوديو
     const originalScript = document.getElementById('voiceoverScript');
     const talkingScript = document.getElementById('talkingHeadScript');
     if (talkingScript && originalScript && originalScript.value) {
@@ -2030,12 +2202,8 @@ function populateTalkingHeadVoices() {
 
     select.innerHTML = '<option value="">— اختر صوتاً —</option>';
 
+    // 1. أضف الأصوات المحفوظة (Cloned + Edge TTS)
     const voices = VoiceCloneState.savedVoices || [];
-
-    if (!voices.length) {
-        select.innerHTML = '<option value="">⚠️ لا توجد أصوات محفوظة — استنسخ صوتك أولاً</option>';
-        return;
-    }
 
     voices.forEach((voice) => {
         const opt = document.createElement('option');
@@ -2044,8 +2212,18 @@ function populateTalkingHeadVoices() {
         select.appendChild(opt);
     });
 
-    if (voices.length > 0) {
-        select.value = voices[0].voice_id;
+    // 2. إذا لم توجد أصوات، أضف Edge TTS الافتراضية
+    if (!voices.length && VoiceCloneState.edgeVoices.length) {
+        VoiceCloneState.edgeVoices.forEach((v) => {
+            const opt = document.createElement('option');
+            opt.value = v.id;
+            opt.textContent = `${v.name} (${v.lang})`;
+            select.appendChild(opt);
+        });
+    }
+
+    if (select.options.length > 1) {
+        select.selectedIndex = 1;
     }
 
     updateTalkingHeadGenerateBtn();
@@ -2123,7 +2301,7 @@ async function generateTalkingHead() {
         statusEl.innerHTML = `
             <div style="color:#fbbf24;">
                 🎭 جاري إنشاء الفيديو...
-                <br><small>سيستغرق 30-90 ثانية</small>
+                <br><small>يستغرق 30-90 ثانية</small>
             </div>
         `;
     }
@@ -2442,6 +2620,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // تهيئة الأصوات
     initSavedVoices();
+
+    // تحميل أصوات Edge TTS
+    loadEdgeVoices();
 });
 
 
@@ -2488,9 +2669,12 @@ window.renameVoice = renameVoice;
 window.deleteSavedVoice = deleteSavedVoice;
 window.downloadGenerated = downloadGenerated;
 window.saveGeneratedToProject = saveGeneratedToProject;
-window.resetClonedVoice = resetClonedVoice;
 window.reloadSavedVoices = reloadSavedVoices;
 window.updateCharCounter = updateCharCounter;
+
+// Edge TTS
+window.loadEdgeVoices = loadEdgeVoices;
+window.selectEdgeVoice = selectEdgeVoice;
 
 // Export / Import
 window.exportVoices = exportVoices;
@@ -2508,7 +2692,7 @@ window.updateSyncSegmentTime = updateSyncSegmentTime;
 window.deleteSyncSegment = deleteSyncSegment;
 window.autoSegmentFromScript = autoSegmentFromScript;
 
-// 🎭 Talking Head
+// Talking Head
 window.openTalkingHeadModal = openTalkingHeadModal;
 window.closeTalkingHeadModal = closeTalkingHeadModal;
 window.pickTalkingHeadImage = pickTalkingHeadImage;
