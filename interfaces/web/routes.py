@@ -6,6 +6,7 @@ import tempfile
 import asyncio
 import subprocess
 import hashlib
+import base64
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional, List, Dict, Any
@@ -146,6 +147,10 @@ CLONED_VOICES_DIR.mkdir(parents=True, exist_ok=True)
 CACHE_DIR = CLONED_VOICES_DIR / "cache"
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
+# 🎭 Talking Head
+TALKING_HEADS_DIR = Path(settings.MEDIA_DIR) / "talking_heads"
+TALKING_HEADS_DIR.mkdir(parents=True, exist_ok=True)
+
 VOICEOVER_MAX_SIZE = 100 * 1024 * 1024  # 100MB
 ALLOWED_AUDIO_TYPES = {
     "audio/mpeg", "audio/mp3", "audio/wav", "audio/x-wav",
@@ -154,8 +159,9 @@ ALLOWED_AUDIO_TYPES = {
     "video/webm",
 }
 
-# تخزين مؤقت لأصوات ElevenLabs في الذاكرة
+# تخزين مؤقت
 CLONED_VOICE_CACHE: Dict[str, str] = {}
+TALKING_HEAD_JOBS: Dict[str, Dict[str, Any]] = {}
 
 
 async def _get_audio_duration(file_path: Path) -> float:
@@ -366,6 +372,138 @@ def _compute_text_hash(voice_id: str, text: str, settings_dict: dict) -> str:
 
 
 # ============================================================
+# 🎭 TALKING HEAD — D-ID API Helpers
+# ============================================================
+
+DID_API_BASE = "https://api.d-id.com"
+
+
+async def _did_create_talk(
+    image_content: bytes,
+    audio_content: bytes,
+    image_filename: str = "image.jpg",
+) -> str:
+    """
+    أنشئ فيديو talking head من صورة + صوت.
+    يعيد: talk_id
+    """
+    import httpx
+
+    if not settings.did_configured:
+        raise HTTPException(
+            status_code=503,
+            detail="D-ID API غير مهيأ. أضف DID_API_KEY.",
+        )
+
+    api_key = settings.did_api_key_value
+
+    # حوّل إلى base64
+    img_b64 = base64.b64encode(image_content).decode()
+    aud_b64 = base64.b64encode(audio_content).decode()
+
+    # اكتشف نوع الصورة
+    suffix = Path(image_filename).suffix.lower()
+    mime = {
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".webp": "image/webp",
+    }.get(suffix, "image/jpeg")
+
+    payload = {
+        "source_url": f"data:{mime};base64,{img_b64}",
+        "script": {
+            "type": "audio",
+            "audio_url": f"data:audio/mpeg;base64,{aud_b64}",
+        },
+        "config": {
+            "stitch": True,
+            "pad_audio": 0.0,
+        },
+    }
+
+    headers = {
+        "Authorization": api_key,
+        "Content-Type": "application/json",
+    }
+
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        r = await client.post(
+            f"{DID_API_BASE}/talks",
+            headers=headers,
+            json=payload,
+        )
+
+        if r.status_code not in (200, 201):
+            error_text = r.text[:500]
+            logger.error(f"D-ID talk creation failed: {error_text}")
+            raise HTTPException(
+                status_code=r.status_code,
+                detail=f"فشل إنشاء الفيديو: {error_text}",
+            )
+
+        result = r.json()
+        talk_id = result.get("id")
+        if not talk_id:
+            raise HTTPException(
+                status_code=500,
+                detail="لم يتم إرجاع talk_id من D-ID",
+            )
+
+        logger.info(f"✅ D-ID talk created: {talk_id}")
+        return talk_id
+
+
+async def _did_get_talk_status(talk_id: str) -> Dict[str, Any]:
+    """احصل على حالة الـ talk."""
+    import httpx
+
+    if not settings.did_configured:
+        raise HTTPException(status_code=503, detail="D-ID API غير مهيأ")
+
+    api_key = settings.did_api_key_value
+    headers = {"Authorization": api_key}
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        r = await client.get(
+            f"{DID_API_BASE}/talks/{talk_id}",
+            headers=headers,
+        )
+
+        if r.status_code != 200:
+            error_text = r.text[:500]
+            logger.error(f"D-ID get status failed: {error_text}")
+            raise HTTPException(
+                status_code=r.status_code,
+                detail=f"فشل جلب الحالة: {error_text}",
+            )
+
+        return r.json()
+
+
+async def _did_delete_talk(talk_id: str) -> bool:
+    """احذف talk من D-ID."""
+    import httpx
+
+    if not settings.did_configured:
+        return False
+
+    api_key = settings.did_api_key_value
+    headers = {"Authorization": api_key}
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            r = await client.delete(
+                f"{DID_API_BASE}/talks/{talk_id}",
+                headers=headers,
+            )
+            return r.status_code in (200, 204)
+    except Exception as e:
+        logger.warning(f"Failed to delete talk {talk_id}: {e}")
+        return False
+
+
+# ============================================================
 # DASHBOARD
 # ============================================================
 
@@ -434,7 +572,7 @@ async def project_timeline(
     if not project:
         return HTMLResponse("Project not found", status_code=404)
 
-    # Build scenes from timeline or script (fallback)
+    # Build scenes
     scenes = []
     try:
         if hasattr(project, "timeline") and project.timeline:
@@ -467,7 +605,7 @@ async def project_timeline(
             })
             t += duration
 
-    # ✅ اجلب مقاطع الصوت
+    # اجلب مقاطع الصوت + الأصوات المحفوظة
     voiceover_clips = []
     saved_voices = []
     if hasattr(project, "data") and isinstance(project.data, dict):
@@ -484,6 +622,7 @@ async def project_timeline(
         "voiceover_clips": voiceover_clips,
         "saved_voices": saved_voices,
         "elevenlabs_configured": settings.elevenlabs_configured,
+        "did_configured": settings.did_configured,
         "active_page": "projects",
         "supabase": get_supabase_config(),
     })
@@ -951,7 +1090,7 @@ async def generate_with_cache(
 
         text_hash = _compute_text_hash(voice_id, script, settings_dict)
 
-        # ── 1. ابحث في Cache ──────────────────────────
+        # ── 1. ابحث في Cache ──
         cached_file = CACHE_DIR / f"{text_hash}.mp3"
 
         if use_cache.lower() == "true" and cached_file.exists():
@@ -975,7 +1114,7 @@ async def generate_with_cache(
                 },
             )
 
-        # ── 2. لم يوجد → ولّد عبر ElevenLabs ─────────
+        # ── 2. لم يوجد → ولّد عبر ElevenLabs ──
         logger.info(f"🎙️ Cache MISS: {text_hash} → ElevenLabs")
 
         audio_bytes = await _elevenlabs_tts(
@@ -1506,6 +1645,351 @@ async def clear_cache():
 
 
 # ============================================================
+# 🎭 TALKING HEAD — D-ID
+# ============================================================
+
+@router.post("/api/talking-head/create")
+async def create_talking_head(
+    image: UploadFile = File(...),
+    audio: UploadFile = File(...),
+    project_id: str = Form(""),
+):
+    """
+    🎭 أنشئ فيديو talking head من صورة + صوت.
+
+    Args:
+        image: صورة الشخص (وجه واضح، jpg/png)
+        audio: الصوت (mp3/wav)
+        project_id: المشروع
+
+    Returns:
+        {success: true, talk_id: "...", status: "created"}
+    """
+    try:
+        if not settings.did_configured:
+            return JSONResponse(
+                {
+                    "success": False,
+                    "error": "D-ID API غير مهيأ. أضف DID_API_KEY.",
+                },
+                status_code=503,
+            )
+
+        img_content = await image.read()
+        aud_content = await audio.read()
+
+        if not img_content:
+            return JSONResponse(
+                {"success": False, "error": "الصورة فارغة"},
+                status_code=400,
+            )
+
+        if not aud_content:
+            return JSONResponse(
+                {"success": False, "error": "الصوت فارغ"},
+                status_code=400,
+            )
+
+        if len(img_content) > 10 * 1024 * 1024:
+            return JSONResponse(
+                {"success": False, "error": "الصورة كبيرة جداً (الحد 10MB)"},
+                status_code=413,
+            )
+
+        if len(aud_content) > 100 * 1024 * 1024:
+            return JSONResponse(
+                {"success": False, "error": "الصوت كبير جداً (الحد 100MB)"},
+                status_code=413,
+            )
+
+        logger.info(
+            f"🎭 Creating talking head: "
+            f"image={len(img_content)} bytes, "
+            f"audio={len(aud_content)} bytes"
+        )
+
+        talk_id = await _did_create_talk(
+            image_content=img_content,
+            audio_content=aud_content,
+            image_filename=image.filename or "image.jpg",
+        )
+
+        TALKING_HEAD_JOBS[talk_id] = {
+            "id": talk_id,
+            "project_id": project_id,
+            "status": "created",
+            "created_at": datetime.utcnow().isoformat(),
+            "result_url": None,
+            "error": None,
+        }
+
+        return {
+            "success": True,
+            "talk_id": talk_id,
+            "status": "created",
+            "message": "✅ تم إنشاء الفيديو. جاري المعالجة...",
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Talking head creation failed")
+        return JSONResponse(
+            {"success": False, "error": str(e)},
+            status_code=500,
+        )
+
+
+@router.get("/api/talking-head/status/{talk_id}")
+async def get_talking_head_status(talk_id: str):
+    """
+    احصل على حالة معالجة الفيديو.
+
+    Returns:
+        {success: true, status: "created"|"started"|"done"|"error", result_url: "..."}
+    """
+    try:
+        if not settings.did_configured:
+            return JSONResponse(
+                {"success": False, "error": "D-ID API غير مهيأ"},
+                status_code=503,
+            )
+
+        data = await _did_get_talk_status(talk_id)
+
+        status = data.get("status", "unknown")
+        result_url = data.get("result_url")
+        error = data.get("error")
+
+        if talk_id in TALKING_HEAD_JOBS:
+            TALKING_HEAD_JOBS[talk_id].update({
+                "status": status,
+                "result_url": result_url,
+                "error": error,
+            })
+
+        return {
+            "success": True,
+            "talk_id": talk_id,
+            "status": status,
+            "result_url": result_url,
+            "error": error,
+            "progress": data.get("progress"),
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Get talking head status failed")
+        return JSONResponse(
+            {"success": False, "error": str(e)},
+            status_code=500,
+        )
+
+
+@router.post("/api/talking-head/generate")
+async def generate_talking_head_from_text(
+    image: UploadFile = File(...),
+    text: str = Form(...),
+    voice_id: str = Form(""),
+    language: str = Form("ar"),
+    project_id: str = Form(""),
+):
+    """
+    🎭 نسخة مُحسّنة: صورة + نص → فيديو.
+
+    يقوم بـ:
+      1. توليد الصوت من النص (ElevenLabs)
+      2. إنشاء talking head (D-ID)
+
+    Args:
+        image: صورة الشخص
+        text: النص
+        voice_id: voice_id من ElevenLabs
+        language: اللغة
+        project_id: المشروع
+
+    Returns:
+        {success: true, talk_id: "..."}
+    """
+    try:
+        if not settings.did_configured:
+            return JSONResponse(
+                {"success": False, "error": "D-ID API غير مهيأ"},
+                status_code=503,
+            )
+
+        text = text.strip()
+        if not text:
+            return JSONResponse(
+                {"success": False, "error": "النص فارغ"},
+                status_code=400,
+            )
+
+        if len(text) > settings.DID_MAX_TEXT_CHARS:
+            return JSONResponse(
+                {
+                    "success": False,
+                    "error": f"النص طويل جداً (الحد {settings.DID_MAX_TEXT_CHARS} حرف)",
+                },
+                status_code=400,
+            )
+
+        img_content = await image.read()
+        if not img_content:
+            return JSONResponse(
+                {"success": False, "error": "الصورة فارغة"},
+                status_code=400,
+            )
+
+        # ── 1. ولّد الصوت من النص ──
+        audio_bytes = None
+
+        if voice_id and settings.elevenlabs_configured:
+            logger.info(f"🎙️ Using ElevenLabs voice: {voice_id}")
+            audio_bytes = await _elevenlabs_tts(
+                text=text,
+                voice_id=voice_id,
+                model_id=settings.ELEVENLABS_MODEL_ID,
+                stability=0.5,
+                similarity_boost=0.75,
+                style=0.0,
+                speed=1.0,
+            )
+        else:
+            return JSONResponse(
+                {
+                    "success": False,
+                    "error": "يجب توفير voice_id أو تفعيل ElevenLabs",
+                },
+                status_code=400,
+            )
+
+        if not audio_bytes:
+            return JSONResponse(
+                {"success": False, "error": "فشل توليد الصوت"},
+                status_code=500,
+            )
+
+        # ── 2. أنشئ talking head ──
+        logger.info(f"🎭 Creating talking head from image + generated audio")
+
+        talk_id = await _did_create_talk(
+            image_content=img_content,
+            audio_content=audio_bytes,
+            image_filename=image.filename or "image.jpg",
+        )
+
+        TALKING_HEAD_JOBS[talk_id] = {
+            "id": talk_id,
+            "project_id": project_id,
+            "status": "created",
+            "text": text,
+            "voice_id": voice_id,
+            "created_at": datetime.utcnow().isoformat(),
+            "result_url": None,
+            "error": None,
+        }
+
+        return {
+            "success": True,
+            "talk_id": talk_id,
+            "status": "created",
+            "message": "✅ تم إنشاء الفيديو. جاري المعالجة...",
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Generate talking head failed")
+        return JSONResponse(
+            {"success": False, "error": str(e)},
+            status_code=500,
+        )
+
+
+@router.post("/api/talking-head/save/{project_id}")
+async def save_talking_head_to_project(
+    project_id: str,
+    payload: Dict[str, Any],
+    session: AsyncSession = Depends(get_db),
+):
+    """
+    احفظ فيديو talking head في المشروع (كـ clip).
+    """
+    try:
+        project_uuid = uuid.UUID(project_id)
+    except ValueError:
+        return JSONResponse({"error": "Invalid project_id"}, status_code=400)
+
+    repo = SQLProjectRepository(session)
+    project = await repo.get(project_uuid)
+    if not project:
+        return JSONResponse({"error": "Project not found"}, status_code=404)
+
+    video_url = payload.get("video_url")
+    if not video_url:
+        return JSONResponse({"error": "video_url مطلوب"}, status_code=400)
+
+    data = getattr(project, "data", None) or {}
+    clips = data.get("clips", []) or []
+
+    clip_id = payload.get("id") or f"clip-{uuid.uuid4().hex[:12]}"
+
+    new_clip = {
+        "id": clip_id,
+        "type": "video",
+        "title": payload.get("title", "Talking Head"),
+        "url": video_url,
+        "start": payload.get("start", 0),
+        "duration": payload.get("duration", 5),
+        "source": "talking_head",
+        "text": payload.get("text", ""),
+        "voice_id": payload.get("voice_id"),
+        "image_url": payload.get("image_url"),
+        "created_at": datetime.utcnow().isoformat(),
+    }
+
+    clips.append(new_clip)
+    data["clips"] = clips
+
+    if hasattr(project, "data"):
+        project.data = data
+    if hasattr(repo, "update"):
+        await repo.update(project)
+    elif hasattr(repo, "save"):
+        await repo.save(project)
+    await session.commit()
+
+    logger.info(f"✅ Talking head saved to project: {clip_id}")
+
+    return {
+        "success": True,
+        "clip": new_clip,
+        "message": "✅ تم حفظ الفيديو في المشروع",
+    }
+
+
+@router.delete("/api/talking-head/delete/{talk_id}")
+async def delete_talking_head(talk_id: str):
+    """احذف talking head job من D-ID."""
+    success = await _did_delete_talk(talk_id)
+    if talk_id in TALKING_HEAD_JOBS:
+        del TALKING_HEAD_JOBS[talk_id]
+    return {"success": success, "talk_id": talk_id}
+
+
+@router.get("/api/talking-head/list")
+async def list_talking_head_jobs():
+    """اعرض قائمة talking head jobs النشطة."""
+    return {
+        "success": True,
+        "count": len(TALKING_HEAD_JOBS),
+        "jobs": list(TALKING_HEAD_JOBS.values()),
+    }
+
+
+# ============================================================
 # 🎚️ AUDIO PROCESSING — FFmpeg
 # ============================================================
 
@@ -1856,7 +2340,7 @@ async def add_voiceover_clip(
     payload: Dict[str, Any],
     session: AsyncSession = Depends(get_db),
 ):
-    """أضف مقطع صوتي جديد إلى المشروع."""
+    """أضف مقطع صوتي/فيديو جديد إلى المشروع."""
     try:
         project_uuid = uuid.UUID(project_id)
     except ValueError:
@@ -2049,22 +2533,22 @@ async def voices_page(request: Request):
             "active": settings.elevenlabs_configured,
         },
         {
+            "id": "did_talking_head",
+            "name": "D-ID Talking Head",
+            "provider": "D-ID API",
+            "description": "حوّل صورة شخص إلى فيديو ناطق باستخدام AI.",
+            "languages": ["كل اللغات"],
+            "quality": 5,
+            "available": settings.did_configured,
+            "active": settings.did_configured,
+        },
+        {
             "id": "silent",
             "name": "Silent",
             "provider": "Built-in",
             "description": "لا يولّد صوتاً. مفيد للفيديوهات الصامتة.",
             "languages": ["كل اللغات"],
             "quality": 1,
-            "available": True,
-            "active": False,
-        },
-        {
-            "id": "default",
-            "name": "Default TTS",
-            "provider": "Built-in",
-            "description": "محرك افتراضي بسيط.",
-            "languages": ["en", "ar"],
-            "quality": 2,
             "available": True,
             "active": False,
         },
@@ -2285,8 +2769,7 @@ async def logs_page(request: Request):
     log_entries = [
         {"level": "INFO",    "source": "main",    "timestamp": now - timedelta(seconds=5),  "message": "Platform started successfully"},
         {"level": "INFO",    "source": "system",  "timestamp": now - timedelta(seconds=4),  "message": "Database tables ready"},
-        {"level": "INFO",    "source": "plugins", "timestamp": now - timedelta(seconds=3),  "message": "Plugins loaded: voice, renderer, exporter, publisher"},
-        {"level": "INFO",    "source": "system",  "timestamp": now - timedelta(seconds=2),  "message": "Seeded default YouTube platform"},
+        {"level": "INFO",    "source": "plugins", "timestamp": now - timedelta(seconds=3),  "message": "Plugins loaded"},
         {"level": "INFO",    "source": "main",    "timestamp": now - timedelta(seconds=1),  "message": "Platform ready"},
     ]
 
@@ -2296,13 +2779,6 @@ async def logs_page(request: Request):
             "source": "supabase",
             "timestamp": now,
             "message": f"Supabase configured: {settings.SUPABASE_URL}"
-        })
-    else:
-        log_entries.append({
-            "level": "WARNING",
-            "source": "supabase",
-            "timestamp": now,
-            "message": "Supabase not configured"
         })
 
     elevenlabs_ok = settings.elevenlabs_configured
@@ -2316,6 +2792,17 @@ async def logs_page(request: Request):
         )
     })
 
+    did_ok = settings.did_configured
+    log_entries.append({
+        "level": "INFO" if did_ok else "WARNING",
+        "source": "talking_head",
+        "timestamp": now,
+        "message": (
+            f"D-ID Talking Head: "
+            f"{'✅ متاح' if did_ok else '❌ غير مهيأ (DID_API_KEY مفقود)'}"
+        )
+    })
+
     whisper_status = "غير مثبّت"
     try:
         import faster_whisper
@@ -2325,7 +2812,7 @@ async def logs_page(request: Request):
             import whisper
             whisper_status = "openai-whisper ✅"
         except ImportError:
-            whisper_status = "❌ غير مثبّت (pip install faster-whisper)"
+            whisper_status = "❌ غير مثبّت"
 
     log_entries.append({
         "level": "INFO" if "✅" in whisper_status else "WARNING",
@@ -2380,8 +2867,8 @@ async def health_page(request: Request, session: AsyncSession = Depends(get_db))
     ffmpeg_ok = shutil.which("ffmpeg") is not None
     media_ok = settings.MEDIA_DIR.exists()
     supabase_ok = settings.supabase_configured
-    supabase_detail = "متصل" if supabase_ok else "غير مهيأ"
     elevenlabs_ok = settings.elevenlabs_configured
+    did_ok = settings.did_configured
 
     whisper_ok = False
     whisper_detail = "غير مثبّت"
@@ -2404,70 +2891,56 @@ async def health_page(request: Request, session: AsyncSession = Depends(get_db))
             "name": "قاعدة البيانات",
             "status": "ok" if db_ok else "error",
             "detail": db_detail,
-            "icon": '<svg class="w-4 h-4 text-slate-300" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"/></svg>',
         },
         {
             "name": "تخزين الملفات",
             "status": "ok" if media_ok else "error",
             "detail": str(settings.MEDIA_DIR) if media_ok else "المجلد غير موجود",
-            "icon": '<svg class="w-4 h-4 text-slate-300" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>',
         },
         {
             "name": "Supabase Storage",
             "status": "ok" if supabase_ok else "error",
-            "detail": supabase_detail,
-            "icon": '<svg class="w-4 h-4 text-slate-300" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"/></svg>',
+            "detail": "متصل" if supabase_ok else "غير مهيأ",
         },
         {
             "name": "ElevenLabs Voice Cloning",
             "status": "ok" if elevenlabs_ok else "degraded",
             "detail": "متاح ✅" if elevenlabs_ok else "غير مهيأ — أضف ELEVENLABS_API_KEY",
-            "icon": '<svg class="w-4 h-4 text-slate-300" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"/></svg>',
+        },
+        {
+            "name": "D-ID Talking Head",
+            "status": "ok" if did_ok else "degraded",
+            "detail": "متاح ✅" if did_ok else "غير مهيأ — أضف DID_API_KEY",
         },
         {
             "name": "FFmpeg",
             "status": "ok" if ffmpeg_ok else "degraded",
             "detail": "متاح" if ffmpeg_ok else "غير مثبت",
-            "icon": '<svg class="w-4 h-4 text-slate-300" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.069A1 1 0 0121 8.87v6.26a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>',
         },
         {
             "name": "Whisper (STT)",
             "status": "ok" if whisper_ok else "degraded",
             "detail": whisper_detail,
-            "icon": '<svg class="w-4 h-4 text-slate-300" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"/></svg>',
-        },
-        {
-            "name": "Plugin System",
-            "status": "ok",
-            "detail": "محملة بنجاح",
-            "icon": '<svg class="w-4 h-4 text-slate-300" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/></svg>',
         },
     ]
 
-    plugins = {}
-    try:
-        registry = request.app.state.plugin_registry
-        plugins = {k: v for k, v in registry.list_all().items()}
-    except Exception:
-        pass
-
     system_info = [
-        {"label": "Python",          "value": sys.version.split()[0]},
-        {"label": "Platform",        "value": platform.system() + " " + platform.release()},
-        {"label": "APP_NAME",        "value": settings.APP_NAME},
-        {"label": "APP_VERSION",     "value": settings.APP_VERSION},
-        {"label": "Supabase",        "value": "✅ مهيأ" if supabase_ok else "❌ غير مهيأ"},
-        {"label": "Storage Type",    "value": settings.STORAGE_TYPE},
-        {"label": "ElevenLabs",      "value": "✅ متاح" if elevenlabs_ok else "❌ غير مهيأ"},
-        {"label": "Whisper",         "value": whisper_detail},
-        {"label": "FFmpeg",          "value": "✅ متاح" if ffmpeg_ok else "❌ غير مثبّت"},
+        {"label": "Python",       "value": sys.version.split()[0]},
+        {"label": "Platform",     "value": platform.system() + " " + platform.release()},
+        {"label": "APP_NAME",     "value": settings.APP_NAME},
+        {"label": "APP_VERSION",  "value": settings.APP_VERSION},
+        {"label": "Supabase",     "value": "✅ مهيأ" if supabase_ok else "❌ غير مهيأ"},
+        {"label": "ElevenLabs",   "value": "✅ متاح" if elevenlabs_ok else "❌ غير مهيأ"},
+        {"label": "D-ID",         "value": "✅ متاح" if did_ok else "❌ غير مهيأ"},
+        {"label": "Whisper",      "value": whisper_detail},
+        {"label": "FFmpeg",       "value": "✅ متاح" if ffmpeg_ok else "❌ غير مثبّت"},
     ]
 
     return templates.TemplateResponse(request, "health.html", {
         "overall_status": overall,
         "last_check": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"),
         "components": components,
-        "plugins": plugins,
+        "plugins": {},
         "system_info": system_info,
         "active_page": "health",
         "supabase": get_supabase_config(),
@@ -2501,15 +2974,13 @@ async def settings_page(request: Request):
             "app_name": settings.APP_NAME,
             "app_version": settings.APP_VERSION,
             "debug": settings.DEBUG,
-            "scheduler_enabled": settings.SCHEDULER_ENABLED,
             "media_dir": str(settings.MEDIA_DIR),
             "exports_dir": str(settings.EXPORTS_DIR),
             "temp_dir": str(settings.TEMP_DIR),
             "storage_type": settings.STORAGE_TYPE,
             "supabase_configured": settings.supabase_configured,
-            "supabase_url": settings.SUPABASE_URL,
-            "supabase_bucket": settings.SUPABASE_BUCKET,
             "elevenlabs_configured": settings.elevenlabs_configured,
+            "did_configured": settings.did_configured,
         },
         "active_page": "settings",
         "supabase": get_supabase_config(),
@@ -2528,12 +2999,6 @@ async def get_supabase_config_api():
         "bucket": settings.SUPABASE_BUCKET,
         "configured": settings.supabase_configured,
         "storage_type": settings.STORAGE_TYPE,
-        "buckets": {
-            "videos": settings.SUPABASE_BUCKET,
-            "thumbnails": settings.SUPABASE_BUCKET_THUMBNAILS,
-            "temp": settings.SUPABASE_BUCKET_TEMP,
-            "exports": settings.SUPABASE_BUCKET_EXPORTS,
-        }
     }
 
 
@@ -2541,23 +3006,16 @@ async def get_supabase_config_api():
 async def get_supabase_status():
     try:
         if not settings.supabase_configured:
-            return {
-                "status": "not_configured",
-                "message": "Supabase is not configured."
-            }
+            return {"status": "not_configured"}
         storage = SupabaseStorageAdapter()
         await storage.list_files(prefix="", limit=1)
         return {
             "status": "connected",
-            "message": "Supabase is connected",
             "url": settings.SUPABASE_URL,
             "bucket": settings.SUPABASE_BUCKET
         }
     except Exception as e:
-        return {
-            "status": "error",
-            "message": f"Supabase connection error: {str(e)}"
-        }
+        return {"status": "error", "message": str(e)}
 
 
 # ============================================================
@@ -2569,10 +3027,7 @@ async def debug_project(project_id: str, session: AsyncSession = Depends(get_db)
     try:
         project_uuid = uuid.UUID(project_id)
     except ValueError:
-        return JSONResponse(
-            {"error": f"Invalid project_id: {project_id}"},
-            status_code=400,
-        )
+        return JSONResponse({"error": "Invalid project_id"}, status_code=400)
 
     repo = SQLProjectRepository(session)
     project = await repo.get(project_uuid)
@@ -2580,86 +3035,35 @@ async def debug_project(project_id: str, session: AsyncSession = Depends(get_db)
         return JSONResponse({"error": "Project not found"}, status_code=404)
 
     data = getattr(project, "data", None) or {}
-    if not isinstance(data, dict):
-        data = {}
-
     clips = data.get("clips", []) or []
     saved_voices = data.get("cloned_voices", []) or []
-
-    clips_info = []
-    for i, c in enumerate(clips):
-        if not isinstance(c, dict):
-            clips_info.append({"index": i, "error": "not a dict"})
-            continue
-
-        content = c.get("content") or c.get("url") or ""
-
-        clips_info.append({
-            "index": i,
-            "type": c.get("type"),
-            "title": c.get("title"),
-            "duration": c.get("duration"),
-            "start": c.get("start"),
-            "content_preview": (str(content)[:200] if content else None),
-            "script_preview": (c.get("script") or "")[:100] or None,
-            "script_segments_count": len(c.get("script_segments") or []),
-            "source": c.get("source"),
-            "processed": c.get("processed"),
-            "voice_id": c.get("voice_id"),
-        })
-
-    audio_clips = [c for c in clips if isinstance(c, dict) and c.get("type") == "audio"]
-    audio_summary = {
-        "count": len(audio_clips),
-        "with_script": sum(1 for c in audio_clips if c.get("script")),
-        "with_segments": sum(1 for c in audio_clips if c.get("script_segments")),
-        "processed": sum(1 for c in audio_clips if c.get("processed")),
-        "with_voice_id": sum(1 for c in audio_clips if c.get("voice_id")),
-        "sources": list({c.get("source", "unknown") for c in audio_clips}),
-    }
 
     return {
         "project_id": project_id,
         "title": project.title,
-        "status": (
-            project.status.value
-            if hasattr(project.status, "value")
-            else str(project.status)
-        ),
         "data_keys": list(data.keys()),
         "clips_count": len(clips),
         "saved_voices_count": len(saved_voices),
         "saved_voices": saved_voices,
-        "audio_summary": audio_summary,
-        "clips": clips_info,
+        "clips_summary": [
+            {
+                "id": c.get("id"),
+                "type": c.get("type"),
+                "source": c.get("source"),
+                "title": c.get("title"),
+            }
+            for c in clips if isinstance(c, dict)
+        ],
     }
 
 
-@router.get("/api/debug/render-jobs/{project_id}")
-async def debug_render_jobs(project_id: str, session: AsyncSession = Depends(get_db)):
-    try:
-        project_uuid = uuid.UUID(project_id)
-    except ValueError:
-        return JSONResponse({"error": "Invalid project_id"}, status_code=400)
-
-    job_repo = SQLRenderJobRepository(session)
-    jobs = await job_repo.list_for_project(project_uuid)
-
+@router.get("/api/debug/talking-head/jobs")
+async def debug_talking_head_jobs():
+    """اعرض talking head jobs النشطة."""
     return {
-        "project_id": project_id,
-        "jobs_count": len(jobs),
-        "jobs": [
-            {
-                "id": str(j.id),
-                "status": (
-                    j.status.value if hasattr(j.status, "value") else str(j.status)
-                ),
-                "progress": getattr(j, "progress", None),
-                "error_message": getattr(j, "error_message", None),
-                "output_path": getattr(j, "output_path", None),
-            }
-            for j in jobs
-        ],
+        "success": True,
+        "count": len(TALKING_HEAD_JOBS),
+        "jobs": list(TALKING_HEAD_JOBS.values()),
     }
 
 
@@ -2668,7 +3072,7 @@ async def debug_voiceovers(project_id: str, session: AsyncSession = Depends(get_
     try:
         project_uuid = uuid.UUID(project_id)
     except ValueError:
-        return JSONResponse({"error": f"Invalid project_id: {project_id}"}, status_code=400)
+        return JSONResponse({"error": "Invalid project_id"}, status_code=400)
 
     repo = SQLProjectRepository(session)
     project = await repo.get(project_uuid)
@@ -2679,40 +3083,22 @@ async def debug_voiceovers(project_id: str, session: AsyncSession = Depends(get_
     clips = data.get("clips", []) or []
     saved_voices = data.get("cloned_voices", []) or []
 
-    voiceovers = []
-    for c in clips:
-        if not isinstance(c, dict) or c.get("type") != "audio":
-            continue
-
-        segments = c.get("script_segments") or []
-        voiceovers.append({
-            "id": c.get("id"),
-            "title": c.get("title"),
-            "url": c.get("url"),
-            "source": c.get("source"),
-            "start": c.get("start"),
-            "duration": c.get("duration"),
-            "script_length": len(c.get("script") or ""),
-            "segments_count": len(segments),
-            "has_tts": bool(c.get("tts")),
-            "voice_id": c.get("voice_id"),
-            "processed": c.get("processed", False),
-        })
-
-    elevenlabs_ok = settings.elevenlabs_configured
+    audio_clips = [c for c in clips if isinstance(c, dict) and c.get("type") == "audio"]
+    video_clips = [c for c in clips if isinstance(c, dict) and c.get("type") == "video"]
 
     cache_files = list(CACHE_DIR.glob("*.mp3"))
     cache_size_mb = sum(f.stat().st_size for f in cache_files) / 1024 / 1024
 
     return {
         "project_id": project_id,
-        "voiceover_count": len(voiceovers),
+        "audio_clips_count": len(audio_clips),
+        "video_clips_count": len(video_clips),
         "saved_voices_count": len(saved_voices),
         "saved_voices": saved_voices,
-        "elevenlabs_available": elevenlabs_ok,
+        "elevenlabs_available": settings.elevenlabs_configured,
+        "did_available": settings.did_configured,
         "cache_stats": {
             "files": len(cache_files),
             "size_mb": round(cache_size_mb, 2),
         },
-        "voiceovers": voiceovers,
     }
