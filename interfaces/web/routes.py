@@ -13,6 +13,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 
+import httpx
+
 from fastapi import (
     APIRouter, Request, Depends, HTTPException,
     UploadFile, File, Form, BackgroundTasks
@@ -175,16 +177,18 @@ HF_VOICES_DIR.mkdir(parents=True, exist_ok=True)
 TALKING_HEADS_DIR = Path(settings.MEDIA_DIR) / "talking_heads"
 TALKING_HEADS_DIR.mkdir(parents=True, exist_ok=True)
 
-# ✅ NEW: مجلدات فيديو العقارات
 PROPERTY_ASSETS_DIR = Path(settings.MEDIA_DIR) / "property_assets"
 PROPERTY_ASSETS_DIR.mkdir(parents=True, exist_ok=True)
 
 PROPERTY_VIDEOS_DIR = Path(settings.MEDIA_DIR) / "property_videos"
 PROPERTY_VIDEOS_DIR.mkdir(parents=True, exist_ok=True)
 
-# ✅ NEW: مجلد الـ jobs (للحفظ على القرص)
+# ✅ مجلد الـ jobs المحلي (fallback)
 JOBS_DIR = Path(settings.MEDIA_DIR) / "jobs"
 JOBS_DIR.mkdir(parents=True, exist_ok=True)
+
+# ✅ مجلد الـ jobs داخل Supabase Storage
+JOBS_STORAGE_PREFIX = "jobs"
 
 VOICEOVER_MAX_SIZE = 100 * 1024 * 1024  # 100MB
 ALLOWED_AUDIO_TYPES = {
@@ -200,16 +204,15 @@ TALKING_HEAD_JOBS: Dict[str, Dict[str, Any]] = {}
 
 
 # ============================================================
-# ✅ NEW: JOB PERSISTENCE — يبقى بعد restart
+# ✅ JOB PERSISTENCE v2 — Supabase Storage + fallback محلي
 # ============================================================
 
 def _save_job_to_disk(job_id: str, data: Dict[str, Any]) -> None:
-    """احفظ حالة الـ job على القرص (يبقى بعد restart)."""
+    """احفظ حالة الـ job على القرص المحلي (fallback)."""
     try:
         data["_updated_at"] = datetime.utcnow().isoformat()
         path = JOBS_DIR / f"{job_id}.json"
 
-        # احذف الحقول الثقيلة قبل الحفظ
         data_clean = {
             k: v for k, v in data.items()
             if k not in ("images", "image_urls", "raw_images", "_background_task")
@@ -220,7 +223,7 @@ def _save_job_to_disk(job_id: str, data: Dict[str, Any]) -> None:
             encoding="utf-8",
         )
     except Exception as e:
-        logger.warning(f"Failed to save job {job_id}: {e}")
+        logger.warning(f"Failed to save job {job_id} to disk: {e}")
 
 
 def _load_job_from_disk(job_id: str) -> Optional[Dict[str, Any]]:
@@ -231,37 +234,127 @@ def _load_job_from_disk(job_id: str) -> Optional[Dict[str, Any]]:
     try:
         return json.loads(path.read_text(encoding="utf-8"))
     except Exception as e:
+        logger.warning(f"Failed to load job {job_id} from disk: {e}")
+        return None
+
+
+async def _save_job_to_storage(job_id: str, data: Dict[str, Any]) -> None:
+    """
+    احفظ حالة الـ job في Supabase Storage (JSON file).
+    يبقى بعد restart لأن Storage دائم.
+    """
+    try:
+        # احذف الحقول الثقيلة
+        data_clean = {
+            k: v for k, v in data.items()
+            if k not in ("images", "image_urls", "raw_images", "_background_task")
+        }
+        data_clean["_updated_at"] = datetime.utcnow().isoformat()
+
+        json_bytes = json.dumps(
+            data_clean, ensure_ascii=False, default=str
+        ).encode("utf-8")
+
+        if settings.supabase_configured:
+            try:
+                from application.services.production_service import (
+                    _upload_to_supabase,
+                )
+
+                storage = SupabaseStorageAdapter()
+                remote_path = f"{JOBS_STORAGE_PREFIX}/{job_id}.json"
+
+                tmp_path = Path(tempfile.gettempdir()) / f"job_{job_id}.json"
+                tmp_path.write_bytes(json_bytes)
+
+                try:
+                    await _upload_to_supabase(
+                        storage=storage,
+                        local_path=tmp_path,
+                        remote_path=remote_path,
+                        content_type="application/json",
+                    )
+                finally:
+                    tmp_path.unlink(missing_ok=True)
+
+            except Exception as e:
+                logger.warning(f"Supabase save job failed: {e}")
+                _save_job_to_disk(job_id, data_clean)
+        else:
+            _save_job_to_disk(job_id, data_clean)
+
+    except Exception as e:
+        logger.warning(f"Failed to save job {job_id}: {e}")
+
+
+async def _load_job_from_storage(job_id: str) -> Optional[Dict[str, Any]]:
+    """
+    اقرأ حالة الـ job من Supabase Storage.
+    """
+    try:
+        if settings.supabase_configured:
+            try:
+                bucket = settings.SUPABASE_BUCKET
+                base_url = settings.SUPABASE_URL.rstrip("/")
+                public_key = settings.supabase_public_key_value
+
+                url = (
+                    f"{base_url}/storage/v1/object/"
+                    f"{bucket}/{JOBS_STORAGE_PREFIX}/{job_id}.json"
+                )
+
+                async with httpx.AsyncClient(timeout=15.0) as client:
+                    r = await client.get(
+                        url,
+                        headers={
+                            "apikey": public_key,
+                            "Authorization": f"Bearer {public_key}",
+                        },
+                    )
+                    if r.status_code == 200:
+                        return r.json()
+                    elif r.status_code != 404:
+                        logger.warning(f"Load job HTTP {r.status_code}: {r.text[:200]}")
+
+            except Exception as e:
+                logger.warning(f"Supabase load job failed: {e}")
+
+        # Fallback إلى القرص المحلي
+        return _load_job_from_disk(job_id)
+
+    except Exception as e:
         logger.warning(f"Failed to load job {job_id}: {e}")
         return None
 
 
-def get_job(job_id: str) -> Optional[Dict[str, Any]]:
-    """اقرأ من الذاكرة أولاً، ثم من القرص."""
+async def get_job_async(job_id: str) -> Optional[Dict[str, Any]]:
+    """اقرأ من الذاكرة أولاً، ثم من Storage."""
     if job_id in TALKING_HEAD_JOBS:
         return TALKING_HEAD_JOBS[job_id]
-    job = _load_job_from_disk(job_id)
+
+    job = await _load_job_from_storage(job_id)
     if job:
         TALKING_HEAD_JOBS[job_id] = job
     return job
 
 
-def update_job(job_id: str, **kwargs) -> None:
-    """حدّث job في الذاكرة + القرص."""
-    job = TALKING_HEAD_JOBS.get(job_id) or _load_job_from_disk(job_id) or {"id": job_id}
+async def update_job_async(job_id: str, **kwargs) -> None:
+    """حدّث job في الذاكرة + Storage."""
+    job = TALKING_HEAD_JOBS.get(job_id) or await _load_job_from_storage(job_id) or {"id": job_id}
     job.update(kwargs)
     TALKING_HEAD_JOBS[job_id] = job
-    _save_job_to_disk(job_id, job)
+    await _save_job_to_storage(job_id, job)
 
 
-def create_job(job_id: str, **initial) -> None:
-    """أنشئ job جديد واحفظه على القرص."""
+async def create_job_async(job_id: str, **initial) -> None:
+    """أنشئ job جديد واحفظه في Storage."""
     job = {
         "id": job_id,
         "created_at": datetime.utcnow().isoformat(),
         **initial,
     }
     TALKING_HEAD_JOBS[job_id] = job
-    _save_job_to_disk(job_id, job)
+    await _save_job_to_storage(job_id, job)
 
 
 async def _get_audio_duration(file_path: Path) -> float:
@@ -480,8 +573,6 @@ async def _huggingface_clone_and_generate(
     language: str = "ar",
 ) -> bytes:
     """استنساخ صوت + توليد نص عبر HuggingFace Space."""
-    import httpx
-
     spaces_to_try = [
         settings.HUGGINGFACE_SPACE_URL,
         settings.HUGGINGFACE_SPACE_URL_FALLBACK,
@@ -658,8 +749,6 @@ ELEVENLABS_API_BASE = "https://api.elevenlabs.io/v1"
 async def _elevenlabs_create_voice(
     audio_content: bytes, voice_name: str, description: str = "",
 ) -> str:
-    import httpx
-
     if not settings.elevenlabs_configured:
         raise HTTPException(status_code=503, detail="ElevenLabs غير مهيأ")
 
@@ -715,8 +804,6 @@ async def _elevenlabs_tts(
     stability: float = 0.5, similarity_boost: float = 0.75,
     style: float = 0.0, speed: float = 1.0,
 ) -> bytes:
-    import httpx
-
     if not settings.elevenlabs_configured:
         raise HTTPException(status_code=503, detail="ElevenLabs غير مهيأ")
 
@@ -750,8 +837,6 @@ async def _elevenlabs_tts(
 
 
 async def _elevenlabs_delete_voice(voice_id: str) -> bool:
-    import httpx
-
     if not settings.elevenlabs_configured:
         return False
 
@@ -776,12 +861,7 @@ DID_API_BASE = "https://api.d-id.com"
 
 
 async def _upload_to_catbox(content: bytes, filename: str) -> str:
-    """
-    ارفع ملف إلى catbox.moe — خدمة مجانية بدون تسجيل.
-    تستخدم كـ fallback إذا فشل Supabase.
-    """
-    import httpx
-
+    """ارفع ملف إلى catbox.moe — خدمة مجانية بدون تسجيل."""
     async with httpx.AsyncClient(timeout=120.0, follow_redirects=True) as client:
         files = {"fileToUpload": (filename, content)}
         data = {"reqtype": "fileupload"}
@@ -808,10 +888,7 @@ async def _upload_media_for_did(
     filename: str,
     content_type: str,
 ) -> str:
-    """
-    ارفع ملف (صورة/صوت) إلى خدمة عامة للحصول على رابط URL.
-    يحاول: Supabase أولاً → ثم Catbox → ثم tmpfiles.org.
-    """
+    """ارفع ملف إلى خدمة عامة للحصول على رابط URL."""
     # ── 1. جرّب Supabase ──
     if settings.supabase_configured:
         try:
@@ -824,7 +901,6 @@ async def _upload_media_for_did(
             suffix = Path(filename).suffix.lower() or ".bin"
             remote_path = f"talking_heads/{unique}{suffix}"
 
-            # احفظ مؤقتاً
             tmp_path = Path(tempfile.gettempdir()) / f"did_{unique}{suffix}"
             tmp_path.write_bytes(content)
 
@@ -857,8 +933,6 @@ async def _upload_media_for_did(
     # ── 3. جرّب tmpfiles.org ──
     try:
         _diag("🔄 Trying tmpfiles.org...")
-        import httpx
-
         async with httpx.AsyncClient(timeout=60.0) as client:
             files = {"file": (filename, content, content_type)}
             r = await client.post(
@@ -869,7 +943,6 @@ async def _upload_media_for_did(
                 data = r.json()
                 url = data.get("data", {}).get("url", "")
                 if url:
-                    # حوّل إلى رابط مباشر
                     direct = url.replace("tmpfiles.org/", "tmpfiles.org/dl/")
                     _diag(f"✅ tmpfiles upload: {direct[:80]}...")
                     return direct
@@ -892,23 +965,13 @@ async def _did_create_talk(
     audio_content: bytes,
     image_filename: str = "image.jpg",
 ) -> str:
-    """
-    🎭 إنشاء فيديو talking head من صورة + صوت.
-
-    مهم: D-ID لا يقبل base64 data URLs،
-    يجب رفع الملفات إلى خدمة عامة والحصول على روابط https مباشرة.
-    """
-    import httpx
-
+    """🎭 إنشاء فيديو talking head من صورة + صوت."""
     if not settings.did_configured:
         raise HTTPException(
             status_code=503,
             detail="D-ID API غير مهيأ. أضف DID_API_KEY.",
         )
 
-    # ═══════════════════════════════════════════════════════════
-    # 1. تحقق من الأحجام
-    # ═══════════════════════════════════════════════════════════
     img_size_mb = len(image_content) / 1024 / 1024
     aud_size_mb = len(audio_content) / 1024 / 1024
 
@@ -927,9 +990,6 @@ async def _did_create_talk(
             detail=f"الصوت كبير جداً ({aud_size_mb:.2f} MB). استخدم نصاً أقصر.",
         )
 
-    # ═══════════════════════════════════════════════════════════
-    # 2. حدد الأسماء والأنواع
-    # ═══════════════════════════════════════════════════════════
     suffix = Path(image_filename).suffix.lower()
     if suffix not in [".jpg", ".jpeg", ".png", ".webp"]:
         suffix = ".jpg"
@@ -945,9 +1005,6 @@ async def _did_create_talk(
     aud_filename = "audio.mp3"
     aud_content_type = "audio/mpeg"
 
-    # ═══════════════════════════════════════════════════════════
-    # 3. ارفع الصورة والصوت → احصل على روابط https
-    # ═══════════════════════════════════════════════════════════
     _diag("📤 Uploading image to public host...")
     img_url = await _upload_media_for_did(
         image_content, img_filename, img_content_type
@@ -962,9 +1019,6 @@ async def _did_create_talk(
     _diag(f"   🖼️  {img_url}")
     _diag(f"   🔊 {aud_url}")
 
-    # ═══════════════════════════════════════════════════════════
-    # 4. أرسل الطلب لـ D-ID (بروابط https حقيقية)
-    # ═══════════════════════════════════════════════════════════
     payload = {
         "source_url": img_url,
         "script": {
@@ -984,8 +1038,6 @@ async def _did_create_talk(
     }
 
     _diag(f"🎭 Sending request to D-ID...")
-    _diag(f"   source_url: {img_url[:100]}...")
-    _diag(f"   audio_url: {aud_url[:100]}...")
 
     async with httpx.AsyncClient(timeout=120.0) as client:
         try:
@@ -1006,11 +1058,7 @@ async def _did_create_talk(
                 detail=f"فشل الاتصال بـ D-ID: {str(e)}",
             )
 
-    # ═══════════════════════════════════════════════════════════
-    # 5. عالج الاستجابة
-    # ═══════════════════════════════════════════════════════════
     _diag(f"📡 D-ID response: status={r.status_code}")
-    _diag(f"📡 Response: {r.text[:800]}")
 
     if r.status_code not in (200, 201):
         error_text = r.text[:800]
@@ -1018,24 +1066,12 @@ async def _did_create_talk(
 
         try:
             error_data = r.json()
-            _diag(f"📡 Parsed: {json.dumps(error_data, ensure_ascii=False)[:600]}")
-
             err_detail = error_data.get("description") or error_data.get("message")
-
             if err_detail:
                 user_message = f"❌ D-ID: {err_detail}"
-
-            # تفاصيل الحقول
-            if "details" in error_data and isinstance(error_data["details"], dict):
-                for field, info in list(error_data["details"].items())[:3]:
-                    if isinstance(info, dict):
-                        msg = info.get("message", "?")
-                        user_message += f"\n  • {field}: {msg}"
-
         except Exception:
             user_message = f"❌ D-ID ({r.status_code}): {error_text}"
 
-        # رسائل مخصصة
         if r.status_code == 400:
             user_message += (
                 "\n\n💡 تحقق من:\n"
@@ -1044,22 +1080,17 @@ async def _did_create_talk(
                 "• الرابط: يبدأ بـ https"
             )
         elif r.status_code == 401:
-            user_message = "🔑 مفتاح D-ID غير صالح. تحقق من DID_API_KEY."
+            user_message = "🔑 مفتاح D-ID غير صالح."
         elif r.status_code == 402:
             user_message = "💳 انتهى رصيدك في D-ID."
-        elif r.status_code == 403:
-            user_message = "🚫 تم رفض الوصول. المفتاح معطّل أو منتهي."
         elif r.status_code == 429:
-            user_message = "⏱️ تجاوزت الحد المسموح. انتظر قليلاً."
+            user_message = "⏱️ تجاوزت الحد المسموح."
 
         raise HTTPException(
             status_code=r.status_code,
             detail=user_message,
         )
 
-    # ═══════════════════════════════════════════════════════════
-    # 6. نجاح
-    # ═══════════════════════════════════════════════════════════
     try:
         result = r.json()
     except Exception as e:
@@ -1072,22 +1103,17 @@ async def _did_create_talk(
     talk_id = result.get("id")
 
     if not talk_id:
-        _diag(f"⚠️ Response has no 'id': {result}")
         raise HTTPException(
             status_code=500,
             detail="D-ID لم يُرجع talk_id.",
         )
 
     _diag(f"✅ D-ID talk created: {talk_id}")
-    _diag(f"   Duration: {result.get('duration')}")
-    _diag(f"   Status: {result.get('status')}")
 
     return talk_id
 
 
 async def _did_get_talk_status(talk_id: str) -> Dict[str, Any]:
-    import httpx
-
     if not settings.did_configured:
         raise HTTPException(status_code=503, detail="D-ID غير مهيأ")
 
@@ -1462,12 +1488,7 @@ async def clone_user_voice(
                     "message": "✅ تم الاستنساخ عبر ElevenLabs",
                 }
             except HTTPException as e:
-                if e.status_code == 400 and "paid_plan" in str(e.detail).lower():
-                    logger.info("ElevenLabs requires paid plan — falling back to HuggingFace")
-                elif "paid_plan_required" in str(e.detail):
-                    logger.info("ElevenLabs paid plan required — falling back")
-                else:
-                    logger.warning(f"ElevenLabs failed: {e.detail}")
+                logger.warning(f"ElevenLabs failed: {e.detail}")
 
         return {
             "success": True,
@@ -1477,8 +1498,8 @@ async def clone_user_voice(
             "temporary": True,
             "message": (
                 "✅ HuggingFace جاهز للاستنساخ.\n"
-                "⚠️ HuggingFace لا يحفظ الأصوات — ستحتاج رفع المرجع في كل مرة.\n\n"
-                "💡 للحصول على حفظ دائم، رقّي ElevenLabs إلى خطة Starter ($5/شهر)."
+                "⚠️ HuggingFace لا يحفظ الأصوات.\n\n"
+                "💡 للحصول على حفظ دائم، رقّي ElevenLabs إلى خطة Starter."
             ),
         }
 
@@ -2111,7 +2132,6 @@ async def check_permissions():
 
     if settings.elevenlabs_configured:
         try:
-            import httpx
             async with httpx.AsyncClient(timeout=15.0) as client:
                 r = await client.get(
                     f"{ELEVENLABS_API_BASE}/user",
@@ -2193,7 +2213,8 @@ async def create_talking_head(
             image_filename=image.filename or "image.jpg",
         )
 
-        create_job(
+        # ✅ احفظ في Supabase Storage
+        await create_job_async(
             talk_id,
             project_id=project_id,
             status="created",
@@ -2231,9 +2252,7 @@ async def generate_talking_head(
     language: str = Form("ar"),
     project_id: str = Form(""),
 ):
-    """
-    🎭 توليد فيديو ناطق من صورة + نص (D-ID + Edge TTS).
-    """
+    """🎭 توليد فيديو ناطق من صورة + نص."""
     try:
         if not settings.did_configured:
             return JSONResponse(
@@ -2334,7 +2353,8 @@ async def generate_talking_head(
                 status_code=e.status_code,
             )
 
-        create_job(
+        # ✅ احفظ في Supabase Storage
+        await create_job_async(
             talk_id,
             project_id=project_id,
             status="created",
@@ -2382,10 +2402,8 @@ async def get_talking_head_status(talk_id: str):
         error = data.get("error")
         duration = data.get("duration")
 
-        # ✅ إذا اكتمل الفيديو ولا توجد مدة، استخرجها من الرابط
         if status == "done" and result_url and not duration:
             try:
-                import httpx
                 _diag(f"⏱️ Probing duration for {talk_id}...")
 
                 async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
@@ -2400,8 +2418,8 @@ async def get_talking_head_status(talk_id: str):
             except Exception as e:
                 _diag_err(f"⚠️ Failed to probe duration: {e}", e)
 
-        # ✅ احفظ التحديث على القرص أيضاً
-        update_job(
+        # ✅ احفظ التحديث في Storage
+        await update_job_async(
             talk_id,
             status=status,
             result_url=result_url,
@@ -2434,14 +2452,7 @@ async def save_talking_head_to_project(
     payload: Dict[str, Any],
     session: AsyncSession = Depends(get_db),
 ):
-    """
-    🎭 حفظ Talking Head في المشروع.
-
-    ⚠️ مهم: ننزّل الفيديو من D-ID أولاً، نرفعه إلى Supabase،
-    ثم نحفظ الرابط الدائم + المدة الحقيقية.
-    """
-    import httpx
-
+    """🎭 حفظ Talking Head في المشروع."""
     try:
         project_uuid = uuid.UUID(project_id)
     except ValueError:
@@ -2567,8 +2578,6 @@ async def save_talking_head_to_project(
 @router.delete("/api/talking-head/delete/{talk_id}")
 async def delete_talking_head(talk_id: str):
     """احذف talking head job."""
-    import httpx
-
     if settings.did_configured:
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
@@ -2582,7 +2591,6 @@ async def delete_talking_head(talk_id: str):
     if talk_id in TALKING_HEAD_JOBS:
         del TALKING_HEAD_JOBS[talk_id]
 
-    # احذف الملف أيضاً
     try:
         job_file = JOBS_DIR / f"{talk_id}.json"
         if job_file.exists():
@@ -3034,8 +3042,7 @@ async def add_voiceover_clip(
     clips.append(payload)
     data["clips"] = clips
     if hasattr(project, "data"):
-        project.data = data
-    if hasattr(repo, "update"):
+        project.data = data    if hasattr(repo, "update"):
         await repo.update(project)
     elif hasattr(repo, "save"):
         await repo.save(project)
@@ -3553,7 +3560,12 @@ async def logs_page(request: Request):
     jobs_count = len(list(JOBS_DIR.glob("*.json"))) if JOBS_DIR.exists() else 0
     log_entries.append({
         "level": "INFO", "source": "property_video", "timestamp": now,
-        "message": f"Persisted Jobs: {jobs_count} files"
+        "message": f"Local Jobs: {jobs_count} files"
+    })
+
+    log_entries.append({
+        "level": "INFO", "source": "property_video", "timestamp": now,
+        "message": f"Supabase Jobs Prefix: {JOBS_STORAGE_PREFIX}/ (bucket: {settings.SUPABASE_BUCKET})"
     })
 
     return templates.TemplateResponse(request, "logs.html", {
@@ -3650,6 +3662,11 @@ async def health_page(request: Request, session: AsyncSession = Depends(get_db))
             "status": "ok" if whisper_ok else "degraded",
             "detail": whisper_detail,
         },
+        {
+            "name": "Job Persistence (Supabase)",
+            "status": "ok" if supabase_ok else "degraded",
+            "detail": f"Storage: {JOBS_STORAGE_PREFIX}/",
+        },
     ]
 
     system_info = [
@@ -3664,6 +3681,7 @@ async def health_page(request: Request, session: AsyncSession = Depends(get_db))
         {"label": "D-ID", "value": "✅ متاح" if did_ok else "❌ غير مهيأ"},
         {"label": "Whisper", "value": whisper_detail},
         {"label": "FFmpeg", "value": "✅ متاح" if ffmpeg_ok else "❌ غير مثبّت"},
+        {"label": "Jobs Storage", "value": JOBS_STORAGE_PREFIX},
     ]
 
     return templates.TemplateResponse(request, "health.html", {
@@ -3783,13 +3801,14 @@ async def debug_talking_head_jobs():
         "success": True,
         "count": len(TALKING_HEAD_JOBS),
         "jobs": list(TALKING_HEAD_JOBS.values()),
-        "persisted_count": len(list(JOBS_DIR.glob("*.json"))) if JOBS_DIR.exists() else 0,
+        "local_files": len(list(JOBS_DIR.glob("*.json"))) if JOBS_DIR.exists() else 0,
+        "storage_prefix": JOBS_STORAGE_PREFIX,
     }
 
 
 @router.get("/api/debug/jobs/list")
 async def debug_jobs_list():
-    """اعرض كل الـ jobs المحفوظة على القرص."""
+    """اعرض كل الـ jobs المحفوظة محلياً."""
     jobs = []
     if JOBS_DIR.exists():
         for f in JOBS_DIR.glob("*.json"):
@@ -3801,6 +3820,7 @@ async def debug_jobs_list():
         "success": True,
         "count": len(jobs),
         "jobs": jobs,
+        "storage_prefix": JOBS_STORAGE_PREFIX,
     }
 
 
@@ -3884,10 +3904,7 @@ async def upload_property_image(
     file: UploadFile = File(...),
     project_id: str = Form(...),
 ):
-    """
-    يرفع صورة عقار ويُرجع رابطها الدائم + المسار.
-    يستخدم Supabase أولاً ثم fallback محلي.
-    """
+    """يرفع صورة عقار ويُرجع رابطها الدائم + المسار."""
     try:
         content = await file.read()
         if not content:
@@ -3911,7 +3928,6 @@ async def upload_property_image(
             tmp_path = Path(tmp.name)
 
         try:
-            # ── Supabase أولاً ──
             if settings.supabase_configured:
                 try:
                     from application.services.production_service import (
@@ -3937,7 +3953,6 @@ async def upload_property_image(
                 except Exception as e:
                     logger.warning(f"Supabase image upload failed: {e}")
 
-            # ── Fallback محلي ──
             local_dest = PROPERTY_ASSETS_DIR / f"{project_id}_{unique}"
             local_dest.write_bytes(content)
 
@@ -3972,9 +3987,8 @@ async def generate_property_video(
     """
     🏠 يبدأ توليد فيديو عقاري في الخلفية.
 
-    ✅ يستخدم:
-    - create_job (يحفظ على القرص — يبقى بعد restart)
-    - asyncio.create_task (أكثر موثوقية من BackgroundTasks)
+    ✅ يستخدم create_job_async (يحفظ في Supabase Storage)
+    ✅ يستخدم asyncio.create_task (أكثر موثوقية)
     """
     try:
         project_uuid = uuid.UUID(payload.project_id)
@@ -4000,8 +4014,8 @@ async def generate_property_video(
 
     job_id = f"prop_{uuid.uuid4().hex[:12]}"
 
-    # ✅ احفظ على القرص فوراً
-    create_job(
+    # ✅ احفظ في Supabase Storage فوراً
+    await create_job_async(
         job_id,
         project_id=payload.project_id,
         status="queued",
@@ -4014,7 +4028,7 @@ async def generate_property_video(
         kind="property_video",
     )
 
-    # ✅ استخدم asyncio.create_task (يبقى شغّالاً حتى بعد الاستجابة)
+    # ✅ ابدأ المهمة في الخلفية
     asyncio.create_task(_run_property_video_job(job_id, payload.model_dump()))
 
     _diag(f"🏠 Property video queued: {job_id}")
@@ -4038,13 +4052,35 @@ async def generate_property_video(
 
 @router.get("/api/property/status/{job_id}")
 async def get_property_video_status(job_id: str):
-    """يرجع حالة job توليد العقار — من الذاكرة أو من القرص."""
-    job = get_job(job_id)
+    """
+    يرجع حالة job توليد العقار.
+    ✅ يقرأ من الذاكرة أو Supabase Storage.
+    ✅ يكشف jobs الميتة (restart) ويعلّمها failed.
+    """
+    job = await get_job_async(job_id)
     if not job:
         return JSONResponse(
             {"success": False, "error": "Job not found"},
             status_code=404,
         )
+
+    # ✅ إذا الـ job في حالة running/queued لكن قديم جداً (>5 دقائق)، اعتبره فشل
+    if job.get("status") in ("running", "queued"):
+        updated = job.get("_updated_at") or job.get("created_at")
+        if updated:
+            try:
+                updated_dt = datetime.fromisoformat(updated.replace("Z", "+00:00"))
+                age_seconds = (datetime.utcnow() - updated_dt.replace(tzinfo=None)).total_seconds()
+                if age_seconds > 300:  # 5 دقائق
+                    _diag(f"⚠️ Job {job_id} قديم ({age_seconds:.0f}s) — mark as failed")
+                    await update_job_async(
+                        job_id,
+                        status="failed",
+                        error="انتهت المهمة (restart الخادم قبل الإكمال)",
+                    )
+                    job = await get_job_async(job_id)
+            except Exception:
+                pass
 
     return {
         "success": True,
@@ -4062,10 +4098,7 @@ async def save_property_video_to_project(
     payload: Dict[str, Any],
     session: AsyncSession = Depends(get_db),
 ):
-    """
-    يحفظ الفيديو المولَّد في project.data["clips"].
-    نفس نمط talking-head/save.
-    """
+    """يحفظ الفيديو المولَّد في project.data["clips"]."""
     try:
         project_uuid = uuid.UUID(project_id)
     except ValueError:
@@ -4125,7 +4158,7 @@ async def _run_property_video_job(job_id: str, payload: Dict[str, Any]) -> None:
     """
     ينفّذ توليد الفيديو العقاري كاملاً في الخلفية.
 
-    ✅ يستخدم update_job لتخزين الحالة على القرص
+    ✅ يستخدم update_job_async (يحفظ في Supabase Storage)
     ✅ يدعم: بدون صوت، بدون نصوص، أو الاثنين
     """
     try:
@@ -4151,7 +4184,7 @@ async def _run_property_video_job(job_id: str, payload: Dict[str, Any]) -> None:
             _diag(f"   images            = {len(images)}")
 
             # ═══ 1. motion clips ═══
-            update_job(job_id, status="running", stage="motion", progress=0.05)
+            await update_job_async(job_id, status="running", stage="motion", progress=0.05)
 
             motion_clips: List[Path] = []
 
@@ -4170,7 +4203,6 @@ async def _run_property_video_job(job_id: str, payload: Dict[str, Any]) -> None:
                     img_url = img.get("url", "")
                     if img_url.startswith("http"):
                         try:
-                            import httpx
                             async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as c:
                                 r = await c.get(img_url)
                                 if r.status_code == 200:
@@ -4197,7 +4229,7 @@ async def _run_property_video_job(job_id: str, payload: Dict[str, Any]) -> None:
                 motion_clips.append(clip_path)
 
                 if len(images) > 0:
-                    update_job(
+                    await update_job_async(
                         job_id,
                         progress=0.05 + (idx + 1) / len(images) * 0.4,
                     )
@@ -4206,7 +4238,7 @@ async def _run_property_video_job(job_id: str, payload: Dict[str, Any]) -> None:
                 raise RuntimeError("لم يتم توليد أي مقطع — تحقق من الصور")
 
             # ═══ 2. concat ═══
-            update_job(job_id, stage="concat", progress=0.5)
+            await update_job_async(job_id, stage="concat", progress=0.5)
 
             stitched = tmp_dir / "stitched.mp4"
             await _concat_video_clips(motion_clips, stitched, tmp_dir)
@@ -4215,7 +4247,7 @@ async def _run_property_video_job(job_id: str, payload: Dict[str, Any]) -> None:
             voiceover_path: Optional[Path] = None
 
             if voiceover_enabled:
-                update_job(job_id, stage="voiceover", progress=0.6)
+                await update_job_async(job_id, stage="voiceover", progress=0.6)
 
                 voiceover_text = _build_property_script(payload)
 
@@ -4232,13 +4264,13 @@ async def _run_property_video_job(job_id: str, payload: Dict[str, Any]) -> None:
                     voiceover_path = None
             else:
                 _diag("🔇 Voiceover disabled — skipping TTS")
-                update_job(job_id, stage="voiceover", progress=0.6)
+                await update_job_async(job_id, stage="voiceover", progress=0.6)
 
             # ═══ 4. text overlays (اختياري) ═══
             with_text = tmp_dir / "with_text.mp4"
 
             if overlay_enabled:
-                update_job(job_id, stage="text", progress=0.75)
+                await update_job_async(job_id, stage="text", progress=0.75)
 
                 await _add_property_text_overlays(
                     input_video=stitched,
@@ -4249,10 +4281,10 @@ async def _run_property_video_job(job_id: str, payload: Dict[str, Any]) -> None:
             else:
                 _diag("📝 Text overlays disabled — skipping")
                 shutil.copy(stitched, with_text)
-                update_job(job_id, stage="text", progress=0.75)
+                await update_job_async(job_id, stage="text", progress=0.75)
 
             # ═══ 5. audio mix ═══
-            update_job(job_id, stage="audio", progress=0.85)
+            await update_job_async(job_id, stage="audio", progress=0.85)
 
             final_video = tmp_dir / "final.mp4"
 
@@ -4266,7 +4298,7 @@ async def _run_property_video_job(job_id: str, payload: Dict[str, Any]) -> None:
                 shutil.copy(with_text, final_video)
 
             # ═══ 6. upload ═══
-            update_job(job_id, stage="upload", progress=0.92)
+            await update_job_async(job_id, stage="upload", progress=0.92)
 
             project_id = payload.get("project_id", "unknown")
             unique = uuid.uuid4().hex[:12]
@@ -4299,8 +4331,8 @@ async def _run_property_video_job(job_id: str, payload: Dict[str, Any]) -> None:
 
             real_duration = await _get_video_duration(final_video)
 
-            # ✅ حفظ النتيجة النهائية على القرص
-            update_job(
+            # ✅ حفظ النتيجة النهائية في Supabase Storage
+            await update_job_async(
                 job_id,
                 status="done",
                 stage="done",
@@ -4325,7 +4357,7 @@ async def _run_property_video_job(job_id: str, payload: Dict[str, Any]) -> None:
 
     except Exception as e:
         _diag_err(f"❌ Property video job failed: {e}", e)
-        update_job(job_id, status="failed", error=str(e))
+        await update_job_async(job_id, status="failed", error=str(e))
 
 
 # ─────────────────────────────────────────────────────────
