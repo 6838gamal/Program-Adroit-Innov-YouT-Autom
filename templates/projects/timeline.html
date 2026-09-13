@@ -733,7 +733,7 @@
             <div class="voice-clone-tip-text">
                 <strong>1.</strong> ارفع صور العقار (أرض، فيلا، شقة، مبنى، صالة...)<br>
                 <strong>2.</strong> أدخل التفاصيل (السعر، الموقع، المساحة، الميزات)<br>
-                <strong>3.</strong> اختر صوت التعليق (Edge TTS — عربي)<br>
+                <strong>3.</strong> اختر ما تريد (صوت؟ نصوص؟ أم فيديو صافي فقط)<br>
                 <strong>4.</strong> النظام 🎬 يُنتج فيديو عمودي 9:16 جاهز للنشر
                 <br><small style="color:#94a3b8;margin-top:6px;display:block;">
                     💡 كل صورة تحصل على حركة تلقائية (Pan / Zoom / Cinematic) حسب أبعادها
@@ -891,6 +891,27 @@
                 <h4 class="text-white font-semibold text-sm">⚙️ إعدادات الفيديو</h4>
             </div>
 
+            <!-- ✅ جديد: اختيارات المحتوى -->
+            <div class="mb-4 p-3 bg-slate-900/50 rounded-lg border border-slate-700 space-y-2">
+                <div class="text-xs text-slate-400 mb-2">🎛️ المحتوى المُضمَّن في الفيديو:</div>
+
+                <!-- تعليق صوتي -->
+                <label class="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" id="propVoiceoverEnabled" checked
+                           class="w-4 h-4 accent-blue-500">
+                    <span class="text-white text-sm font-semibold">🎙️ تفعيل التعليق الصوتي</span>
+                    <span class="text-xs text-slate-500 mr-auto">(بدونه: فيديو صامت — أسرع 3-5×)</span>
+                </label>
+
+                <!-- نصوص على الفيديو -->
+                <label class="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" id="propOverlayEnabled" checked
+                           class="w-4 h-4 accent-blue-500">
+                    <span class="text-white text-sm font-semibold">📝 إضافة النصوص على الفيديو</span>
+                    <span class="text-xs text-slate-500 mr-auto">(عنوان، سعر، موقع، مساحة)</span>
+                </label>
+            </div>
+
             <div class="grid grid-cols-2 gap-3">
                 <div>
                     <label class="text-slate-400 text-xs">مدة كل صورة (ث)</label>
@@ -909,7 +930,8 @@
                     </select>
                 </div>
 
-                <div>
+                <!-- ✅ صوت التعليق — يظهر فقط عند التفعيل -->
+                <div id="propVoiceSettings">
                     <label class="text-slate-400 text-xs">صوت التعليق</label>
                     <select id="propVoice" class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-white text-sm mt-1">
                         <option value="ar-SA-HamedNeural">🇸🇦 حامد (سعودي)</option>
@@ -919,8 +941,9 @@
                     </select>
                 </div>
 
-                <div>
-                    <label class="text-slate-400 text-xs">عناصر تظهر</label>
+                <!-- ✅ عناصر النصوص — تظهر فقط عند تفعيلها -->
+                <div id="propOverlaySettings">
+                    <label class="text-slate-400 text-xs">عناصر النص التي تظهر</label>
                     <div class="flex flex-wrap gap-2 mt-1">
                         <label class="flex items-center gap-1 text-xs text-slate-300 cursor-pointer">
                             <input type="checkbox" id="propShowPrice" checked> السعر
@@ -1087,7 +1110,7 @@ document.querySelectorAll('input[name="voiceoverMode"]').forEach(radio => {
 });
 
 // ─────────────────────────────────────────────────────────
-// تهيئة عند التحميل
+// ✅ جديد: تبديل إعدادات الصوت والنصوص في نافذة العقار
 // ─────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
     // ربط شريط LUFS
@@ -1096,6 +1119,30 @@ document.addEventListener('DOMContentLoaded', () => {
         lufs.addEventListener('input', () => {
             document.getElementById('lufsVal').textContent = lufs.value;
         });
+    }
+
+    // ✅ تبديل إعدادات الصوت
+    const voiceToggle = document.getElementById('propVoiceoverEnabled');
+    const voiceSettings = document.getElementById('propVoiceSettings');
+    if (voiceToggle && voiceSettings) {
+        const updateVoiceSettings = () => {
+            voiceSettings.style.display = voiceToggle.checked ? 'block' : 'none';
+            voiceSettings.style.opacity = voiceToggle.checked ? '1' : '0.4';
+        };
+        voiceToggle.addEventListener('change', updateVoiceSettings);
+        updateVoiceSettings();  // الحالة الأولية
+    }
+
+    // ✅ تبديل إعدادات النصوص
+    const overlayToggle = document.getElementById('propOverlayEnabled');
+    const overlaySettings = document.getElementById('propOverlaySettings');
+    if (overlayToggle && overlaySettings) {
+        const updateOverlaySettings = () => {
+            overlaySettings.style.display = overlayToggle.checked ? 'block' : 'none';
+            overlaySettings.style.opacity = overlayToggle.checked ? '1' : '0.4';
+        };
+        overlayToggle.addEventListener('change', updateOverlaySettings);
+        updateOverlaySettings();  // الحالة الأولية
     }
 
     // فحص الإعدادات
