@@ -2213,7 +2213,6 @@ async def create_talking_head(
             image_filename=image.filename or "image.jpg",
         )
 
-        # ✅ احفظ في Supabase Storage
         await create_job_async(
             talk_id,
             project_id=project_id,
@@ -2353,7 +2352,6 @@ async def generate_talking_head(
                 status_code=e.status_code,
             )
 
-        # ✅ احفظ في Supabase Storage
         await create_job_async(
             talk_id,
             project_id=project_id,
@@ -2418,7 +2416,6 @@ async def get_talking_head_status(talk_id: str):
             except Exception as e:
                 _diag_err(f"⚠️ Failed to probe duration: {e}", e)
 
-        # ✅ احفظ التحديث في Storage
         await update_job_async(
             talk_id,
             status=status,
@@ -3022,6 +3019,7 @@ async def add_voiceover_clip(
     payload: Dict[str, Any],
     session: AsyncSession = Depends(get_db),
 ):
+    """✅ إضافة clip صوتي للمشروع (تم إصلاح SyntaxError)."""
     try:
         project_uuid = uuid.UUID(project_id)
     except ValueError:
@@ -3041,8 +3039,10 @@ async def add_voiceover_clip(
 
     clips.append(payload)
     data["clips"] = clips
+
     if hasattr(project, "data"):
-        project.data = data    if hasattr(repo, "update"):
+        project.data = data
+    if hasattr(repo, "update"):
         await repo.update(project)
     elif hasattr(repo, "save"):
         await repo.save(project)
@@ -4014,7 +4014,6 @@ async def generate_property_video(
 
     job_id = f"prop_{uuid.uuid4().hex[:12]}"
 
-    # ✅ احفظ في Supabase Storage فوراً
     await create_job_async(
         job_id,
         project_id=payload.project_id,
@@ -4028,7 +4027,6 @@ async def generate_property_video(
         kind="property_video",
     )
 
-    # ✅ ابدأ المهمة في الخلفية
     asyncio.create_task(_run_property_video_job(job_id, payload.model_dump()))
 
     _diag(f"🏠 Property video queued: {job_id}")
@@ -4071,7 +4069,7 @@ async def get_property_video_status(job_id: str):
             try:
                 updated_dt = datetime.fromisoformat(updated.replace("Z", "+00:00"))
                 age_seconds = (datetime.utcnow() - updated_dt.replace(tzinfo=None)).total_seconds()
-                if age_seconds > 300:  # 5 دقائق
+                if age_seconds > 300:
                     _diag(f"⚠️ Job {job_id} قديم ({age_seconds:.0f}s) — mark as failed")
                     await update_job_async(
                         job_id,
@@ -4331,7 +4329,6 @@ async def _run_property_video_job(job_id: str, payload: Dict[str, Any]) -> None:
 
             real_duration = await _get_video_duration(final_video)
 
-            # ✅ حفظ النتيجة النهائية في Supabase Storage
             await update_job_async(
                 job_id,
                 status="done",
