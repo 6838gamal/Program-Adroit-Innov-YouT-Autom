@@ -1,7 +1,9 @@
 import uuid
 from datetime import datetime
+
 from sqlalchemy import String, Text, JSON, DateTime, Boolean, Integer
 from sqlalchemy.orm import Mapped, mapped_column
+
 from infrastructure.database.session import Base
 
 
@@ -21,9 +23,19 @@ class PublisherAccountModel(Base):
     __tablename__ = "publisher_accounts"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+
+    # ── Core fields ──────────────────────────────────────────────────────────
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     platform_name: Mapped[str] = mapped_column(String(100), nullable=False)
     credentials_encrypted: Mapped[str] = mapped_column(Text, nullable=False)
+
+    # ── Channel metadata (new) ───────────────────────────────────────────────
+    channel_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    channel_title: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    channel_handle: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    channel_thumbnail: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # ── Lifecycle ────────────────────────────────────────────────────────────
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     last_verified: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     metadata_: Mapped[dict] = mapped_column("metadata", JSON, default=dict)
