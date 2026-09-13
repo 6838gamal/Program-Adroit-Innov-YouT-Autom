@@ -1,7 +1,8 @@
 // ============================================================
 //  property-video.js — مولّد فيديو العقارات
 //  ✅ يدعم: بدون صوت / بدون نصوص / بدون الاثنين
-//  ✅ polling آمن (يتعامل مع 503، 429)
+//  ✅ polling آمن (يتعامل مع 502، 503، 429)
+//  ✅ يصبر حتى 5 دقائق عند restart الخادم
 // ============================================================
 
 (function () {
@@ -15,11 +16,13 @@
     let pollTimer = null;
     let isGenerating = false;
     let pollErrorCount = 0;
+    let serverErrorCount = 0;   // ← عداد منفصل لأخطاء 502/503 (restart)
 
     const MAX_IMAGES = 20;
     const MAX_IMAGE_SIZE_MB = 10;
     const POLL_INTERVAL_MS = 3000;
-    const MAX_POLL_ERRORS = 5;
+    const MAX_POLL_ERRORS = 5;         // أخطاء شبكة/4xx
+    const MAX_SERVER_ERRORS = 100;     // 502/503 — 100 محاولة × 3 ثوانٍ = 5 دقائق
 
     // ────────────────────────────────────────────────────────
     //  Helpers
@@ -82,7 +85,6 @@
         }
         document.body.style.overflow = '';
 
-        // أوقف polling إذا كان شغّالاً
         if (pollTimer) {
             clearInterval(pollTimer);
             pollTimer = null;
@@ -98,7 +100,6 @@
 
         await addPropertyImages(files);
 
-        // اسمح بإعادة اختيار نفس الملف
         if (event.target) event.target.value = '';
     };
 
@@ -132,7 +133,6 @@
                 continue;
             }
 
-            // أضف placeholder فوري
             const tempIndex = uploadedImages.length;
             uploadedImages.push({
                 url: URL.createObjectURL(file),
@@ -144,7 +144,6 @@
             });
             renderPropertyImagesPreview();
 
-            // ارفع
             try {
                 const fd = new FormData();
                 fd.append('file', file);
@@ -172,7 +171,6 @@
                 console.error('Upload failed:', e);
                 safeToast(`❌ فشل رفع ${file.name}`, 'error');
 
-                // احذف placeholder
                 if (uploadedImages[tempIndex]) {
                     URL.revokeObjectURL(uploadedImages[tempIndex].url);
                     uploadedImages.splice(tempIndex, 1);
@@ -252,7 +250,6 @@
         const img = uploadedImages[idx];
         if (!img) return;
 
-        // نظّف blob URL
         if (img.url && img.url.startsWith('blob:')) {
             URL.revokeObjectURL(img.url);
         }
@@ -319,7 +316,6 @@
             return;
         }
 
-        // ── تحقق من الصور ──
         const readyImages = uploadedImages.filter(i => !i.uploading && i.path);
         if (readyImages.length === 0) {
             safeToast('⚠️ أضف صورة واحدة على الأقل (بانتظار اكتمال الرفع)', 'warning');
@@ -337,7 +333,6 @@
             return;
         }
 
-        // ── اجمع البيانات ──
         const propTypeEl = document.querySelector('input[name="propType"]:checked');
         const featuresRaw = ($value('propFeatures', '')).trim();
         const features = featuresRaw
@@ -345,7 +340,6 @@
             .map(s => s.trim())
             .filter(Boolean);
 
-        // ✅ اقرأ خيارات المستخدم
         const voiceoverEnabled = $checked('propVoiceoverEnabled', true);
         const overlayEnabled = $checked('propOverlayEnabled', true);
 
@@ -370,20 +364,19 @@
             duration_per_image: parseFloat($value('propDurationPerImage', '4.5')) || 4.5,
             style: $value('propStyle', 'modern'),
 
-            // ✅ جديد: خيارات اختيارية
             voiceover_enabled: voiceoverEnabled,
             voiceover_voice: $value('propVoice', 'ar-SA-HamedNeural'),
 
-            // النصوص: إما معطّلة كلياً، أو حسب الاختيارات الفردية
             show_price: overlayEnabled && $checked('propShowPrice', true),
             show_location: overlayEnabled && $checked('propShowLocation', true),
             show_area: overlayEnabled && $checked('propShowArea', true),
             show_contact: overlayEnabled && $checked('propShowContact', true),
         };
 
-        // ── UI: حالة الانتظار ──
         isGenerating = true;
         pollErrorCount = 0;
+        serverErrorCount = 0;
+
         const btn = $id('btnGeneratePropertyVideo');
         if (btn) {
             btn.disabled = true;
@@ -395,7 +388,6 @@
 
         updateProgressUI(0.02, 'queued', '⏳ جاري الإرسال...');
 
-        // ── رسالة توضيحية ──
         const modeText = [];
         if (!voiceoverEnabled) modeText.push('بدون صوت');
         if (!overlayEnabled) modeText.push('بدون نصوص');
@@ -403,7 +395,6 @@
             safeToast(`🎬 توليد ${modeText.join(' + ')} — سيكون أسرع بكثير`, 'info');
         }
 
-        // ── أرسل الطلب ──
         try {
             const r = await fetch('/api/property/generate', {
                 method: 'POST',
@@ -411,7 +402,6 @@
                 body: JSON.stringify(payload),
             });
 
-            // ✅ تحقق من content-type قبل parse
             const contentType = r.headers.get('content-type') || '';
             if (!contentType.includes('application/json')) {
                 const text = await r.text();
@@ -439,7 +429,7 @@
     };
 
     // ────────────────────────────────────────────────────────
-    //  متابعة الحالة
+    //  متابعة الحالة — ✅ يصبر 5 دقائق عند restart
     // ────────────────────────────────────────────────────────
     function startPollingPropertyJob() {
         if (!currentJobId) {
@@ -451,6 +441,10 @@
         if (pollTimer) clearInterval(pollTimer);
 
         pollErrorCount = 0;
+        serverErrorCount = 0;
+
+        console.log(`📡 Polling started for job: ${currentJobId}`);
+        console.log(`   Will tolerate up to ${MAX_SERVER_ERRORS} server errors (${MAX_SERVER_ERRORS * POLL_INTERVAL_MS / 1000}s)`);
 
         pollTimer = setInterval(async () => {
             try {
@@ -466,13 +460,40 @@
                     return;
                 }
 
-                // ✅ 429 = Too Many Requests — نتجاهل ونكمل (بدون زيادة العدّاد)
+                // ✅ 429 = Too Many Requests — نتجاهل بلا عدّ
                 if (r.status === 429) {
                     console.warn('Rate limited — waiting...');
                     return;
                 }
 
-                // ✅ 5xx = خطأ خادم — نزيد العدّاد
+                // ✅✅ 502/503 = Server restart — ننتظر بصبر
+                if (r.status === 502 || r.status === 503) {
+                    serverErrorCount++;
+                    console.warn(
+                        `⏳ Server restarting (${serverErrorCount}/${MAX_SERVER_ERRORS}) — waiting...`
+                    );
+
+                    // اعرض رسالة واضحة للمستخدم
+                    const elapsed = Math.round(serverErrorCount * POLL_INTERVAL_MS / 1000);
+                    setStatus(
+                        `⏳ الخادم يُعيد التشغيل... انتظر (${elapsed}ث) — لا تُغلق النافذة`
+                    );
+
+                    // إذا استمر لفترة طويلة → استسلم
+                    if (serverErrorCount >= MAX_SERVER_ERRORS) {
+                        clearInterval(pollTimer);
+                        pollTimer = null;
+                        safeToast(
+                            '⏱️ الخادم أُعيد تشغيله كثيراً — أعد المحاولة بعد قليل',
+                            'warning'
+                        );
+                        setStatus('⏱️ الخادم في restart — أعد المحاولة');
+                        resetGenerateButton();
+                    }
+                    return;
+                }
+
+                // 5xx أخرى (500, 504)
                 if (r.status >= 500) {
                     pollErrorCount++;
                     console.warn(`Server error ${r.status} (${pollErrorCount}/${MAX_POLL_ERRORS})`);
@@ -480,14 +501,14 @@
                     if (pollErrorCount >= MAX_POLL_ERRORS) {
                         clearInterval(pollTimer);
                         pollTimer = null;
-                        safeToast('❌ الخادم غير متاح — أعد المحاولة لاحقاً', 'error');
+                        safeToast('❌ الخادم غير متاح', 'error');
                         setStatus('❌ خطأ في الخادم');
                         resetGenerateButton();
                     }
                     return;
                 }
 
-                // ✅ 4xx أخرى
+                // 4xx أخرى
                 if (!r.ok) {
                     pollErrorCount++;
                     console.warn(`HTTP ${r.status} (${pollErrorCount}/${MAX_POLL_ERRORS})`);
@@ -499,26 +520,24 @@
                     return;
                 }
 
+                // ✅ نجح — صفّر العدّادات
+                pollErrorCount = 0;
+                serverErrorCount = 0;
+
                 // ✅ تحقق من content-type
                 const ct = r.headers.get('content-type') || '';
                 if (!ct.includes('application/json')) {
                     console.warn('Non-JSON response:', ct);
-                    pollErrorCount++;
                     return;
                 }
 
-                // ✅ parse آمن
                 let data;
                 try {
                     data = await r.json();
                 } catch (e) {
                     console.warn('Invalid JSON:', e);
-                    pollErrorCount++;
                     return;
                 }
-
-                // ✅ نجح — صفّر العدّاد
-                pollErrorCount = 0;
 
                 if (!data.success) {
                     console.warn('API returned error:', data.error);
@@ -539,8 +558,10 @@
                 } else if (data.status === 'failed') {
                     clearInterval(pollTimer);
                     pollTimer = null;
-                    safeToast('❌ فشل التوليد: ' + (data.error || 'خطأ غير معروف'), 'error');
-                    setStatus('❌ ' + (data.error || 'فشل'));
+
+                    const errMsg = data.error || 'خطأ غير معروف';
+                    safeToast('❌ فشل التوليد: ' + errMsg, 'error');
+                    setStatus('❌ ' + errMsg);
                     resetGenerateButton();
                 }
 
@@ -629,6 +650,7 @@
             audio: '🎵 دمج الصوت',
             upload: '📤 رفع الفيديو',
             done: '✅ اكتمل',
+            failed: '❌ فشل',
         };
         return labels[stage] || stage || '';
     }
@@ -653,6 +675,7 @@
     function resetGenerateButton() {
         isGenerating = false;
         pollErrorCount = 0;
+        serverErrorCount = 0;
 
         const btn = $id('btnGeneratePropertyVideo');
         if (btn) {
@@ -691,6 +714,7 @@
             currentJobId,
             isGenerating,
             pollErrorCount,
+            serverErrorCount,
         }),
         getImages: () => uploadedImages,
         getPayloadPreview: () => {
@@ -718,6 +742,13 @@
                 uploading: false,
             });
             renderPropertyImagesPreview();
+        },
+        stopPolling: () => {
+            if (pollTimer) {
+                clearInterval(pollTimer);
+                pollTimer = null;
+                console.log('🛑 Polling stopped manually');
+            }
         },
     };
 
