@@ -7,6 +7,8 @@ import asyncio
 import subprocess
 import hashlib
 import base64
+import shutil
+import random
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional, List, Dict, Any
@@ -17,6 +19,7 @@ from fastapi import (
 )
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, Response
 from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config.settings import settings
@@ -171,6 +174,13 @@ HF_VOICES_DIR.mkdir(parents=True, exist_ok=True)
 
 TALKING_HEADS_DIR = Path(settings.MEDIA_DIR) / "talking_heads"
 TALKING_HEADS_DIR.mkdir(parents=True, exist_ok=True)
+
+# ✅ NEW: مجلدات فيديو العقارات
+PROPERTY_ASSETS_DIR = Path(settings.MEDIA_DIR) / "property_assets"
+PROPERTY_ASSETS_DIR.mkdir(parents=True, exist_ok=True)
+
+PROPERTY_VIDEOS_DIR = Path(settings.MEDIA_DIR) / "property_videos"
+PROPERTY_VIDEOS_DIR.mkdir(parents=True, exist_ok=True)
 
 VOICEOVER_MAX_SIZE = 100 * 1024 * 1024  # 100MB
 ALLOWED_AUDIO_TYPES = {
@@ -3480,8 +3490,8 @@ async def logs_page(request: Request):
         "message": f"Whisper: {whisper_status}"
     })
 
-    import shutil
-    ffmpeg_ok = shutil.which("ffmpeg") is not None
+    import shutil as _shutil
+    ffmpeg_ok = _shutil.which("ffmpeg") is not None
     log_entries.append({
         "level": "INFO" if ffmpeg_ok else "WARNING",
         "source": "voiceover", "timestamp": now,
@@ -3762,3 +3772,839 @@ async def debug_voiceovers(project_id: str, session: AsyncSession = Depends(get_
             "size_mb": round(cache_size_mb, 2),
         },
     }
+
+
+# ============================================================
+# 🏠 PROPERTY VIDEO — مولّد فيديو العقارات
+# ============================================================
+
+# ✅ ملاحظة: PROPERTY_ASSETS_DIR و PROPERTY_VIDEOS_DIR معرّفان في الأعلى
+
+
+class PropertyVideoRequest(BaseModel):
+    """نموذج طلب توليد فيديو عقاري."""
+    project_id: str
+    title: str = ""
+    property_type: str = "apartment"
+    price: Optional[float] = None
+    currency: str = "SAR"
+    city: str = ""
+    district: str = ""
+    area_sqm: Optional[float] = None
+    bedrooms: Optional[int] = None
+    bathrooms: Optional[int] = None
+    features: List[str] = []
+    whatsapp: str = ""
+    images: List[Dict[str, Any]] = []
+    duration_per_image: float = 4.5
+    voiceover_voice: str = "ar-SA-HamedNeural"
+    show_price: bool = True
+    show_location: bool = True
+    show_area: bool = True
+    show_contact: bool = True
+
+
+# ─────────────────────────────────────────────────────────
+# رفع صور العقار
+# ─────────────────────────────────────────────────────────
+
+@router.post("/api/property/upload-image")
+async def upload_property_image(
+    file: UploadFile = File(...),
+    project_id: str = Form(...),
+):
+    """
+    يرفع صورة عقار ويُرجع رابطها الدائم + المسار.
+    يستخدم Supabase أولاً ثم fallback محلي.
+    """
+    try:
+        content = await file.read()
+        if not content:
+            return JSONResponse(
+                {"success": False, "error": "الملف فارغ"},
+                status_code=400,
+            )
+
+        if len(content) > 10 * 1024 * 1024:
+            return JSONResponse(
+                {"success": False, "error": "حجم الصورة > 10MB"},
+                status_code=413,
+            )
+
+        suffix = Path(file.filename or "image.jpg").suffix.lower() or ".jpg"
+        unique = f"{uuid.uuid4().hex}{suffix}"
+        remote_path = f"property_assets/{project_id}/{unique}"
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+            tmp.write(content)
+            tmp_path = Path(tmp.name)
+
+        try:
+            # ── Supabase أولاً ──
+            if settings.supabase_configured:
+                try:
+                    from application.services.production_service import (
+                        _upload_to_supabase, _build_public_url,
+                    )
+                    storage = SupabaseStorageAdapter()
+
+                    await _upload_to_supabase(
+                        storage=storage,
+                        local_path=tmp_path,
+                        remote_path=remote_path,
+                        content_type=file.content_type or "image/jpeg",
+                    )
+                    url = await _build_public_url(storage, remote_path)
+
+                    if url:
+                        return {
+                            "success": True,
+                            "url": url,
+                            "path": remote_path,
+                            "size": len(content),
+                        }
+                except Exception as e:
+                    logger.warning(f"Supabase image upload failed: {e}")
+
+            # ── Fallback محلي ──
+            local_dest = PROPERTY_ASSETS_DIR / f"{project_id}_{unique}"
+            local_dest.write_bytes(content)
+
+            return {
+                "success": True,
+                "url": f"/static/media/property_assets/{local_dest.name}",
+                "path": str(local_dest),
+                "size": len(content),
+                "local": True,
+            }
+
+        finally:
+            tmp_path.unlink(missing_ok=True)
+
+    except Exception as e:
+        logger.exception("Property image upload failed")
+        return JSONResponse(
+            {"success": False, "error": str(e)},
+            status_code=500,
+        )
+
+
+# ─────────────────────────────────────────────────────────
+# بدء التوليد
+# ─────────────────────────────────────────────────────────
+
+@router.post("/api/property/generate")
+async def generate_property_video(
+    payload: PropertyVideoRequest,
+    background: BackgroundTasks,
+    session: AsyncSession = Depends(get_db),
+):
+    """
+    🏠 يبدأ توليد فيديو عقاري في الخلفية.
+    يستخدم نفس TALKING_HEAD_JOBS لتخزين حالة الـ jobs.
+    """
+    try:
+        project_uuid = uuid.UUID(payload.project_id)
+    except ValueError:
+        return JSONResponse(
+            {"success": False, "error": "Invalid project_id"},
+            status_code=400,
+        )
+
+    repo = SQLProjectRepository(session)
+    project = await repo.get(project_uuid)
+    if not project:
+        return JSONResponse(
+            {"success": False, "error": "Project not found"},
+            status_code=404,
+        )
+
+    if not payload.images:
+        return JSONResponse(
+            {"success": False, "error": "أضف صورة واحدة على الأقل"},
+            status_code=400,
+        )
+
+    job_id = f"prop_{uuid.uuid4().hex[:12]}"
+
+    TALKING_HEAD_JOBS[job_id] = {
+        "id": job_id,
+        "project_id": payload.project_id,
+        "status": "queued",
+        "progress": 0.0,
+        "stage": "queued",
+        "created_at": datetime.utcnow().isoformat(),
+        "video_url": None,
+        "path": None,
+        "duration": 0.0,
+        "error": None,
+        "kind": "property_video",
+    }
+
+    background.add_task(
+        _run_property_video_job,
+        job_id,
+        payload.model_dump(),
+    )
+
+    _diag(f"🏠 Property video queued: {job_id}")
+
+    return {
+        "success": True,
+        "job_id": job_id,
+        "status": "queued",
+        "message": "✅ جاري التوليد في الخلفية...",
+    }
+
+
+# ─────────────────────────────────────────────────────────
+# حالة التوليد
+# ─────────────────────────────────────────────────────────
+
+@router.get("/api/property/status/{job_id}")
+async def get_property_video_status(job_id: str):
+    """يرجع حالة job توليد العقار."""
+    job = TALKING_HEAD_JOBS.get(job_id)
+    if not job:
+        return JSONResponse(
+            {"success": False, "error": "Job not found"},
+            status_code=404,
+        )
+
+    return {
+        "success": True,
+        **job,
+    }
+
+
+# ─────────────────────────────────────────────────────────
+# حفظ الـ clip في المشروع
+# ─────────────────────────────────────────────────────────
+
+@router.post("/api/property/save/{project_id}")
+async def save_property_video_to_project(
+    project_id: str,
+    payload: Dict[str, Any],
+    session: AsyncSession = Depends(get_db),
+):
+    """
+    يحفظ الفيديو المولَّد في project.data["clips"].
+    نفس نمط talking-head/save.
+    """
+    try:
+        project_uuid = uuid.UUID(project_id)
+    except ValueError:
+        return JSONResponse({"error": "Invalid project_id"}, status_code=400)
+
+    repo = SQLProjectRepository(session)
+    project = await repo.get(project_uuid)
+    if not project:
+        return JSONResponse({"error": "Project not found"}, status_code=404)
+
+    video_url = payload.get("video_url")
+    if not video_url:
+        return JSONResponse({"error": "video_url مطلوب"}, status_code=400)
+
+    data = getattr(project, "data", None) or {}
+    clips = data.get("clips", []) or []
+
+    clip_id = payload.get("id") or f"clip-{uuid.uuid4().hex[:12]}"
+
+    new_clip = {
+        "id": clip_id,
+        "type": "video",
+        "title": payload.get("title", "فيديو عقاري"),
+        "url": video_url,
+        "src": video_url,
+        "path": payload.get("path"),
+        "start": payload.get("start", 0),
+        "duration": payload.get("duration", 0),
+        "source": "property_video",
+        "property_meta": payload.get("property_meta", {}),
+        "created_at": datetime.utcnow().isoformat(),
+    }
+
+    clips.append(new_clip)
+    data["clips"] = clips
+
+    if hasattr(project, "data"):
+        project.data = data
+    if hasattr(repo, "update"):
+        await repo.update(project)
+    elif hasattr(repo, "save"):
+        await repo.save(project)
+    await session.commit()
+
+    return {
+        "success": True,
+        "clip": new_clip,
+        "message": "✅ تم إضافة الفيديو العقاري للمشروع",
+    }
+
+
+# ─────────────────────────────────────────────────────────
+# التنفيذ في الخلفية
+# ─────────────────────────────────────────────────────────
+
+async def _run_property_video_job(job_id: str, payload: Dict[str, Any]) -> None:
+    """
+    ينفّذ توليد الفيديو العقاري كاملاً في الخلفية.
+    يستخدم ffmpeg + edge_tts الموجودين.
+    """
+    job = TALKING_HEAD_JOBS[job_id]
+
+    try:
+        tmp_dir = Path(tempfile.mkdtemp(prefix=f"prop_{job_id}_"))
+
+        try:
+            images = payload.get("images", [])
+            duration_per_image = float(payload.get("duration_per_image", 4.5))
+            voice = payload.get("voiceover_voice", "ar-SA-HamedNeural")
+
+            # ═══ 1. توليد motion clips لكل صورة ═══
+            job["status"] = "running"
+            job["stage"] = "motion"
+            job["progress"] = 0.05
+
+            motion_clips: List[Path] = []
+
+            for idx, img in enumerate(images):
+                img_path_str = img.get("path") or img.get("local_path")
+                motion = img.get("motion", "auto")
+
+                img_path: Optional[Path] = None
+
+                # إذا المسار محلي وموجود، استخدمه مباشرة
+                if img_path_str and not str(img_path_str).startswith("http"):
+                    p = Path(str(img_path_str))
+                    if p.exists():
+                        img_path = p
+
+                # إذا كان URL، نزّله
+                if img_path is None:
+                    img_url = img.get("url", "")
+                    if img_url.startswith("http"):
+                        try:
+                            import httpx
+                            async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as c:
+                                r = await c.get(img_url)
+                                if r.status_code == 200:
+                                    suffix = Path(img_url.split("?")[0]).suffix or ".jpg"
+                                    dl_path = tmp_dir / f"img_{idx}{suffix}"
+                                    dl_path.write_bytes(r.content)
+                                    img_path = dl_path
+                        except Exception as e:
+                            _diag_err(f"⚠️ Failed to download image {idx}: {e}", e)
+
+                if img_path is None or not img_path.exists():
+                    _diag(f"⚠️ Skipping missing image {idx}")
+                    continue
+
+                clip_path = tmp_dir / f"motion_{idx:03d}.mp4"
+
+                await _render_motion_clip(
+                    image_path=img_path,
+                    output_path=clip_path,
+                    duration=duration_per_image,
+                    motion=motion,
+                )
+
+                motion_clips.append(clip_path)
+
+                if len(images) > 0:
+                    job["progress"] = 0.05 + (idx + 1) / len(images) * 0.4
+
+            if not motion_clips:
+                raise RuntimeError("لم يتم توليد أي مقطع — تحقق من الصور")
+
+            # ═══ 2. دمج المقاطع ═══
+            job["stage"] = "concat"
+            job["progress"] = 0.5
+
+            stitched = tmp_dir / "stitched.mp4"
+            await _concat_video_clips(motion_clips, stitched, tmp_dir)
+
+            # ═══ 3. توليد التعليق الصوتي ═══
+            job["stage"] = "voiceover"
+            job["progress"] = 0.6
+
+            voiceover_text = _build_property_script(payload)
+
+            voiceover_path: Optional[Path] = None
+            try:
+                audio_bytes = await _edge_tts_generate(
+                    text=voiceover_text,
+                    voice=voice,
+                )
+                voiceover_path = tmp_dir / "voiceover.mp3"
+                voiceover_path.write_bytes(audio_bytes)
+            except Exception as e:
+                _diag_err(f"⚠️ Voiceover failed, continuing without it: {e}", e)
+                voiceover_path = None
+
+            # ═══ 4. إضافة النصوص ═══
+            job["stage"] = "text"
+            job["progress"] = 0.75
+
+            with_text = tmp_dir / "with_text.mp4"
+
+            await _add_property_text_overlays(
+                input_video=stitched,
+                payload=payload,
+                output=with_text,
+                tmp_dir=tmp_dir,
+            )
+
+            # ═══ 5. دمج الصوت ═══
+            job["stage"] = "audio"
+            job["progress"] = 0.85
+
+            final_video = tmp_dir / "final.mp4"
+
+            if voiceover_path and voiceover_path.exists():
+                await _attach_voiceover(
+                    video_path=with_text,
+                    voiceover_path=voiceover_path,
+                    output=final_video,
+                )
+            else:
+                shutil.copy(with_text, final_video)
+
+            # ═══ 6. ارفع إلى Supabase ═══
+            job["stage"] = "upload"
+            job["progress"] = 0.92
+
+            project_id = payload.get("project_id", "unknown")
+            unique = uuid.uuid4().hex[:12]
+            remote_path = f"property_videos/{project_id}/{unique}.mp4"
+
+            final_url: Optional[str] = None
+
+            if settings.supabase_configured:
+                try:
+                    from application.services.production_service import (
+                        _upload_to_supabase, _build_public_url,
+                    )
+                    storage = SupabaseStorageAdapter()
+
+                    await _upload_to_supabase(
+                        storage=storage,
+                        local_path=final_video,
+                        remote_path=remote_path,
+                        content_type="video/mp4",
+                    )
+                    final_url = await _build_public_url(storage, remote_path)
+                except Exception as e:
+                    _diag_err(f"⚠️ Supabase upload failed: {e}", e)
+
+            # Fallback محلي
+            if not final_url:
+                local_dest = PROPERTY_VIDEOS_DIR / f"{project_id}_{unique}.mp4"
+                shutil.copy(final_video, local_dest)
+                final_url = f"/static/media/property_videos/{local_dest.name}"
+                remote_path = str(local_dest)
+
+            real_duration = await _get_video_duration(final_video)
+
+            job["status"] = "done"
+            job["stage"] = "done"
+            job["progress"] = 1.0
+            job["video_url"] = final_url
+            job["path"] = remote_path
+            job["duration"] = real_duration
+            job["property_meta"] = {
+                "title": payload.get("title"),
+                "price": payload.get("price"),
+                "currency": payload.get("currency"),
+                "city": payload.get("city"),
+                "district": payload.get("district"),
+                "property_type": payload.get("property_type"),
+            }
+
+            _diag(f"✅ Property video done: {final_url} ({real_duration:.2f}s)")
+
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    except Exception as e:
+        _diag_err(f"❌ Property video job failed: {e}", e)
+        job["status"] = "failed"
+        job["error"] = str(e)
+
+
+# ─────────────────────────────────────────────────────────
+# FFmpeg Helpers
+# ─────────────────────────────────────────────────────────
+
+async def _render_motion_clip(
+    image_path: Path,
+    output_path: Path,
+    duration: float,
+    motion: str = "auto",
+    width: int = 1080,
+    height: int = 1920,
+    fps: int = 30,
+) -> None:
+    """يولّد مقطع فيديو من صورة بحركة Pan/Zoom."""
+    if motion == "auto":
+        motion = random.choice([
+            "zoom_in", "zoom_out", "pan_left",
+            "pan_right", "pan_up", "pan_down",
+            "diagonal", "cinematic",
+        ])
+
+    frames = max(1, int(duration * fps))
+    lw, lh = width * 2, height * 2
+
+    base = (
+        f"scale={lw}:{lh}:force_original_aspect_ratio=increase,"
+        f"crop={lw}:{lh},"
+    )
+
+    motion_map = {
+        "zoom_in": (
+            f"zoompan=z='min(1.20,1+0.20*on/{frames})':"
+            f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
+            f"d={frames}:s={width}x{height}:fps={fps},setsar=1"
+        ),
+        "zoom_out": (
+            f"zoompan=z='max(1.0,1.20-0.20*on/{frames})':"
+            f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
+            f"d={frames}:s={width}x{height}:fps={fps},setsar=1"
+        ),
+        "pan_left": (
+            f"zoompan=z='1.10':x='(iw-iw/zoom)*on/{frames}':"
+            f"y='ih/2-(ih/zoom/2)':"
+            f"d={frames}:s={width}x{height}:fps={fps},setsar=1"
+        ),
+        "pan_right": (
+            f"zoompan=z='1.10':x='(iw-iw/zoom)*(1-on/{frames})':"
+            f"y='ih/2-(ih/zoom/2)':"
+            f"d={frames}:s={width}x{height}:fps={fps},setsar=1"
+        ),
+        "pan_up": (
+            f"zoompan=z='1.10':x='iw/2-(iw/zoom/2)':"
+            f"y='(ih-ih/zoom)*on/{frames}':"
+            f"d={frames}:s={width}x{height}:fps={fps},setsar=1"
+        ),
+        "pan_down": (
+            f"zoompan=z='1.10':x='iw/2-(iw/zoom/2)':"
+            f"y='(ih-ih/zoom)*(1-on/{frames})':"
+            f"d={frames}:s={width}x{height}:fps={fps},setsar=1"
+        ),
+        "diagonal": (
+            f"zoompan=z='1.05+0.10*on/{frames}':"
+            f"x='(iw-iw/zoom)*on/{frames}':"
+            f"y='(ih-ih/zoom)*(1-on/{frames})':"
+            f"d={frames}:s={width}x{height}:fps={fps},setsar=1"
+        ),
+        "cinematic": (
+            f"zoompan=z='1.02+0.08*sin(on/{frames}*PI/2)':"
+            f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
+            f"d={frames}:s={width}x{height}:fps={fps},setsar=1"
+        ),
+    }
+
+    vf = base + motion_map.get(motion, motion_map["zoom_in"])
+
+    cmd = [
+        "ffmpeg", "-y",
+        "-loop", "1", "-i", str(image_path),
+        "-vf", vf,
+        "-t", str(duration),
+        "-r", str(fps),
+        "-an",
+        "-c:v", "libx264", "-preset", "medium", "-crf", "20",
+        "-pix_fmt", "yuv420p",
+        "-movflags", "+faststart",
+        str(output_path),
+    ]
+
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    _, stderr = await proc.communicate()
+
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"motion render failed: {stderr.decode(errors='ignore')[-500:]}"
+        )
+
+
+async def _concat_video_clips(
+    clips: List[Path],
+    output: Path,
+    tmp_dir: Path,
+) -> None:
+    """يدمج مقاطع الفيديو."""
+    concat_file = tmp_dir / "concat.txt"
+
+    with concat_file.open("w", encoding="utf-8") as f:
+        for clip in clips:
+            safe = str(clip.absolute()).replace("'", "'\\''")
+            f.write(f"file '{safe}'\n")
+
+    cmd = [
+        "ffmpeg", "-y",
+        "-f", "concat", "-safe", "0",
+        "-i", str(concat_file),
+        "-c", "copy",
+        "-movflags", "+faststart",
+        str(output),
+    ]
+
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    _, stderr = await proc.communicate()
+
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"concat failed: {stderr.decode(errors='ignore')[-500:]}"
+        )
+
+
+def _format_price_ar(price, currency: str = "SAR") -> str:
+    """يُنسّق السعر بالعربي."""
+    if not price:
+        return ""
+    symbol = {
+        "SAR": "ريال",
+        "AED": "درهم",
+        "EGP": "جنيه",
+        "USD": "$",
+        "EUR": "€",
+    }.get(currency, currency)
+    try:
+        price = float(price)
+    except (TypeError, ValueError):
+        return str(price)
+    if price >= 1_000_000:
+        v = f"{price / 1_000_000:.2f}".rstrip("0").rstrip(".")
+        return f"{v} مليون {symbol}"
+    if price >= 1_000:
+        return f"{price / 1_000:.0f} ألف {symbol}"
+    return f"{price:,.0f} {symbol}"
+
+
+def _build_property_script(payload: Dict[str, Any]) -> str:
+    """يبني نص التعليق الصوتي بالعربي."""
+    type_map = {
+        "land": "أرض", "villa": "فيلا", "apartment": "شقة",
+        "building": "مبنى", "facade": "واجهة", "room": "غرفة",
+        "hall": "صالة", "street": "موقع",
+    }
+    t = type_map.get(payload.get("property_type", ""), "عقار")
+
+    parts: List[str] = []
+
+    city = payload.get("city", "")
+    district = payload.get("district", "")
+
+    if district and city:
+        parts.append(f"نقدم لكم {t} مميزة في حي {district} بمدينة {city}.")
+    elif city:
+        parts.append(f"نقدم لكم {t} مميزة في مدينة {city}.")
+    else:
+        parts.append(f"نقدم لكم {t} مميزة للبيع.")
+
+    specs: List[str] = []
+    if payload.get("area_sqm"):
+        specs.append(f"مساحة {payload['area_sqm']:g} متر مربع")
+    if payload.get("bedrooms"):
+        specs.append(f"{payload['bedrooms']} غرف نوم")
+    if payload.get("bathrooms"):
+        specs.append(f"{payload['bathrooms']} دورات مياه")
+
+    if specs:
+        parts.append("تتميز بـ " + "، ".join(specs) + ".")
+
+    features = payload.get("features", [])
+    if features:
+        parts.append("وتشمل " + "، ".join(features[:5]) + ".")
+
+    price = payload.get("price")
+    if price:
+        parts.append(
+            f"السعر {_format_price_ar(price, payload.get('currency', 'SAR'))}."
+        )
+
+    wa = payload.get("whatsapp", "")
+    if wa:
+        digits = " ".join(c for c in wa if c.isdigit())
+        parts.append(f"للتواصل والاستفسار، اتصل على {digits}.")
+    else:
+        parts.append("للتواصل والاستفسار، راسلنا في التعليقات.")
+
+    return " ".join(parts)
+
+
+def _find_arabic_font() -> Optional[str]:
+    """يبحث عن خط عربي متاح."""
+    candidates = [
+        "fonts/Cairo-Bold.ttf",
+        "static/fonts/Cairo-Bold.ttf",
+        "fonts/NotoNaskhArabic-Bold.ttf",
+        "static/fonts/NotoNaskhArabic-Bold.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/noto/NotoNaskhArabic-Bold.ttf",
+    ]
+    for p in candidates:
+        if Path(p).exists():
+            return p
+    return None
+
+
+async def _add_property_text_overlays(
+    input_video: Path,
+    payload: Dict[str, Any],
+    output: Path,
+    tmp_dir: Path,
+) -> None:
+    """يضيف النصوص العربية على الفيديو."""
+    font = _find_arabic_font()
+    if not font:
+        _diag("⚠️ No Arabic font found — skipping text overlays")
+        shutil.copy(input_video, output)
+        return
+
+    type_map = {
+        "land": "أرض", "villa": "فيلا", "apartment": "شقة",
+        "building": "مبنى", "facade": "واجهة", "room": "غرفة",
+        "hall": "صالة", "street": "موقع",
+    }
+    t = type_map.get(payload.get("property_type", ""), "عقار")
+
+    title = payload.get("title") or f"{t} للبيع"
+    location = " - ".join(filter(None, [
+        payload.get("district", ""),
+        payload.get("city", ""),
+    ]))
+    price = _format_price_ar(
+        payload.get("price"),
+        payload.get("currency", "SAR"),
+    ) if payload.get("show_price", True) else ""
+
+    details_parts: List[str] = []
+    if payload.get("show_area", True):
+        if payload.get("area_sqm"):
+            details_parts.append(f"{payload['area_sqm']:g} م²")
+        if payload.get("bedrooms"):
+            details_parts.append(f"{payload['bedrooms']} غرف")
+
+    details = "   ".join(details_parts)
+    contact = payload.get("whatsapp", "") if payload.get("show_contact", True) else ""
+
+    def _write_text(name: str, text: str) -> str:
+        p = tmp_dir / f"txt_{name}.txt"
+        p.write_text(text, encoding="utf-8")
+        return str(p)
+
+    filters: List[str] = []
+
+    if title:
+        f = _write_text("title", title)
+        filters.append(
+            f"drawtext=fontfile='{font}':textfile='{f}':"
+            f"fontsize=64:fontcolor=white:"
+            f"box=1:boxcolor=black@0.55:boxborderw=20:"
+            f"x=(w-text_w)/2:y=h*0.08"
+        )
+
+    if location and payload.get("show_location", True):
+        f = _write_text("loc", location)
+        filters.append(
+            f"drawtext=fontfile='{font}':textfile='{f}':"
+            f"fontsize=42:fontcolor=white:"
+            f"box=1:boxcolor=black@0.4:boxborderw=14:"
+            f"x=(w-text_w)/2:y=h*0.17"
+        )
+
+    if price:
+        f = _write_text("price", price)
+        filters.append(
+            f"drawtext=fontfile='{font}':textfile='{f}':"
+            f"fontsize=72:fontcolor=black:"
+            f"box=1:boxcolor=white@0.9:boxborderw=24:"
+            f"x=(w-text_w)/2:y=h*0.72"
+        )
+
+    if details:
+        f = _write_text("details", details)
+        filters.append(
+            f"drawtext=fontfile='{font}':textfile='{f}':"
+            f"fontsize=36:fontcolor=white:"
+            f"box=1:boxcolor=black@0.5:boxborderw=16:"
+            f"x=(w-text_w)/2:y=h*0.85"
+        )
+
+    if contact:
+        f = _write_text("contact", contact)
+        filters.append(
+            f"drawtext=fontfile='{font}':textfile='{f}':"
+            f"fontsize=38:fontcolor=white:"
+            f"box=1:boxcolor=black@0.7:boxborderw=18:"
+            f"x=(w-text_w)/2:y=h*0.92"
+        )
+
+    if not filters:
+        shutil.copy(input_video, output)
+        return
+
+    vf = ",".join(filters)
+
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", str(input_video),
+        "-vf", vf,
+        "-c:v", "libx264", "-preset", "medium", "-crf", "20",
+        "-pix_fmt", "yuv420p",
+        "-movflags", "+faststart",
+        str(output),
+    ]
+
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    _, stderr = await proc.communicate()
+
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"text overlay failed: {stderr.decode(errors='ignore')[-500:]}"
+        )
+
+
+async def _attach_voiceover(
+    video_path: Path,
+    voiceover_path: Path,
+    output: Path,
+) -> None:
+    """يدمج التعليق الصوتي مع الفيديو."""
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", str(video_path),
+        "-i", str(voiceover_path),
+        "-c:v", "copy",
+        "-c:a", "aac", "-b:a", "192k",
+        "-shortest",
+        "-movflags", "+faststart",
+        str(output),
+    ]
+
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    _, stderr = await proc.communicate()
+
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"voiceover attach failed: {stderr.decode(errors='ignore')[-500:]}"
+        )
