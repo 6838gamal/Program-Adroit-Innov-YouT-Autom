@@ -1,14 +1,21 @@
 import uuid
 from typing import Optional
-from sqlalchemy import select
+
+from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from publishing.domain.publishing_job import PublishingJob
 from publishing.domain.publisher_account import PublisherAccount
-from infrastructure.database.models.publishing_model import PublishingJobModel, PublisherAccountModel
+from infrastructure.database.models.publishing_model import (
+    PublishingJobModel,
+    PublisherAccountModel,
+)
 from shared.value_objects import PublishStatus
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# Publishing Job Repository
+# ══════════════════════════════════════════════════════════════════════════════
 class SQLPublishingJobRepository:
     def __init__(self, session: AsyncSession):
         self._session = session
@@ -70,17 +77,31 @@ class SQLPublishingJobRepository:
         return job
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# Account Repository
+# ══════════════════════════════════════════════════════════════════════════════
 class SQLAccountRepository:
     def __init__(self, session: AsyncSession):
         self._session = session
 
+    # ── Save (create or update) ──────────────────────────────────────────────
     async def save(self, account: PublisherAccount) -> None:
         existing = await self._session.get(PublisherAccountModel, str(account.id))
+
         if existing:
+            # Core fields
             existing.name = account.name
+            existing.platform_name = account.platform_name
+            existing.credentials_encrypted = account.credentials_encrypted
             existing.is_active = account.is_active
             existing.last_verified = account.last_verified
             existing.metadata_ = account.metadata
+
+            # Channel metadata (new)
+            existing.channel_id = account.channel_id
+            existing.channel_title = account.channel_title
+            existing.channel_handle = account.channel_handle
+            existing.channel_thumbnail = account.channel_thumbnail
         else:
             self._session.add(PublisherAccountModel(
                 id=str(account.id),
@@ -90,18 +111,80 @@ class SQLAccountRepository:
                 is_active=account.is_active,
                 metadata_=account.metadata,
                 created_at=account.created_at,
+
+                # Channel metadata (new)
+                channel_id=account.channel_id,
+                channel_title=account.channel_title,
+                channel_handle=account.channel_handle,
+                channel_thumbnail=account.channel_thumbnail,
             ))
+
         await self._session.flush()
 
+    # ── Get one ──────────────────────────────────────────────────────────────
     async def get(self, account_id: uuid.UUID) -> Optional[PublisherAccount]:
         row = await self._session.get(PublisherAccountModel, str(account_id))
         return self._to_domain(row) if row else None
 
+    # ── List active accounts (default) ───────────────────────────────────────
     async def list_all(self) -> list[PublisherAccount]:
-        q = select(PublisherAccountModel).where(PublisherAccountModel.is_active == True)
+        q = (
+            select(PublisherAccountModel)
+            .where(PublisherAccountModel.is_active == True)
+            .order_by(PublisherAccountModel.created_at.desc())
+        )
         result = await self._session.execute(q)
         return [self._to_domain(r) for r in result.scalars()]
 
+    # ── List all accounts (active + inactive) ────────────────────────────────
+    async def list_including_inactive(self) -> list[PublisherAccount]:
+        q = (
+            select(PublisherAccountModel)
+            .order_by(PublisherAccountModel.created_at.desc())
+        )
+        result = await self._session.execute(q)
+        return [self._to_domain(r) for r in result.scalars()]
+
+    # ── List active accounts for a specific platform ─────────────────────────
+    async def list_by_platform(self, platform_name: str) -> list[PublisherAccount]:
+        q = (
+            select(PublisherAccountModel)
+            .where(
+                PublisherAccountModel.platform_name == platform_name,
+                PublisherAccountModel.is_active == True,
+            )
+            .order_by(PublisherAccountModel.created_at.desc())
+        )
+        result = await self._session.execute(q)
+        return [self._to_domain(r) for r in result.scalars()]
+
+    # ── Delete ───────────────────────────────────────────────────────────────
+    async def delete(self, account_id: uuid.UUID | str) -> bool:
+        """
+        Delete an account by id.
+
+        Accepts both `uuid.UUID` and `str` for convenience (JS/API input
+        often comes as a string).
+
+        Returns:
+            True  -> a row was deleted
+            False -> account not found or invalid id
+        """
+        if isinstance(account_id, str):
+            try:
+                account_id = uuid.UUID(account_id)
+            except (ValueError, TypeError):
+                return False
+
+        result = await self._session.execute(
+            delete(PublisherAccountModel).where(
+                PublisherAccountModel.id == str(account_id)
+            )
+        )
+        await self._session.flush()
+        return result.rowcount > 0
+
+    # ── Domain mapper ────────────────────────────────────────────────────────
     def _to_domain(self, row: PublisherAccountModel) -> PublisherAccount:
         a = PublisherAccount.__new__(PublisherAccount)
         a.id = uuid.UUID(row.id)
@@ -112,5 +195,13 @@ class SQLAccountRepository:
         a.last_verified = row.last_verified
         a.metadata = row.metadata_ or {}
         a.created_at = row.created_at
-        a.updated_at = row.created_at
+        a.updated_at = getattr(row, "updated_at", None) or row.created_at
+
+        # Channel metadata (new)
+        # استخدام getattr للأمان في حال تشغيل الكود قبل تطبيق migrations
+        a.channel_id = getattr(row, "channel_id", "") or ""
+        a.channel_title = getattr(row, "channel_title", "") or ""
+        a.channel_handle = getattr(row, "channel_handle", "") or ""
+        a.channel_thumbnail = getattr(row, "channel_thumbnail", "") or ""
+
         return a
