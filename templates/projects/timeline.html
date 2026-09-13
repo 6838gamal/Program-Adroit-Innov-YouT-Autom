@@ -731,9 +731,9 @@
         <div class="voice-clone-tip">
             <div class="voice-clone-tip-title">✨ كيف تعمل الميزة؟</div>
             <div class="voice-clone-tip-text">
-                <strong>1.</strong> ارفع صور العقار (أرض، فيلا، شقة، مبنى، صالة...)<br>
+                <strong>1.</strong> ارفع صور العقار (أرض، فيلا، شقة، مبنى، صالة...) <strong>أو</strong> أضفها عبر روابط URL<br>
                 <strong>2.</strong> أدخل التفاصيل (السعر، الموقع، المساحة، الميزات)<br>
-                <strong>3.</strong> اختر ما تريد (صوت؟ نصوص؟ أم فيديو صافي فقط)<br>
+                <strong>3.</strong> اختر صوت التعليق (Edge TTS — عربي)<br>
                 <strong>4.</strong> النظام 🎬 يُنتج فيديو عمودي 9:16 جاهز للنشر
                 <br><small style="color:#94a3b8;margin-top:6px;display:block;">
                     💡 كل صورة تحصل على حركة تلقائية (Pan / Zoom / Cinematic) حسب أبعادها
@@ -790,11 +790,12 @@
                     <span class="badge-step">2</span>
                     <h4 class="text-white font-semibold text-sm">🖼️ صور العقار</h4>
                 </div>
-                <button onclick="clearAllPropertyImages()" class="text-xs text-red-400 hover:text-red-300">
+                <button type="button" onclick="clearAllPropertyImages()" class="text-xs text-red-400 hover:text-red-300">
                     🗑️ مسح الكل
                 </button>
             </div>
 
+            <!-- ✅ خيار 1: رفع من الجهاز -->
             <input type="file" id="propertyImagesInput" accept="image/*" multiple class="hidden"
                    onchange="handlePropertyImages(event)">
 
@@ -802,10 +803,47 @@
                  class="border-2 border-dashed border-slate-600 rounded-lg p-6 text-center cursor-pointer hover:border-blue-500 transition"
                  onclick="document.getElementById('propertyImagesInput').click()">
                 <div style="font-size:32px;">📸</div>
-                <div class="text-slate-400 text-sm mt-2">اسحب الصور هنا أو انقر للاختيار</div>
+                <div class="text-slate-400 text-sm mt-2">اسحب الصور هنا أو انقر للاختيار من الجهاز</div>
                 <div class="text-xs text-slate-500 mt-1">يدعم JPG, PNG, WEBP — حتى 20 صورة (10MB لكل صورة)</div>
             </div>
 
+            <!-- ✅ خيار 2: إضافة عبر روابط URL -->
+            <div class="mt-3">
+                <label class="text-slate-400 text-xs flex items-center justify-between mb-1">
+                    <span>🔗 أو أضف روابط صور مباشرة (https://...)</span>
+                    <button type="button" onclick="clearPropertyUrlsInput()"
+                            class="text-slate-500 hover:text-slate-300 text-xs">
+                        مسح الحقل
+                    </button>
+                </label>
+
+                <textarea id="propertyImageUrlsInput"
+                          rows="3"
+                          dir="ltr"
+                          placeholder="https://example.com/image1.jpg&#10;https://example.com/image2.jpg&#10;https://example.com/image3.jpg"
+                          class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-white text-xs resize-y"
+                          style="font-family: monospace;"></textarea>
+
+                <div class="text-xs text-slate-500 mt-1 leading-relaxed">
+                    💡 <strong>كيفية الفصل بين الصور:</strong><br>
+                    • سطر جديد (Enter) — الأفضل<br>
+                    • فاصلة عربية (،) أو إنجليزية (,)<br>
+                    • فاصلة منقوطة (;)<br>
+                    <br>
+                    <strong>مثال:</strong>
+                    <code class="text-emerald-400 bg-slate-800 px-1 rounded" dir="ltr">
+                        https://a.com/1.jpg, https://a.com/2.jpg
+                    </code>
+                    أو كل رابط في سطر منفصل.
+                </div>
+
+                <button type="button" onclick="addPropertyImagesFromUrls()"
+                        class="btn-secondary btn-sm w-full mt-2">
+                    ➕ إضافة الروابط المذكورة أعلاه
+                </button>
+            </div>
+
+            <!-- ✅ معاينة الصور المضافة -->
             <div id="propertyImagesPreview" class="mt-3 grid grid-cols-4 gap-2"></div>
             <div id="propertyImagesCount" class="text-xs text-slate-400 mt-2"></div>
         </div>
@@ -891,27 +929,6 @@
                 <h4 class="text-white font-semibold text-sm">⚙️ إعدادات الفيديو</h4>
             </div>
 
-            <!-- ✅ جديد: اختيارات المحتوى -->
-            <div class="mb-4 p-3 bg-slate-900/50 rounded-lg border border-slate-700 space-y-2">
-                <div class="text-xs text-slate-400 mb-2">🎛️ المحتوى المُضمَّن في الفيديو:</div>
-
-                <!-- تعليق صوتي -->
-                <label class="flex items-center gap-2 cursor-pointer">
-                    <input type="checkbox" id="propVoiceoverEnabled" checked
-                           class="w-4 h-4 accent-blue-500">
-                    <span class="text-white text-sm font-semibold">🎙️ تفعيل التعليق الصوتي</span>
-                    <span class="text-xs text-slate-500 mr-auto">(بدونه: فيديو صامت — أسرع 3-5×)</span>
-                </label>
-
-                <!-- نصوص على الفيديو -->
-                <label class="flex items-center gap-2 cursor-pointer">
-                    <input type="checkbox" id="propOverlayEnabled" checked
-                           class="w-4 h-4 accent-blue-500">
-                    <span class="text-white text-sm font-semibold">📝 إضافة النصوص على الفيديو</span>
-                    <span class="text-xs text-slate-500 mr-auto">(عنوان، سعر، موقع، مساحة)</span>
-                </label>
-            </div>
-
             <div class="grid grid-cols-2 gap-3">
                 <div>
                     <label class="text-slate-400 text-xs">مدة كل صورة (ث)</label>
@@ -930,8 +947,7 @@
                     </select>
                 </div>
 
-                <!-- ✅ صوت التعليق — يظهر فقط عند التفعيل -->
-                <div id="propVoiceSettings">
+                <div>
                     <label class="text-slate-400 text-xs">صوت التعليق</label>
                     <select id="propVoice" class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-white text-sm mt-1">
                         <option value="ar-SA-HamedNeural">🇸🇦 حامد (سعودي)</option>
@@ -941,9 +957,8 @@
                     </select>
                 </div>
 
-                <!-- ✅ عناصر النصوص — تظهر فقط عند تفعيلها -->
-                <div id="propOverlaySettings">
-                    <label class="text-slate-400 text-xs">عناصر النص التي تظهر</label>
+                <div>
+                    <label class="text-slate-400 text-xs">عناصر تظهر</label>
                     <div class="flex flex-wrap gap-2 mt-1">
                         <label class="flex items-center gap-1 text-xs text-slate-300 cursor-pointer">
                             <input type="checkbox" id="propShowPrice" checked> السعر
@@ -977,6 +992,9 @@
             </div>
 
             <div id="propertyVideoStatus" class="mt-3 text-xs"></div>
+
+            <!-- ✅ NEW: حاوية معاينة الفيديو بعد الرندر -->
+            <div id="propertyVideoResult" style="display:none;"></div>
         </div>
 
         <!-- إغلاق -->
@@ -1110,7 +1128,7 @@ document.querySelectorAll('input[name="voiceoverMode"]').forEach(radio => {
 });
 
 // ─────────────────────────────────────────────────────────
-// ✅ جديد: تبديل إعدادات الصوت والنصوص في نافذة العقار
+// تهيئة عند التحميل
 // ─────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
     // ربط شريط LUFS
@@ -1119,30 +1137,6 @@ document.addEventListener('DOMContentLoaded', () => {
         lufs.addEventListener('input', () => {
             document.getElementById('lufsVal').textContent = lufs.value;
         });
-    }
-
-    // ✅ تبديل إعدادات الصوت
-    const voiceToggle = document.getElementById('propVoiceoverEnabled');
-    const voiceSettings = document.getElementById('propVoiceSettings');
-    if (voiceToggle && voiceSettings) {
-        const updateVoiceSettings = () => {
-            voiceSettings.style.display = voiceToggle.checked ? 'block' : 'none';
-            voiceSettings.style.opacity = voiceToggle.checked ? '1' : '0.4';
-        };
-        voiceToggle.addEventListener('change', updateVoiceSettings);
-        updateVoiceSettings();  // الحالة الأولية
-    }
-
-    // ✅ تبديل إعدادات النصوص
-    const overlayToggle = document.getElementById('propOverlayEnabled');
-    const overlaySettings = document.getElementById('propOverlaySettings');
-    if (overlayToggle && overlaySettings) {
-        const updateOverlaySettings = () => {
-            overlaySettings.style.display = overlayToggle.checked ? 'block' : 'none';
-            overlaySettings.style.opacity = overlayToggle.checked ? '1' : '0.4';
-        };
-        overlayToggle.addEventListener('change', updateOverlaySettings);
-        updateOverlaySettings();  // الحالة الأولية
     }
 
     // فحص الإعدادات
