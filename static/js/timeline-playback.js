@@ -11,6 +11,12 @@
 // ============================================================
 let _currentVideoPreviewId = null;
 
+Object.defineProperty(window, '_currentVideoPreviewId', {
+    get() { return _currentVideoPreviewId; },
+    set(v) { _currentVideoPreviewId = v; },
+    configurable: true,
+});
+
 // ============================================================
 //  PLAYBACK CONTROLS
 // ============================================================
