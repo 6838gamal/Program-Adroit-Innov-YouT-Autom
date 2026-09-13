@@ -182,6 +182,10 @@ PROPERTY_ASSETS_DIR.mkdir(parents=True, exist_ok=True)
 PROPERTY_VIDEOS_DIR = Path(settings.MEDIA_DIR) / "property_videos"
 PROPERTY_VIDEOS_DIR.mkdir(parents=True, exist_ok=True)
 
+# ✅ NEW: مجلد الـ jobs (للحفظ على القرص)
+JOBS_DIR = Path(settings.MEDIA_DIR) / "jobs"
+JOBS_DIR.mkdir(parents=True, exist_ok=True)
+
 VOICEOVER_MAX_SIZE = 100 * 1024 * 1024  # 100MB
 ALLOWED_AUDIO_TYPES = {
     "audio/mpeg", "audio/mp3", "audio/wav", "audio/x-wav",
@@ -193,6 +197,71 @@ ALLOWED_AUDIO_TYPES = {
 # ذاكرات مؤقتة
 CLONED_VOICE_CACHE: Dict[str, str] = {}
 TALKING_HEAD_JOBS: Dict[str, Dict[str, Any]] = {}
+
+
+# ============================================================
+# ✅ NEW: JOB PERSISTENCE — يبقى بعد restart
+# ============================================================
+
+def _save_job_to_disk(job_id: str, data: Dict[str, Any]) -> None:
+    """احفظ حالة الـ job على القرص (يبقى بعد restart)."""
+    try:
+        data["_updated_at"] = datetime.utcnow().isoformat()
+        path = JOBS_DIR / f"{job_id}.json"
+
+        # احذف الحقول الثقيلة قبل الحفظ
+        data_clean = {
+            k: v for k, v in data.items()
+            if k not in ("images", "image_urls", "raw_images", "_background_task")
+        }
+
+        path.write_text(
+            json.dumps(data_clean, ensure_ascii=False, default=str),
+            encoding="utf-8",
+        )
+    except Exception as e:
+        logger.warning(f"Failed to save job {job_id}: {e}")
+
+
+def _load_job_from_disk(job_id: str) -> Optional[Dict[str, Any]]:
+    """اقرأ حالة الـ job من القرص."""
+    path = JOBS_DIR / f"{job_id}.json"
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception as e:
+        logger.warning(f"Failed to load job {job_id}: {e}")
+        return None
+
+
+def get_job(job_id: str) -> Optional[Dict[str, Any]]:
+    """اقرأ من الذاكرة أولاً، ثم من القرص."""
+    if job_id in TALKING_HEAD_JOBS:
+        return TALKING_HEAD_JOBS[job_id]
+    job = _load_job_from_disk(job_id)
+    if job:
+        TALKING_HEAD_JOBS[job_id] = job
+    return job
+
+
+def update_job(job_id: str, **kwargs) -> None:
+    """حدّث job في الذاكرة + القرص."""
+    job = TALKING_HEAD_JOBS.get(job_id) or _load_job_from_disk(job_id) or {"id": job_id}
+    job.update(kwargs)
+    TALKING_HEAD_JOBS[job_id] = job
+    _save_job_to_disk(job_id, job)
+
+
+def create_job(job_id: str, **initial) -> None:
+    """أنشئ job جديد واحفظه على القرص."""
+    job = {
+        "id": job_id,
+        "created_at": datetime.utcnow().isoformat(),
+        **initial,
+    }
+    TALKING_HEAD_JOBS[job_id] = job
+    _save_job_to_disk(job_id, job)
 
 
 async def _get_audio_duration(file_path: Path) -> float:
@@ -213,7 +282,6 @@ async def _get_audio_duration(file_path: Path) -> float:
         return 0.0
 
 
-# ✅ NEW: استخراج مدة الفيديو
 async def _get_video_duration(file_path: Path) -> float:
     """احسب مدة ملف فيديو باستخدام ffprobe."""
     try:
@@ -2125,14 +2193,14 @@ async def create_talking_head(
             image_filename=image.filename or "image.jpg",
         )
 
-        TALKING_HEAD_JOBS[talk_id] = {
-            "id": talk_id,
-            "project_id": project_id,
-            "status": "created",
-            "created_at": datetime.utcnow().isoformat(),
-            "result_url": None,
-            "error": None,
-        }
+        create_job(
+            talk_id,
+            project_id=project_id,
+            status="created",
+            result_url=None,
+            error=None,
+            kind="talking_head",
+        )
 
         return {
             "success": True,
@@ -2173,9 +2241,6 @@ async def generate_talking_head(
                 status_code=503,
             )
 
-        # ═══════════════════════════════════════════════════════════
-        # تحقق من النص
-        # ═══════════════════════════════════════════════════════════
         text = text.strip()
         if not text:
             return JSONResponse(
@@ -2195,9 +2260,6 @@ async def generate_talking_head(
                 status_code=400,
             )
 
-        # ═══════════════════════════════════════════════════════════
-        # تحقق من الصورة
-        # ═══════════════════════════════════════════════════════════
         img_content = await image.read()
         if not img_content:
             return JSONResponse(
@@ -2223,9 +2285,6 @@ async def generate_talking_head(
         _diag(f"   Image: {img_size_mb:.2f} MB ({image.filename})")
         _diag(f"   Voice: {voice_id}")
 
-        # ═══════════════════════════════════════════════════════════
-        # ولّد الصوت عبر Edge TTS
-        # ═══════════════════════════════════════════════════════════
         _diag(f"🎙️ Generating audio via Edge TTS...")
 
         try:
@@ -2258,9 +2317,6 @@ async def generate_talking_head(
                 status_code=400,
             )
 
-        # ═══════════════════════════════════════════════════════════
-        # أنشئ Talking Head في D-ID
-        # ═══════════════════════════════════════════════════════════
         _diag(f"🎭 Creating talking head on D-ID...")
 
         try:
@@ -2278,15 +2334,15 @@ async def generate_talking_head(
                 status_code=e.status_code,
             )
 
-        TALKING_HEAD_JOBS[talk_id] = {
-            "id": talk_id,
-            "project_id": project_id,
-            "status": "created",
-            "text": text,
-            "voice_id": voice_id,
-            "provider": "edge_tts",
-            "created_at": datetime.utcnow().isoformat(),
-        }
+        create_job(
+            talk_id,
+            project_id=project_id,
+            status="created",
+            text=text,
+            voice_id=voice_id,
+            provider="edge_tts",
+            kind="talking_head",
+        )
 
         _diag(f"✅ Talking head started: {talk_id}")
 
@@ -2310,7 +2366,6 @@ async def generate_talking_head(
         )
 
 
-# ✅ FIXED: استخراج المدة الحقيقية عند اكتمال الفيديو
 @router.get("/api/talking-head/status/{talk_id}")
 async def get_talking_head_status(talk_id: str):
     try:
@@ -2333,9 +2388,8 @@ async def get_talking_head_status(talk_id: str):
                 import httpx
                 _diag(f"⏱️ Probing duration for {talk_id}...")
 
-                # نزّل جزء صغير من الفيديو لقراءة الـ metadata
                 async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
-                    headers = {"Range": "bytes=0-3145728"}  # أول 3MB
+                    headers = {"Range": "bytes=0-3145728"}
                     r = await client.get(result_url, headers=headers)
                     if r.status_code in (200, 206):
                         tmp = Path(tempfile.gettempdir()) / f"probe_{talk_id}.mp4"
@@ -2346,20 +2400,21 @@ async def get_talking_head_status(talk_id: str):
             except Exception as e:
                 _diag_err(f"⚠️ Failed to probe duration: {e}", e)
 
-        if talk_id in TALKING_HEAD_JOBS:
-            TALKING_HEAD_JOBS[talk_id].update({
-                "status": status,
-                "result_url": result_url,
-                "duration": duration,
-                "error": error,
-            })
+        # ✅ احفظ التحديث على القرص أيضاً
+        update_job(
+            talk_id,
+            status=status,
+            result_url=result_url,
+            duration=duration,
+            error=error,
+        )
 
         return {
             "success": True,
             "talk_id": talk_id,
             "status": status,
             "result_url": result_url,
-            "duration": duration,  # ✅ المدة الحقيقية
+            "duration": duration,
             "error": error,
         }
 
@@ -2373,7 +2428,6 @@ async def get_talking_head_status(talk_id: str):
         )
 
 
-# ✅ FIXED: تنزيل الفيديو + رفعه إلى Supabase + استخراج المدة الحقيقية
 @router.post("/api/talking-head/save/{project_id}")
 async def save_talking_head_to_project(
     project_id: str,
@@ -2398,18 +2452,12 @@ async def save_talking_head_to_project(
     if not project:
         return JSONResponse({"error": "Project not found"}, status_code=404)
 
-    # ═══════════════════════════════════════════════════════════
-    # 1. احصل على رابط D-ID المؤقت
-    # ═══════════════════════════════════════════════════════════
     source_url = payload.get("video_url") or payload.get("result_url")
     if not source_url:
         return JSONResponse({"error": "video_url مطلوب"}, status_code=400)
 
     _diag(f"📥 Saving talking head: {source_url[:100]}...")
 
-    # ═══════════════════════════════════════════════════════════
-    # 2. نزّل الفيديو من D-ID
-    # ═══════════════════════════════════════════════════════════
     video_bytes = None
     local_video_path = None
 
@@ -2434,9 +2482,6 @@ async def save_talking_head_to_project(
             status_code=502,
         )
 
-    # ═══════════════════════════════════════════════════════════
-    # 3. احفظ محليًا مؤقتًا + استخرج المدة الحقيقية
-    # ═══════════════════════════════════════════════════════════
     unique = uuid.uuid4().hex[:12]
     local_tmp = Path(tempfile.gettempdir()) / f"talking_head_{unique}.mp4"
     local_tmp.write_bytes(video_bytes)
@@ -2445,9 +2490,6 @@ async def save_talking_head_to_project(
     real_duration = await _get_video_duration(local_tmp)
     _diag(f"⏱️ Real duration: {real_duration:.2f}s")
 
-    # ═══════════════════════════════════════════════════════════
-    # 4. ارفع الفيديو إلى Supabase (رابط دائم)
-    # ═══════════════════════════════════════════════════════════
     permanent_url = None
     remote_path = None
 
@@ -2471,7 +2513,6 @@ async def save_talking_head_to_project(
         except Exception as e:
             _diag_err(f"⚠️ Supabase upload failed: {e}", e)
 
-    # Fallback: احفظ محليًا
     if not permanent_url:
         local_dest = TALKING_HEADS_DIR / f"{project_id}_{unique}.mp4"
         local_dest.write_bytes(video_bytes)
@@ -2479,9 +2520,6 @@ async def save_talking_head_to_project(
         remote_path = str(local_dest)
         _diag(f"⚠️ Using local fallback: {permanent_url}")
 
-    # ═══════════════════════════════════════════════════════════
-    # 5. احفظ الـ clip مع الرابط الدائم + المدة الحقيقية
-    # ═══════════════════════════════════════════════════════════
     data = getattr(project, "data", None) or {}
     clips = data.get("clips", []) or []
 
@@ -2491,11 +2529,11 @@ async def save_talking_head_to_project(
         "id": clip_id,
         "type": "video",
         "title": payload.get("title", "Talking Head"),
-        "url": permanent_url,              # ✅ رابط دائم
-        "src": permanent_url,              # ✅ للتوافق مع الـ frontend
+        "url": permanent_url,
+        "src": permanent_url,
         "path": remote_path,
         "start": payload.get("start", 0),
-        "duration": real_duration,         # ✅ المدة الحقيقية
+        "duration": real_duration,
         "source": "talking_head",
         "text": payload.get("text", ""),
         "voice_id": payload.get("voice_id"),
@@ -2514,7 +2552,6 @@ async def save_talking_head_to_project(
         await repo.save(project)
     await session.commit()
 
-    # نظّف الملف المؤقت
     if local_video_path and local_video_path.exists():
         local_video_path.unlink(missing_ok=True)
 
@@ -2544,6 +2581,14 @@ async def delete_talking_head(talk_id: str):
 
     if talk_id in TALKING_HEAD_JOBS:
         del TALKING_HEAD_JOBS[talk_id]
+
+    # احذف الملف أيضاً
+    try:
+        job_file = JOBS_DIR / f"{talk_id}.json"
+        if job_file.exists():
+            job_file.unlink()
+    except Exception:
+        pass
 
     return {"success": True, "talk_id": talk_id}
 
@@ -3505,6 +3550,12 @@ async def logs_page(request: Request):
         "message": f"Voice Cache: {len(cache_files)} files ({cache_size:.1f} MB)"
     })
 
+    jobs_count = len(list(JOBS_DIR.glob("*.json"))) if JOBS_DIR.exists() else 0
+    log_entries.append({
+        "level": "INFO", "source": "property_video", "timestamp": now,
+        "message": f"Persisted Jobs: {jobs_count} files"
+    })
+
     return templates.TemplateResponse(request, "logs.html", {
         "log_entries": log_entries,
         "active_page": "logs",
@@ -3732,6 +3783,24 @@ async def debug_talking_head_jobs():
         "success": True,
         "count": len(TALKING_HEAD_JOBS),
         "jobs": list(TALKING_HEAD_JOBS.values()),
+        "persisted_count": len(list(JOBS_DIR.glob("*.json"))) if JOBS_DIR.exists() else 0,
+    }
+
+
+@router.get("/api/debug/jobs/list")
+async def debug_jobs_list():
+    """اعرض كل الـ jobs المحفوظة على القرص."""
+    jobs = []
+    if JOBS_DIR.exists():
+        for f in JOBS_DIR.glob("*.json"):
+            try:
+                jobs.append(json.loads(f.read_text(encoding="utf-8")))
+            except Exception:
+                pass
+    return {
+        "success": True,
+        "count": len(jobs),
+        "jobs": jobs,
     }
 
 
@@ -3778,9 +3847,6 @@ async def debug_voiceovers(project_id: str, session: AsyncSession = Depends(get_
 # 🏠 PROPERTY VIDEO — مولّد فيديو العقارات
 # ============================================================
 
-# ✅ ملاحظة: PROPERTY_ASSETS_DIR و PROPERTY_VIDEOS_DIR معرّفان في الأعلى
-
-
 class PropertyVideoRequest(BaseModel):
     """نموذج طلب توليد فيديو عقاري."""
     project_id: str
@@ -3799,8 +3865,8 @@ class PropertyVideoRequest(BaseModel):
     duration_per_image: float = 4.5
     style: str = "modern"
 
-    # ✅ جديد: خيارات اختيارية
-    voiceover_enabled: bool = True       # ← تعطيل الصوت كلياً
+    # ✅ خيارات اختيارية
+    voiceover_enabled: bool = True
     voiceover_voice: str = "ar-SA-HamedNeural"
 
     show_price: bool = True
@@ -3901,12 +3967,14 @@ async def upload_property_image(
 @router.post("/api/property/generate")
 async def generate_property_video(
     payload: PropertyVideoRequest,
-    background: BackgroundTasks,
     session: AsyncSession = Depends(get_db),
 ):
     """
     🏠 يبدأ توليد فيديو عقاري في الخلفية.
-    يستخدم نفس TALKING_HEAD_JOBS لتخزين حالة الـ jobs.
+
+    ✅ يستخدم:
+    - create_job (يحفظ على القرص — يبقى بعد restart)
+    - asyncio.create_task (أكثر موثوقية من BackgroundTasks)
     """
     try:
         project_uuid = uuid.UUID(payload.project_id)
@@ -3932,25 +4000,22 @@ async def generate_property_video(
 
     job_id = f"prop_{uuid.uuid4().hex[:12]}"
 
-    TALKING_HEAD_JOBS[job_id] = {
-        "id": job_id,
-        "project_id": payload.project_id,
-        "status": "queued",
-        "progress": 0.0,
-        "stage": "queued",
-        "created_at": datetime.utcnow().isoformat(),
-        "video_url": None,
-        "path": None,
-        "duration": 0.0,
-        "error": None,
-        "kind": "property_video",
-    }
-
-    background.add_task(
-        _run_property_video_job,
+    # ✅ احفظ على القرص فوراً
+    create_job(
         job_id,
-        payload.model_dump(),
+        project_id=payload.project_id,
+        status="queued",
+        progress=0.0,
+        stage="queued",
+        video_url=None,
+        path=None,
+        duration=0.0,
+        error=None,
+        kind="property_video",
     )
+
+    # ✅ استخدم asyncio.create_task (يبقى شغّالاً حتى بعد الاستجابة)
+    asyncio.create_task(_run_property_video_job(job_id, payload.model_dump()))
 
     _diag(f"🏠 Property video queued: {job_id}")
     _diag(f"   voiceover_enabled: {payload.voiceover_enabled}")
@@ -3973,8 +4038,8 @@ async def generate_property_video(
 
 @router.get("/api/property/status/{job_id}")
 async def get_property_video_status(job_id: str):
-    """يرجع حالة job توليد العقار."""
-    job = TALKING_HEAD_JOBS.get(job_id)
+    """يرجع حالة job توليد العقار — من الذاكرة أو من القرص."""
+    job = get_job(job_id)
     if not job:
         return JSONResponse(
             {"success": False, "error": "Job not found"},
@@ -4059,15 +4124,10 @@ async def save_property_video_to_project(
 async def _run_property_video_job(job_id: str, payload: Dict[str, Any]) -> None:
     """
     ينفّذ توليد الفيديو العقاري كاملاً في الخلفية.
-    يستخدم ffmpeg + edge_tts الموجودين.
 
-    ✅ يدعم:
-    - بدون صوت (voiceover_enabled=False)
-    - بدون نصوص (كل show_*=False)
-    - بدون الاثنين (فيديو صافي)
+    ✅ يستخدم update_job لتخزين الحالة على القرص
+    ✅ يدعم: بدون صوت، بدون نصوص، أو الاثنين
     """
-    job = TALKING_HEAD_JOBS[job_id]
-
     try:
         tmp_dir = Path(tempfile.mkdtemp(prefix=f"prop_{job_id}_"))
 
@@ -4076,7 +4136,6 @@ async def _run_property_video_job(job_id: str, payload: Dict[str, Any]) -> None:
             duration_per_image = float(payload.get("duration_per_image", 4.5))
             voice = payload.get("voiceover_voice", "ar-SA-HamedNeural")
 
-            # ✅ اقرأ الخيارات الاختيارية
             voiceover_enabled = payload.get("voiceover_enabled", True)
 
             overlay_enabled = any([
@@ -4091,10 +4150,8 @@ async def _run_property_video_job(job_id: str, payload: Dict[str, Any]) -> None:
             _diag(f"   overlay_enabled   = {overlay_enabled}")
             _diag(f"   images            = {len(images)}")
 
-            # ═══ 1. توليد motion clips لكل صورة ═══
-            job["status"] = "running"
-            job["stage"] = "motion"
-            job["progress"] = 0.05
+            # ═══ 1. motion clips ═══
+            update_job(job_id, status="running", stage="motion", progress=0.05)
 
             motion_clips: List[Path] = []
 
@@ -4104,13 +4161,11 @@ async def _run_property_video_job(job_id: str, payload: Dict[str, Any]) -> None:
 
                 img_path: Optional[Path] = None
 
-                # إذا المسار محلي وموجود، استخدمه مباشرة
                 if img_path_str and not str(img_path_str).startswith("http"):
                     p = Path(str(img_path_str))
                     if p.exists():
                         img_path = p
 
-                # إذا كان URL، نزّله
                 if img_path is None:
                     img_url = img.get("url", "")
                     if img_url.startswith("http"):
@@ -4142,24 +4197,25 @@ async def _run_property_video_job(job_id: str, payload: Dict[str, Any]) -> None:
                 motion_clips.append(clip_path)
 
                 if len(images) > 0:
-                    job["progress"] = 0.05 + (idx + 1) / len(images) * 0.4
+                    update_job(
+                        job_id,
+                        progress=0.05 + (idx + 1) / len(images) * 0.4,
+                    )
 
             if not motion_clips:
                 raise RuntimeError("لم يتم توليد أي مقطع — تحقق من الصور")
 
-            # ═══ 2. دمج المقاطع ═══
-            job["stage"] = "concat"
-            job["progress"] = 0.5
+            # ═══ 2. concat ═══
+            update_job(job_id, stage="concat", progress=0.5)
 
             stitched = tmp_dir / "stitched.mp4"
             await _concat_video_clips(motion_clips, stitched, tmp_dir)
 
-            # ═══ 3. توليد التعليق الصوتي (اختياري) ═══
+            # ═══ 3. voiceover (اختياري) ═══
             voiceover_path: Optional[Path] = None
 
             if voiceover_enabled:
-                job["stage"] = "voiceover"
-                job["progress"] = 0.6
+                update_job(job_id, stage="voiceover", progress=0.6)
 
                 voiceover_text = _build_property_script(payload)
 
@@ -4176,15 +4232,13 @@ async def _run_property_video_job(job_id: str, payload: Dict[str, Any]) -> None:
                     voiceover_path = None
             else:
                 _diag("🔇 Voiceover disabled — skipping TTS")
-                job["stage"] = "voiceover"
-                job["progress"] = 0.6
+                update_job(job_id, stage="voiceover", progress=0.6)
 
-            # ═══ 4. إضافة النصوص (اختياري) ═══
+            # ═══ 4. text overlays (اختياري) ═══
             with_text = tmp_dir / "with_text.mp4"
 
             if overlay_enabled:
-                job["stage"] = "text"
-                job["progress"] = 0.75
+                update_job(job_id, stage="text", progress=0.75)
 
                 await _add_property_text_overlays(
                     input_video=stitched,
@@ -4195,12 +4249,10 @@ async def _run_property_video_job(job_id: str, payload: Dict[str, Any]) -> None:
             else:
                 _diag("📝 Text overlays disabled — skipping")
                 shutil.copy(stitched, with_text)
-                job["stage"] = "text"
-                job["progress"] = 0.75
+                update_job(job_id, stage="text", progress=0.75)
 
-            # ═══ 5. دمج الصوت (إن وُجد) ═══
-            job["stage"] = "audio"
-            job["progress"] = 0.85
+            # ═══ 5. audio mix ═══
+            update_job(job_id, stage="audio", progress=0.85)
 
             final_video = tmp_dir / "final.mp4"
 
@@ -4211,12 +4263,10 @@ async def _run_property_video_job(job_id: str, payload: Dict[str, Any]) -> None:
                     output=final_video,
                 )
             else:
-                # بدون صوت — نسخ فقط
                 shutil.copy(with_text, final_video)
 
-            # ═══ 6. ارفع إلى Supabase ═══
-            job["stage"] = "upload"
-            job["progress"] = 0.92
+            # ═══ 6. upload ═══
+            update_job(job_id, stage="upload", progress=0.92)
 
             project_id = payload.get("project_id", "unknown")
             unique = uuid.uuid4().hex[:12]
@@ -4241,7 +4291,6 @@ async def _run_property_video_job(job_id: str, payload: Dict[str, Any]) -> None:
                 except Exception as e:
                     _diag_err(f"⚠️ Supabase upload failed: {e}", e)
 
-            # Fallback محلي
             if not final_url:
                 local_dest = PROPERTY_VIDEOS_DIR / f"{project_id}_{unique}.mp4"
                 shutil.copy(final_video, local_dest)
@@ -4250,20 +4299,24 @@ async def _run_property_video_job(job_id: str, payload: Dict[str, Any]) -> None:
 
             real_duration = await _get_video_duration(final_video)
 
-            job["status"] = "done"
-            job["stage"] = "done"
-            job["progress"] = 1.0
-            job["video_url"] = final_url
-            job["path"] = remote_path
-            job["duration"] = real_duration
-            job["property_meta"] = {
-                "title": payload.get("title"),
-                "price": payload.get("price"),
-                "currency": payload.get("currency"),
-                "city": payload.get("city"),
-                "district": payload.get("district"),
-                "property_type": payload.get("property_type"),
-            }
+            # ✅ حفظ النتيجة النهائية على القرص
+            update_job(
+                job_id,
+                status="done",
+                stage="done",
+                progress=1.0,
+                video_url=final_url,
+                path=remote_path,
+                duration=real_duration,
+                property_meta={
+                    "title": payload.get("title"),
+                    "price": payload.get("price"),
+                    "currency": payload.get("currency"),
+                    "city": payload.get("city"),
+                    "district": payload.get("district"),
+                    "property_type": payload.get("property_type"),
+                },
+            )
 
             _diag(f"✅ Property video done: {final_url} ({real_duration:.2f}s)")
 
@@ -4272,8 +4325,7 @@ async def _run_property_video_job(job_id: str, payload: Dict[str, Any]) -> None:
 
     except Exception as e:
         _diag_err(f"❌ Property video job failed: {e}", e)
-        job["status"] = "failed"
-        job["error"] = str(e)
+        update_job(job_id, status="failed", error=str(e))
 
 
 # ─────────────────────────────────────────────────────────
@@ -4511,7 +4563,6 @@ async def _add_property_text_overlays(
 ) -> None:
     """يضيف النصوص العربية على الفيديو."""
 
-    # ✅ إذا كل الخيارات معطّلة → تخطَّ
     if not any([
         payload.get("show_price", True),
         payload.get("show_location", True),
