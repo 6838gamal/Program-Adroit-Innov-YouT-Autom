@@ -183,11 +183,9 @@ PROPERTY_ASSETS_DIR.mkdir(parents=True, exist_ok=True)
 PROPERTY_VIDEOS_DIR = Path(settings.MEDIA_DIR) / "property_videos"
 PROPERTY_VIDEOS_DIR.mkdir(parents=True, exist_ok=True)
 
-# ✅ مجلد الـ jobs المحلي (fallback)
 JOBS_DIR = Path(settings.MEDIA_DIR) / "jobs"
 JOBS_DIR.mkdir(parents=True, exist_ok=True)
 
-# ✅ مجلد الـ jobs داخل Supabase Storage
 JOBS_STORAGE_PREFIX = "jobs"
 
 VOICEOVER_MAX_SIZE = 100 * 1024 * 1024  # 100MB
@@ -204,7 +202,7 @@ TALKING_HEAD_JOBS: Dict[str, Dict[str, Any]] = {}
 
 
 # ============================================================
-# ✅ JOB PERSISTENCE v2 — Supabase Storage + fallback محلي
+# JOB PERSISTENCE v2 — Supabase Storage + fallback محلي
 # ============================================================
 
 def _save_job_to_disk(job_id: str, data: Dict[str, Any]) -> None:
@@ -357,7 +355,7 @@ async def create_job_async(job_id: str, **initial) -> None:
 
 def _compute_job_age_seconds(job: Dict[str, Any]) -> Optional[float]:
     """
-    ✅ احسب عمر الـ job بالثواني.
+    احسب عمر الـ job بالثواني.
     يتعامل مع timestamps مع/بدون timezone.
     """
     updated = job.get("_updated_at") or job.get("created_at")
@@ -367,20 +365,13 @@ def _compute_job_age_seconds(job: Dict[str, Any]) -> Optional[float]:
     try:
         updated_str = str(updated)
 
-        # احذف Z النهائي
         if updated_str.endswith("Z"):
             updated_str = updated_str[:-1]
 
-        # احذف timezone إذا وُجد (+00:00 أو +03:00)
         if "+" in updated_str:
             updated_str = updated_str.split("+")[0]
 
-        # احذف timezone إذا وُجد (-00:00)
-        # (نتجاهل هذا لأنه نادر في حالتنا)
-
         updated_dt = datetime.fromisoformat(updated_str)
-
-        # احسب الفرق — كلاهما naive
         now_naive = datetime.utcnow()
         age_seconds = (now_naive - updated_dt).total_seconds()
 
@@ -3050,7 +3041,7 @@ async def add_voiceover_clip(
     payload: Dict[str, Any],
     session: AsyncSession = Depends(get_db),
 ):
-    """✅ إضافة clip صوتي للمشروع."""
+    """إضافة clip صوتي للمشروع."""
     try:
         project_uuid = uuid.UUID(project_id)
     except ValueError:
@@ -3916,7 +3907,6 @@ class PropertyVideoRequest(BaseModel):
     duration_per_image: float = 4.5
     style: str = "modern"
 
-    # ✅ خيارات اختيارية
     voiceover_enabled: bool = True
     voiceover_voice: str = "ar-SA-HamedNeural"
 
@@ -4018,8 +4008,8 @@ async def generate_property_video(
     """
     🏠 يبدأ توليد فيديو عقاري في الخلفية.
 
-    ✅ يستخدم create_job_async (يحفظ في Supabase Storage)
-    ✅ يستخدم asyncio.create_task (أكثر موثوقية)
+    يستخدم create_job_async (يحفظ في Supabase Storage)
+    ويستخدم asyncio.create_task (أكثر موثوقية).
     """
     try:
         project_uuid = uuid.UUID(payload.project_id)
@@ -4076,15 +4066,15 @@ async def generate_property_video(
 
 
 # ─────────────────────────────────────────────────────────
-# حالة التوليد — ✅ إصلاح كشف jobs الميتة
+# حالة التوليد
 # ─────────────────────────────────────────────────────────
 
 @router.get("/api/property/status/{job_id}")
 async def get_property_video_status(job_id: str):
     """
     يرجع حالة job توليد العقار.
-    ✅ يقرأ من الذاكرة أو Supabase Storage.
-    ✅ يكشف jobs الميتة (restart) ويعلّمها failed.
+    يقرأ من الذاكرة أو Supabase Storage.
+    يكشف jobs الميتة (restart) ويعلّمها failed.
     """
     job = await get_job_async(job_id)
     if not job:
@@ -4093,14 +4083,14 @@ async def get_property_video_status(job_id: str):
             status_code=404,
         )
 
-    # ✅ كشف jobs الميتة (restart)
+    # كشف jobs الميتة (restart)
     status_now = job.get("status")
     if status_now in ("running", "queued", "created"):
         age_seconds = _compute_job_age_seconds(job)
 
         _diag(f"⏱️ Job {job_id}: status={status_now}, age={age_seconds}s")
 
-        # ✅ إذا تجاوز 5 دقائق، اعتبره فشل
+        # إذا تجاوز 5 دقائق، اعتبره فشل
         if age_seconds is not None and age_seconds > 300:
             _diag(f"⚠️ Job {job_id} ميت ({age_seconds:.0f}s) — mark as failed")
 
@@ -4112,7 +4102,6 @@ async def get_property_video_status(job_id: str):
                 stage="failed",
             )
 
-            # اقرأ النسخة المُحدَّثة
             job = await get_job_async(job_id)
 
     return {
@@ -4190,9 +4179,6 @@ async def save_property_video_to_project(
 async def _run_property_video_job(job_id: str, payload: Dict[str, Any]) -> None:
     """
     ينفّذ توليد الفيديو العقاري كاملاً في الخلفية.
-
-    ✅ يستخدم update_job_async (يحفظ في Supabase Storage)
-    ✅ يدعم: بدون صوت، بدون نصوص، أو الاثنين
     """
     try:
         tmp_dir = Path(tempfile.mkdtemp(prefix=f"prop_{job_id}_"))
@@ -4393,7 +4379,7 @@ async def _run_property_video_job(job_id: str, payload: Dict[str, Any]) -> None:
 
 
 # ─────────────────────────────────────────────────────────
-# FFmpeg Helpers
+# FFmpeg Helpers — ✅ محدّثة لأداء أفضل
 # ─────────────────────────────────────────────────────────
 
 async def _render_motion_clip(
@@ -4401,11 +4387,11 @@ async def _render_motion_clip(
     output_path: Path,
     duration: float,
     motion: str = "auto",
-    width: int = 1080,
-    height: int = 1920,
-    fps: int = 30,
+    width: int = 720,       # ✅ 1080 → 720
+    height: int = 1280,     # ✅ 1920 → 1280
+    fps: int = 24,          # ✅ 30 → 24
 ) -> None:
-    """يولّد مقطع فيديو من صورة بحركة Pan/Zoom."""
+    """يولّد مقطع فيديو من صورة بحركة Pan/Zoom — سريع."""
     if motion == "auto":
         motion = random.choice([
             "zoom_in", "zoom_out", "pan_left",
@@ -4474,7 +4460,9 @@ async def _render_motion_clip(
         "-t", str(duration),
         "-r", str(fps),
         "-an",
-        "-c:v", "libx264", "-preset", "medium", "-crf", "20",
+        "-c:v", "libx264",
+        "-preset", "ultrafast",   # ✅ medium → ultrafast
+        "-crf", "26",             # ✅ 20 → 26
         "-pix_fmt", "yuv420p",
         "-movflags", "+faststart",
         str(output_path),
@@ -4625,7 +4613,7 @@ async def _add_property_text_overlays(
     output: Path,
     tmp_dir: Path,
 ) -> None:
-    """يضيف النصوص العربية على الفيديو."""
+    """يضيف النصوص العربية على الفيديو — سريع."""
 
     if not any([
         payload.get("show_price", True),
@@ -4677,12 +4665,13 @@ async def _add_property_text_overlays(
 
     filters: List[str] = []
 
+    # ✅ أحجام خطوط مصغّرة لتناسب 720p
     if title:
         f = _write_text("title", title)
         filters.append(
             f"drawtext=fontfile='{font}':textfile='{f}':"
-            f"fontsize=64:fontcolor=white:"
-            f"box=1:boxcolor=black@0.55:boxborderw=20:"
+            f"fontsize=48:fontcolor=white:"
+            f"box=1:boxcolor=black@0.55:boxborderw=16:"
             f"x=(w-text_w)/2:y=h*0.08"
         )
 
@@ -4690,8 +4679,8 @@ async def _add_property_text_overlays(
         f = _write_text("loc", location)
         filters.append(
             f"drawtext=fontfile='{font}':textfile='{f}':"
-            f"fontsize=42:fontcolor=white:"
-            f"box=1:boxcolor=black@0.4:boxborderw=14:"
+            f"fontsize=32:fontcolor=white:"
+            f"box=1:boxcolor=black@0.4:boxborderw=12:"
             f"x=(w-text_w)/2:y=h*0.17"
         )
 
@@ -4699,8 +4688,8 @@ async def _add_property_text_overlays(
         f = _write_text("price", price)
         filters.append(
             f"drawtext=fontfile='{font}':textfile='{f}':"
-            f"fontsize=72:fontcolor=black:"
-            f"box=1:boxcolor=white@0.9:boxborderw=24:"
+            f"fontsize=54:fontcolor=black:"
+            f"box=1:boxcolor=white@0.9:boxborderw=18:"
             f"x=(w-text_w)/2:y=h*0.72"
         )
 
@@ -4708,8 +4697,8 @@ async def _add_property_text_overlays(
         f = _write_text("details", details)
         filters.append(
             f"drawtext=fontfile='{font}':textfile='{f}':"
-            f"fontsize=36:fontcolor=white:"
-            f"box=1:boxcolor=black@0.5:boxborderw=16:"
+            f"fontsize=28:fontcolor=white:"
+            f"box=1:boxcolor=black@0.5:boxborderw=12:"
             f"x=(w-text_w)/2:y=h*0.85"
         )
 
@@ -4717,8 +4706,8 @@ async def _add_property_text_overlays(
         f = _write_text("contact", contact)
         filters.append(
             f"drawtext=fontfile='{font}':textfile='{f}':"
-            f"fontsize=38:fontcolor=white:"
-            f"box=1:boxcolor=black@0.7:boxborderw=18:"
+            f"fontsize=30:fontcolor=white:"
+            f"box=1:boxcolor=black@0.7:boxborderw=14:"
             f"x=(w-text_w)/2:y=h*0.92"
         )
 
@@ -4732,7 +4721,9 @@ async def _add_property_text_overlays(
         "ffmpeg", "-y",
         "-i", str(input_video),
         "-vf", vf,
-        "-c:v", "libx264", "-preset", "medium", "-crf", "20",
+        "-c:v", "libx264",
+        "-preset", "ultrafast",   # ✅ medium → ultrafast
+        "-crf", "26",             # ✅ 20 → 26
         "-pix_fmt", "yuv420p",
         "-movflags", "+faststart",
         str(output),
