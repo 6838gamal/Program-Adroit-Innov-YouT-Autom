@@ -4,8 +4,6 @@ Handles Google/YouTube OAuth2 flow.
 """
 import json
 import logging
-import os
-from urllib.parse import urlencode
 
 from fastapi import APIRouter, Request, Depends
 from fastapi.responses import RedirectResponse, HTMLResponse
@@ -50,7 +48,13 @@ async def youtube_oauth_start(request: Request):
 
     # Store state in session cookie for CSRF check
     response = RedirectResponse(auth_url)
-    response.set_cookie("yt_oauth_state", state, httponly=True, samesite="lax", max_age=600)
+    response.set_cookie(
+        "yt_oauth_state",
+        state,
+        httponly=True,
+        samesite="lax",
+        max_age=600,
+    )
     return response
 
 
@@ -63,7 +67,7 @@ async def youtube_oauth_callback(
     error: str | None = None,
     session: AsyncSession = Depends(get_db),
 ):
-    # Handle user denial
+    # ── Handle user denial ───────────────────────────────────────────────────
     if error:
         return RedirectResponse(
             f"/platforms?error={error}",
@@ -71,45 +75,85 @@ async def youtube_oauth_callback(
         )
 
     if not code:
-        return HTMLResponse(_error_page("خطأ OAuth", "لم يتم استلام رمز التفويض."), status_code=400)
+        return HTMLResponse(
+            _error_page("خطأ OAuth", "لم يتم استلام رمز التفويض."),
+            status_code=400,
+        )
 
-    # CSRF state check (best-effort)
+    # ── CSRF state check (best-effort) ───────────────────────────────────────
     stored_state = request.cookies.get("yt_oauth_state")
     if stored_state and stored_state != state:
-        return HTMLResponse(_error_page("خطأ أمني", "قيمة state غير متطابقة — أعد المحاولة."), status_code=403)
+        return HTMLResponse(
+            _error_page("خطأ أمني", "قيمة state غير متطابقة — أعد المحاولة."),
+            status_code=403,
+        )
 
     plugin = _youtube_plugin()
     redirect_uri = _get_redirect_uri(request)
 
+    # ── Exchange authorization code for tokens ───────────────────────────────
     try:
-        # ✅ مرّر state لاسترجاع code_verifier
         credentials = plugin.exchange_code(code, redirect_uri, state=state)
     except Exception as e:
-        logger.error("OAuth token exchange failed: %s", e)
-        return HTMLResponse(_error_page("فشل استبدال الرمز", str(e)), status_code=400)
+        logger.error("OAuth token exchange failed: %s", e, exc_info=True)
+        return HTMLResponse(
+            _error_page("فشل استبدال الرمز", str(e)),
+            status_code=400,
+        )
 
-    # Validate credentials and fetch channel info
+    # ── Validate credentials & fetch channel/user info ───────────────────────
     auth_result = await plugin.authenticate(credentials)
     if not auth_result.success:
-        return HTMLResponse(_error_page("فشل التحقق", auth_result.error or "خطأ غير معروف"), status_code=401)
+        return HTMLResponse(
+            _error_page("فشل التحقق", auth_result.error or "خطأ غير معروف"),
+            status_code=401,
+        )
 
-    # Persist channel info inside credentials
-    credentials["channel_info"] = auth_result.channel_info
+    # ── Extract channel metadata (safe fallbacks) ────────────────────────────
+    info = auth_result.channel_info or {}
 
-    # Save account
-    channel_title = auth_result.channel_info.get("channel_title", "قناة YouTube")
+    channel_id        = info.get("channel_id", "") or ""
+    channel_title     = (
+        info.get("channel_title", "")
+        or info.get("name", "")
+        or "قناة YouTube"
+    )
+    channel_handle    = info.get("channel_handle", "") or ""
+    channel_thumbnail = (
+        info.get("channel_thumbnail", "")
+        or info.get("picture", "")
+        or ""
+    )
+
+    # احفظ كل معلومات القناة داخل credentials للأرشيف
+    credentials["channel_info"] = info
+
+    # ── Create & persist the account ─────────────────────────────────────────
     account = PublisherAccount(
         name=channel_title,
         platform_name="youtube",
         credentials_encrypted=json.dumps(credentials),
+
+        # Channel metadata (new)
+        channel_id=channel_id,
+        channel_title=channel_title,
+        channel_handle=channel_handle,
+        channel_thumbnail=channel_thumbnail,
     )
     account.verify()
 
     repo = SQLAccountRepository(session)
     await repo.save(account)
 
-    logger.info("YouTube account connected: %s", channel_title)
+    logger.info(
+        "YouTube account connected: id=%s title=%s handle=%s email=%s",
+        channel_id or "—",
+        channel_title,
+        channel_handle or "—",
+        info.get("email", "—"),
+    )
 
+    # ── Redirect back to platforms page ──────────────────────────────────────
     response = RedirectResponse("/platforms?connected=youtube", status_code=302)
     response.delete_cookie("yt_oauth_state")
     return response
@@ -120,10 +164,16 @@ def _error_page(title: str, message: str) -> str:
     return f"""<!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head><meta charset="UTF-8"><title>{title}</title>
-<style>body{{background:#0f172a;color:#e2e8f0;font-family:system-ui;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}}
-.box{{background:#1e293b;border:1px solid #334155;border-radius:1rem;padding:2rem;max-width:480px;text-align:center}}
-h1{{color:#f87171;margin:0 0 1rem}}p{{color:#94a3b8;margin:0 0 1.5rem}}
-a{{background:#2563eb;color:#fff;padding:.6rem 1.5rem;border-radius:.5rem;text-decoration:none;display:inline-block}}
+<style>
+body{{background:#0f172a;color:#e2e8f0;font-family:system-ui;
+     display:flex;align-items:center;justify-content:center;
+     min-height:100vh;margin:0}}
+.box{{background:#1e293b;border:1px solid #334155;border-radius:1rem;
+     padding:2rem;max-width:480px;text-align:center}}
+h1{{color:#f87171;margin:0 0 1rem}}
+p{{color:#94a3b8;margin:0 0 1.5rem}}
+a{{background:#2563eb;color:#fff;padding:.6rem 1.5rem;
+  border-radius:.5rem;text-decoration:none;display:inline-block}}
 </style></head>
 <body><div class="box">
 <h1>⚠️ {title}</h1>
