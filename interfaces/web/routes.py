@@ -3797,7 +3797,12 @@ class PropertyVideoRequest(BaseModel):
     whatsapp: str = ""
     images: List[Dict[str, Any]] = []
     duration_per_image: float = 4.5
+    style: str = "modern"
+
+    # ✅ جديد: خيارات اختيارية
+    voiceover_enabled: bool = True       # ← تعطيل الصوت كلياً
     voiceover_voice: str = "ar-SA-HamedNeural"
+
     show_price: bool = True
     show_location: bool = True
     show_area: bool = True
@@ -3948,6 +3953,11 @@ async def generate_property_video(
     )
 
     _diag(f"🏠 Property video queued: {job_id}")
+    _diag(f"   voiceover_enabled: {payload.voiceover_enabled}")
+    _diag(f"   show_price: {payload.show_price}")
+    _diag(f"   show_location: {payload.show_location}")
+    _diag(f"   show_area: {payload.show_area}")
+    _diag(f"   show_contact: {payload.show_contact}")
 
     return {
         "success": True,
@@ -4050,6 +4060,11 @@ async def _run_property_video_job(job_id: str, payload: Dict[str, Any]) -> None:
     """
     ينفّذ توليد الفيديو العقاري كاملاً في الخلفية.
     يستخدم ffmpeg + edge_tts الموجودين.
+
+    ✅ يدعم:
+    - بدون صوت (voiceover_enabled=False)
+    - بدون نصوص (كل show_*=False)
+    - بدون الاثنين (فيديو صافي)
     """
     job = TALKING_HEAD_JOBS[job_id]
 
@@ -4060,6 +4075,21 @@ async def _run_property_video_job(job_id: str, payload: Dict[str, Any]) -> None:
             images = payload.get("images", [])
             duration_per_image = float(payload.get("duration_per_image", 4.5))
             voice = payload.get("voiceover_voice", "ar-SA-HamedNeural")
+
+            # ✅ اقرأ الخيارات الاختيارية
+            voiceover_enabled = payload.get("voiceover_enabled", True)
+
+            overlay_enabled = any([
+                payload.get("show_price", True),
+                payload.get("show_location", True),
+                payload.get("show_area", True),
+                payload.get("show_contact", True),
+            ])
+
+            _diag(f"🏠 Property job {job_id}:")
+            _diag(f"   voiceover_enabled = {voiceover_enabled}")
+            _diag(f"   overlay_enabled   = {overlay_enabled}")
+            _diag(f"   images            = {len(images)}")
 
             # ═══ 1. توليد motion clips لكل صورة ═══
             job["status"] = "running"
@@ -4124,38 +4154,51 @@ async def _run_property_video_job(job_id: str, payload: Dict[str, Any]) -> None:
             stitched = tmp_dir / "stitched.mp4"
             await _concat_video_clips(motion_clips, stitched, tmp_dir)
 
-            # ═══ 3. توليد التعليق الصوتي ═══
-            job["stage"] = "voiceover"
-            job["progress"] = 0.6
-
-            voiceover_text = _build_property_script(payload)
-
+            # ═══ 3. توليد التعليق الصوتي (اختياري) ═══
             voiceover_path: Optional[Path] = None
-            try:
-                audio_bytes = await _edge_tts_generate(
-                    text=voiceover_text,
-                    voice=voice,
-                )
-                voiceover_path = tmp_dir / "voiceover.mp3"
-                voiceover_path.write_bytes(audio_bytes)
-            except Exception as e:
-                _diag_err(f"⚠️ Voiceover failed, continuing without it: {e}", e)
-                voiceover_path = None
 
-            # ═══ 4. إضافة النصوص ═══
-            job["stage"] = "text"
-            job["progress"] = 0.75
+            if voiceover_enabled:
+                job["stage"] = "voiceover"
+                job["progress"] = 0.6
 
+                voiceover_text = _build_property_script(payload)
+
+                try:
+                    audio_bytes = await _edge_tts_generate(
+                        text=voiceover_text,
+                        voice=voice,
+                    )
+                    voiceover_path = tmp_dir / "voiceover.mp3"
+                    voiceover_path.write_bytes(audio_bytes)
+                    _diag(f"🎙️ Voiceover generated ({len(audio_bytes)} bytes)")
+                except Exception as e:
+                    _diag_err(f"⚠️ Voiceover failed, continuing without it: {e}", e)
+                    voiceover_path = None
+            else:
+                _diag("🔇 Voiceover disabled — skipping TTS")
+                job["stage"] = "voiceover"
+                job["progress"] = 0.6
+
+            # ═══ 4. إضافة النصوص (اختياري) ═══
             with_text = tmp_dir / "with_text.mp4"
 
-            await _add_property_text_overlays(
-                input_video=stitched,
-                payload=payload,
-                output=with_text,
-                tmp_dir=tmp_dir,
-            )
+            if overlay_enabled:
+                job["stage"] = "text"
+                job["progress"] = 0.75
 
-            # ═══ 5. دمج الصوت ═══
+                await _add_property_text_overlays(
+                    input_video=stitched,
+                    payload=payload,
+                    output=with_text,
+                    tmp_dir=tmp_dir,
+                )
+            else:
+                _diag("📝 Text overlays disabled — skipping")
+                shutil.copy(stitched, with_text)
+                job["stage"] = "text"
+                job["progress"] = 0.75
+
+            # ═══ 5. دمج الصوت (إن وُجد) ═══
             job["stage"] = "audio"
             job["progress"] = 0.85
 
@@ -4168,6 +4211,7 @@ async def _run_property_video_job(job_id: str, payload: Dict[str, Any]) -> None:
                     output=final_video,
                 )
             else:
+                # بدون صوت — نسخ فقط
                 shutil.copy(with_text, final_video)
 
             # ═══ 6. ارفع إلى Supabase ═══
@@ -4466,6 +4510,18 @@ async def _add_property_text_overlays(
     tmp_dir: Path,
 ) -> None:
     """يضيف النصوص العربية على الفيديو."""
+
+    # ✅ إذا كل الخيارات معطّلة → تخطَّ
+    if not any([
+        payload.get("show_price", True),
+        payload.get("show_location", True),
+        payload.get("show_area", True),
+        payload.get("show_contact", True),
+    ]):
+        _diag("📝 All text overlays disabled — skipping")
+        shutil.copy(input_video, output)
+        return
+
     font = _find_arabic_font()
     if not font:
         _diag("⚠️ No Arabic font found — skipping text overlays")
