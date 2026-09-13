@@ -50,15 +50,15 @@
 <!-- ====== بيانات المشروع (تُمرَّر إلى JS) ====== -->
 <script id="timeline-config" type="application/json">
 {
-    "projectId": "{{ project.id }}",
-    "userId": "{{ current_user.id if current_user else '' }}",
-    "userEmail": "{{ current_user.email if current_user else '' }}",
+    "projectId": {{ project.id | tojson }},
+    "userId": {{ (current_user.id if current_user else '') | tojson }},
+    "userEmail": {{ (current_user.email if current_user else '') | tojson }},
     "scenes": {{ scenes_json | safe }},
-    "voiceoverClips": {{ voiceover_clips | tojson | safe if voiceover_clips else '[]' }},
-    "savedVoices": {{ saved_voices | tojson | safe if saved_voices else '[]' }},
-    "elevenlabsConfigured": {{ 'true' if elevenlabs_configured else 'false' }},
-    "didConfigured": {{ 'true' if did_configured else 'false' }},
-    "edgeTtsEnabled": {{ 'true' if edge_tts_enabled else 'false' }}
+    "voiceoverClips": {{ (voiceover_clips or []) | tojson | safe }},
+    "savedVoices": {{ (saved_voices or []) | tojson | safe }},
+    "elevenlabsConfigured": {{ (elevenlabs_configured | default(false)) | tojson }},
+    "didConfigured": {{ (did_configured | default(false)) | tojson }},
+    "edgeTtsEnabled": {{ (edge_tts_enabled | default(false)) | tojson }}
 }
 </script>
 
@@ -178,6 +178,7 @@
             <button class="tool-btn" onclick="addClip('audio')" title="إضافة صوت">🎤</button>
             <button class="tool-btn" onclick="addClip('text')" title="إضافة نص">📝</button>
             <button class="tool-btn" onclick="openVoiceoverStudio()" title="الاستوديو الصوتي (نص + صوت)">🎙️✨</button>
+            <button class="tool-btn" onclick="openPropertyVideoStudio()" title="مولّد فيديو العقارات (صور → فيديو)">🏠✨</button>
         </div>
 
         <div class="toolbar-group">
@@ -715,6 +716,254 @@
 </div>
 
 <!-- ============================================================ -->
+<!-- 🏠 نافذة مولّد فيديو العقارات -->
+<!-- ============================================================ -->
+<div id="propertyVideoModal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+    <div class="bg-slate-800 rounded-xl p-6 max-w-3xl w-full border border-slate-700 max-h-[90vh] overflow-y-auto">
+
+        <!-- Header -->
+        <div class="flex justify-between items-center mb-4">
+            <h3 class="text-white text-lg font-semibold">🏠 مولّد فيديو العقارات</h3>
+            <button onclick="closePropertyVideoStudio()" class="text-slate-400 hover:text-white text-xl">✕</button>
+        </div>
+
+        <!-- الشرح -->
+        <div class="voice-clone-tip">
+            <div class="voice-clone-tip-title">✨ كيف تعمل الميزة؟</div>
+            <div class="voice-clone-tip-text">
+                <strong>1.</strong> ارفع صور العقار (أرض، فيلا، شقة، مبنى، صالة...)<br>
+                <strong>2.</strong> أدخل التفاصيل (السعر، الموقع، المساحة، الميزات)<br>
+                <strong>3.</strong> اختر صوت التعليق (Edge TTS — عربي)<br>
+                <strong>4.</strong> النظام 🎬 يُنتج فيديو عمودي 9:16 جاهز للنشر
+                <br><small style="color:#94a3b8;margin-top:6px;display:block;">
+                    💡 كل صورة تحصل على حركة تلقائية (Pan / Zoom / Cinematic) حسب أبعادها
+                </small>
+            </div>
+        </div>
+
+        <!-- ═══════════ قسم 1: نوع العقار ═══════════ -->
+        <div class="mb-5">
+            <div class="flex items-center gap-2 mb-2">
+                <span class="badge-step">1</span>
+                <h4 class="text-white font-semibold text-sm">🏘️ نوع العقار</h4>
+            </div>
+            <div class="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                <label class="cursor-pointer">
+                    <input type="radio" name="propType" value="land" class="hidden peer">
+                    <div class="peer-checked:bg-amber-600 peer-checked:text-white bg-slate-700 text-slate-300 rounded-lg p-2 text-center text-xs transition">🌍<br>أرض</div>
+                </label>
+                <label class="cursor-pointer">
+                    <input type="radio" name="propType" value="villa" class="hidden peer">
+                    <div class="peer-checked:bg-emerald-600 peer-checked:text-white bg-slate-700 text-slate-300 rounded-lg p-2 text-center text-xs transition">🏡<br>فيلا</div>
+                </label>
+                <label class="cursor-pointer">
+                    <input type="radio" name="propType" value="apartment" checked class="hidden peer">
+                    <div class="peer-checked:bg-blue-600 peer-checked:text-white bg-slate-700 text-slate-300 rounded-lg p-2 text-center text-xs transition">🏢<br>شقة</div>
+                </label>
+                <label class="cursor-pointer">
+                    <input type="radio" name="propType" value="building" class="hidden peer">
+                    <div class="peer-checked:bg-purple-600 peer-checked:text-white bg-slate-700 text-slate-300 rounded-lg p-2 text-center text-xs transition">🏗️<br>مبنى</div>
+                </label>
+                <label class="cursor-pointer">
+                    <input type="radio" name="propType" value="facade" class="hidden peer">
+                    <div class="peer-checked:bg-pink-600 peer-checked:text-white bg-slate-700 text-slate-300 rounded-lg p-2 text-center text-xs transition">🏛️<br>واجهة</div>
+                </label>
+                <label class="cursor-pointer">
+                    <input type="radio" name="propType" value="room" class="hidden peer">
+                    <div class="peer-checked:bg-cyan-600 peer-checked:text-white bg-slate-700 text-slate-300 rounded-lg p-2 text-center text-xs transition">🛏️<br>غرفة</div>
+                </label>
+                <label class="cursor-pointer">
+                    <input type="radio" name="propType" value="hall" class="hidden peer">
+                    <div class="peer-checked:bg-orange-600 peer-checked:text-white bg-slate-700 text-slate-300 rounded-lg p-2 text-center text-xs transition">🛋️<br>صالة</div>
+                </label>
+                <label class="cursor-pointer">
+                    <input type="radio" name="propType" value="street" class="hidden peer">
+                    <div class="peer-checked:bg-slate-500 peer-checked:text-white bg-slate-700 text-slate-300 rounded-lg p-2 text-center text-xs transition">📍<br>موقع</div>
+                </label>
+            </div>
+        </div>
+
+        <!-- ═══════════ قسم 2: الصور ═══════════ -->
+        <div class="mb-5">
+            <div class="flex items-center justify-between mb-2">
+                <div class="flex items-center gap-2">
+                    <span class="badge-step">2</span>
+                    <h4 class="text-white font-semibold text-sm">🖼️ صور العقار</h4>
+                </div>
+                <button onclick="clearAllPropertyImages()" class="text-xs text-red-400 hover:text-red-300">
+                    🗑️ مسح الكل
+                </button>
+            </div>
+
+            <input type="file" id="propertyImagesInput" accept="image/*" multiple class="hidden"
+                   onchange="handlePropertyImages(event)">
+
+            <div id="propertyImagesDropZone"
+                 class="border-2 border-dashed border-slate-600 rounded-lg p-6 text-center cursor-pointer hover:border-blue-500 transition"
+                 onclick="document.getElementById('propertyImagesInput').click()">
+                <div style="font-size:32px;">📸</div>
+                <div class="text-slate-400 text-sm mt-2">اسحب الصور هنا أو انقر للاختيار</div>
+                <div class="text-xs text-slate-500 mt-1">يدعم JPG, PNG, WEBP — حتى 20 صورة (10MB لكل صورة)</div>
+            </div>
+
+            <div id="propertyImagesPreview" class="mt-3 grid grid-cols-4 gap-2"></div>
+            <div id="propertyImagesCount" class="text-xs text-slate-400 mt-2"></div>
+        </div>
+
+        <!-- ═══════════ قسم 3: التفاصيل ═══════════ -->
+        <div class="mb-5">
+            <div class="flex items-center gap-2 mb-2">
+                <span class="badge-step">3</span>
+                <h4 class="text-white font-semibold text-sm">📝 تفاصيل العقار</h4>
+            </div>
+
+            <div class="grid grid-cols-2 gap-3">
+                <div class="col-span-2">
+                    <label class="text-slate-400 text-xs">العنوان</label>
+                    <input type="text" id="propTitle" placeholder="فيلا فاخرة في حي النرجس"
+                           class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-white text-sm mt-1">
+                </div>
+
+                <div>
+                    <label class="text-slate-400 text-xs">السعر</label>
+                    <input type="number" id="propPrice" placeholder="850000"
+                           class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-white text-sm mt-1">
+                </div>
+
+                <div>
+                    <label class="text-slate-400 text-xs">العملة</label>
+                    <select id="propCurrency" class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-white text-sm mt-1">
+                        <option value="SAR">ريال سعودي</option>
+                        <option value="AED">درهم إماراتي</option>
+                        <option value="EGP">جنيه مصري</option>
+                        <option value="USD">دولار</option>
+                    </select>
+                </div>
+
+                <div>
+                    <label class="text-slate-400 text-xs">المدينة</label>
+                    <input type="text" id="propCity" placeholder="الرياض"
+                           class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-white text-sm mt-1">
+                </div>
+
+                <div>
+                    <label class="text-slate-400 text-xs">الحي</label>
+                    <input type="text" id="propDistrict" placeholder="النرجس"
+                           class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-white text-sm mt-1">
+                </div>
+
+                <div>
+                    <label class="text-slate-400 text-xs">المساحة (م²)</label>
+                    <input type="number" id="propArea" placeholder="350"
+                           class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-white text-sm mt-1">
+                </div>
+
+                <div>
+                    <label class="text-slate-400 text-xs">غرف النوم</label>
+                    <input type="number" id="propBedrooms" placeholder="5"
+                           class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-white text-sm mt-1">
+                </div>
+
+                <div>
+                    <label class="text-slate-400 text-xs">الحمامات</label>
+                    <input type="number" id="propBathrooms" placeholder="4"
+                           class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-white text-sm mt-1">
+                </div>
+
+                <div>
+                    <label class="text-slate-400 text-xs">واتساب / جوال</label>
+                    <input type="text" id="propWhatsapp" placeholder="+966501234567" dir="ltr"
+                           class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-white text-sm mt-1">
+                </div>
+
+                <div class="col-span-2">
+                    <label class="text-slate-400 text-xs">الميزات (افصل بفاصلة)</label>
+                    <input type="text" id="propFeatures" placeholder="مسبح، حديقة، مصعد، موقف سيارات"
+                           class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-white text-sm mt-1">
+                </div>
+            </div>
+        </div>
+
+        <!-- ═══════════ قسم 4: إعدادات الفيديو ═══════════ -->
+        <div class="mb-5">
+            <div class="flex items-center gap-2 mb-2">
+                <span class="badge-step">4</span>
+                <h4 class="text-white font-semibold text-sm">⚙️ إعدادات الفيديو</h4>
+            </div>
+
+            <div class="grid grid-cols-2 gap-3">
+                <div>
+                    <label class="text-slate-400 text-xs">مدة كل صورة (ث)</label>
+                    <input type="number" id="propDurationPerImage" value="4.5" step="0.5" min="2" max="10"
+                           class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-white text-sm mt-1">
+                </div>
+
+                <div>
+                    <label class="text-slate-400 text-xs">الأسلوب</label>
+                    <select id="propStyle" class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-white text-sm mt-1">
+                        <option value="modern">عصري</option>
+                        <option value="luxury">فاخر</option>
+                        <option value="warm">دافئ</option>
+                        <option value="minimal">بسيط</option>
+                        <option value="investment">استثماري</option>
+                    </select>
+                </div>
+
+                <div>
+                    <label class="text-slate-400 text-xs">صوت التعليق</label>
+                    <select id="propVoice" class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-white text-sm mt-1">
+                        <option value="ar-SA-HamedNeural">🇸🇦 حامد (سعودي)</option>
+                        <option value="ar-EG-ShakirNeural">🇪🇬 شاكر (مصري)</option>
+                        <option value="ar-AE-HamdanNeural">🇦🇪 حمدان (إماراتي)</option>
+                        <option value="ar-MA-JamalNeural">🇲🇦 جمال (مغربي)</option>
+                    </select>
+                </div>
+
+                <div>
+                    <label class="text-slate-400 text-xs">عناصر تظهر</label>
+                    <div class="flex flex-wrap gap-2 mt-1">
+                        <label class="flex items-center gap-1 text-xs text-slate-300 cursor-pointer">
+                            <input type="checkbox" id="propShowPrice" checked> السعر
+                        </label>
+                        <label class="flex items-center gap-1 text-xs text-slate-300 cursor-pointer">
+                            <input type="checkbox" id="propShowLocation" checked> الموقع
+                        </label>
+                        <label class="flex items-center gap-1 text-xs text-slate-300 cursor-pointer">
+                            <input type="checkbox" id="propShowArea" checked> المساحة
+                        </label>
+                        <label class="flex items-center gap-1 text-xs text-slate-300 cursor-pointer">
+                            <input type="checkbox" id="propShowContact" checked> التواصل
+                        </label>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ═══════════ قسم 5: التوليد ═══════════ -->
+        <div class="mb-5">
+            <button id="btnGeneratePropertyVideo" onclick="generatePropertyVideo()"
+                    class="btn-primary btn-sm w-full">
+                🎬 توليد الفيديو العقاري
+            </button>
+
+            <div id="propertyVideoProgress" class="mt-3" style="display:none;">
+                <div class="render-progress-bar">
+                    <div class="fill" id="propertyVideoProgressFill" style="width:0%;"></div>
+                </div>
+                <div id="propertyVideoStage" class="text-xs text-slate-400 mt-2"></div>
+            </div>
+
+            <div id="propertyVideoStatus" class="mt-3 text-xs"></div>
+        </div>
+
+        <!-- إغلاق -->
+        <div class="flex justify-end gap-2 pt-4 border-t border-slate-700">
+            <button onclick="closePropertyVideoStudio()" class="btn-secondary btn-sm">إغلاق</button>
+        </div>
+    </div>
+</div>
+
+<!-- ============================================================ -->
 <!-- 🎚️ نافذة معالجة الصوت -->
 <!-- ============================================================ -->
 <div id="syncProcessModal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
@@ -874,5 +1123,6 @@ document.addEventListener('DOMContentLoaded', () => {
 <script src="{{ url_for('static', path='js/timeline-playback.js') }}"></script>
 <!-- ❌ حُذف timeline-video.js — تم دمجه في timeline-playback.js -->
 <script src="{{ url_for('static', path='js/voiceover.js') }}"></script>
+<script src="{{ url_for('static', path='js/property-video.js') }}"></script>
 <script src="{{ url_for('static', path='js/timeline-init.js') }}"></script>
 {% endblock %}
