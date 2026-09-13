@@ -1,5 +1,8 @@
 // ============================================================
 //  timeline-timeline.js — التايم لاين + الكليبس + السحب
+//  ✅ FIXED: url || src || content للفيديو
+//  ✅ FIXED: drawVideoFrame يقبل srcOverride
+//  ✅ FIXED: renderPreview يتحقق من src
 // ============================================================
 
 // ============================================================
@@ -8,9 +11,14 @@
 function renderPreview(time) {
     if (!isCanvasReady || !ctx) return;
 
-    // ✅ إذا كان هناك فيديو نشط في المعاينة، الفيديو يحل مكان الـ canvas
+    // ✅ FIXED: تحقق من الفيديو بشكل أعمق
     const videoEl = document.getElementById('previewVideo');
-    if (videoEl && videoEl.style.display === 'block') {
+    const videoIsActive = videoEl && 
+                          videoEl.style.display === 'block' && 
+                          videoEl.src && 
+                          videoEl.readyState >= 1;
+    
+    if (videoIsActive) {
         document.getElementById('currentTimeDisplay').textContent = formatTime(time);
         document.getElementById('totalTimeDisplay').textContent = formatTime(projectData.totalDuration);
         const slider = document.getElementById('seekSlider');
@@ -49,8 +57,10 @@ function renderPreview(time) {
 
             if (clip.type === 'image' && clip.content) {
                 drawImageOnly(ctx, clip.content, x, y, w, h);
-            } else if (clip.type === 'video' && clip.content) {
-                drawVideoFrame(ctx, clip, x, y, w, h, time);
+            } else if (clip.type === 'video') {
+                // ✅ FIXED: استخدم url || src || content
+                const videoSrc = clip.url || clip.src || clip.content;
+                drawVideoFrame(ctx, clip, x, y, w, h, time, videoSrc);
             } else if (clip.type === 'audio') {
                 drawAudioIndicator(ctx, x, y);
             } else if (clip.type === 'text' && clip.content) {
@@ -130,8 +140,23 @@ function drawImageOnly(ctx, src, x, y, w, h) {
     ctx.restore();
 }
 
-function drawVideoFrame(ctx, clip, x, y, w, h, time) {
-    const src = clip.content;
+// ✅ FIXED: يقبل srcOverride
+function drawVideoFrame(ctx, clip, x, y, w, h, time, srcOverride = null) {
+    const src = srcOverride || clip.url || clip.src || clip.content;
+
+    if (!src) {
+        ctx.fillStyle = 'rgba(0,0,0,0.7)';
+        ctx.fillRect(x - w/4, y - h/4, w/2, h/2);
+        ctx.fillStyle = 'rgba(255,255,255,0.3)';
+        ctx.font = '40px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('🎬', x, y - 5);
+        ctx.font = '12px sans-serif';
+        ctx.fillStyle = 'rgba(255,255,255,0.4)';
+        ctx.fillText('لا يوجد مصدر', x, y + 30);
+        return;
+    }
 
     if (!videoElements[src]) {
         const video = document.createElement('video');
@@ -503,10 +528,12 @@ function renderTimeline() {
             const durationStr = formatTime(clip.duration);
 
             let thumbContent = '';
-            if (clip.type === 'image' && clip.content) {
-                thumbContent = `<img src="${clip.content}" alt="${clip.title}" loading="lazy">`;
-            } else if (clip.type === 'video' && clip.content) {
-                thumbContent = `<video src="${clip.content}" muted preload="metadata"></video>`;
+            // ✅ FIXED: استخدم url || src || content
+            const clipSrc = clip.url || clip.src || clip.content;
+            if (clip.type === 'image' && clipSrc) {
+                thumbContent = `<img src="${clipSrc}" alt="${clip.title}" loading="lazy">`;
+            } else if (clip.type === 'video' && clipSrc) {
+                thumbContent = `<video src="${clipSrc}" muted preload="metadata"></video>`;
             } else {
                 thumbContent = clip.icon || '📄';
             }
@@ -734,6 +761,8 @@ function addClip(type) {
             duration: 2,
             title: text.slice(0, 18),
             content: text,
+            url: null,
+            src: null,
             color: COLORS.text,
             icon: '📝',
             metadata: {}
