@@ -203,6 +203,26 @@ async def _get_audio_duration(file_path: Path) -> float:
         return 0.0
 
 
+# ✅ NEW: استخراج مدة الفيديو
+async def _get_video_duration(file_path: Path) -> float:
+    """احسب مدة ملف فيديو باستخدام ffprobe."""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "ffprobe", "-v", "error",
+            "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+            str(file_path),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await proc.communicate()
+        duration = float(stdout.decode().strip() or 0)
+        return duration
+    except Exception as e:
+        logger.warning(f"ffprobe video failed: {e}")
+        return 0.0
+
+
 async def _upload_voiceover_to_storage(
     local_path: Path,
     project_id: str,
@@ -2280,6 +2300,7 @@ async def generate_talking_head(
         )
 
 
+# ✅ FIXED: استخراج المدة الحقيقية عند اكتمال الفيديو
 @router.get("/api/talking-head/status/{talk_id}")
 async def get_talking_head_status(talk_id: str):
     try:
@@ -2294,11 +2315,32 @@ async def get_talking_head_status(talk_id: str):
         status = data.get("status", "unknown")
         result_url = data.get("result_url")
         error = data.get("error")
+        duration = data.get("duration")
+
+        # ✅ إذا اكتمل الفيديو ولا توجد مدة، استخرجها من الرابط
+        if status == "done" and result_url and not duration:
+            try:
+                import httpx
+                _diag(f"⏱️ Probing duration for {talk_id}...")
+
+                # نزّل جزء صغير من الفيديو لقراءة الـ metadata
+                async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
+                    headers = {"Range": "bytes=0-3145728"}  # أول 3MB
+                    r = await client.get(result_url, headers=headers)
+                    if r.status_code in (200, 206):
+                        tmp = Path(tempfile.gettempdir()) / f"probe_{talk_id}.mp4"
+                        tmp.write_bytes(r.content)
+                        duration = await _get_video_duration(tmp)
+                        tmp.unlink(missing_ok=True)
+                        _diag(f"✅ Duration extracted: {duration:.2f}s")
+            except Exception as e:
+                _diag_err(f"⚠️ Failed to probe duration: {e}", e)
 
         if talk_id in TALKING_HEAD_JOBS:
             TALKING_HEAD_JOBS[talk_id].update({
                 "status": status,
                 "result_url": result_url,
+                "duration": duration,
                 "error": error,
             })
 
@@ -2307,6 +2349,7 @@ async def get_talking_head_status(talk_id: str):
             "talk_id": talk_id,
             "status": status,
             "result_url": result_url,
+            "duration": duration,  # ✅ المدة الحقيقية
             "error": error,
         }
 
@@ -2320,12 +2363,21 @@ async def get_talking_head_status(talk_id: str):
         )
 
 
+# ✅ FIXED: تنزيل الفيديو + رفعه إلى Supabase + استخراج المدة الحقيقية
 @router.post("/api/talking-head/save/{project_id}")
 async def save_talking_head_to_project(
     project_id: str,
     payload: Dict[str, Any],
     session: AsyncSession = Depends(get_db),
 ):
+    """
+    🎭 حفظ Talking Head في المشروع.
+
+    ⚠️ مهم: ننزّل الفيديو من D-ID أولاً، نرفعه إلى Supabase،
+    ثم نحفظ الرابط الدائم + المدة الحقيقية.
+    """
+    import httpx
+
     try:
         project_uuid = uuid.UUID(project_id)
     except ValueError:
@@ -2336,10 +2388,90 @@ async def save_talking_head_to_project(
     if not project:
         return JSONResponse({"error": "Project not found"}, status_code=404)
 
-    video_url = payload.get("video_url")
-    if not video_url:
+    # ═══════════════════════════════════════════════════════════
+    # 1. احصل على رابط D-ID المؤقت
+    # ═══════════════════════════════════════════════════════════
+    source_url = payload.get("video_url") or payload.get("result_url")
+    if not source_url:
         return JSONResponse({"error": "video_url مطلوب"}, status_code=400)
 
+    _diag(f"📥 Saving talking head: {source_url[:100]}...")
+
+    # ═══════════════════════════════════════════════════════════
+    # 2. نزّل الفيديو من D-ID
+    # ═══════════════════════════════════════════════════════════
+    video_bytes = None
+    local_video_path = None
+
+    try:
+        _diag("⬇️ Downloading video from D-ID...")
+        async with httpx.AsyncClient(timeout=300.0, follow_redirects=True) as client:
+            r = await client.get(source_url)
+            if r.status_code != 200:
+                raise RuntimeError(f"Download failed: HTTP {r.status_code}")
+            video_bytes = r.content
+            _diag(f"✅ Downloaded: {len(video_bytes) / 1024 / 1024:.2f} MB")
+    except Exception as e:
+        _diag_err(f"❌ Failed to download video: {e}", e)
+        return JSONResponse(
+            {"success": False, "error": f"فشل تنزيل الفيديو من D-ID: {e}"},
+            status_code=502,
+        )
+
+    if not video_bytes or len(video_bytes) < 10000:
+        return JSONResponse(
+            {"success": False, "error": "الفيديو المُنزَّل فارغ أو تالف"},
+            status_code=502,
+        )
+
+    # ═══════════════════════════════════════════════════════════
+    # 3. احفظ محليًا مؤقتًا + استخرج المدة الحقيقية
+    # ═══════════════════════════════════════════════════════════
+    unique = uuid.uuid4().hex[:12]
+    local_tmp = Path(tempfile.gettempdir()) / f"talking_head_{unique}.mp4"
+    local_tmp.write_bytes(video_bytes)
+    local_video_path = local_tmp
+
+    real_duration = await _get_video_duration(local_tmp)
+    _diag(f"⏱️ Real duration: {real_duration:.2f}s")
+
+    # ═══════════════════════════════════════════════════════════
+    # 4. ارفع الفيديو إلى Supabase (رابط دائم)
+    # ═══════════════════════════════════════════════════════════
+    permanent_url = None
+    remote_path = None
+
+    if settings.supabase_configured:
+        try:
+            from application.services.production_service import (
+                _upload_to_supabase, _build_public_url,
+            )
+
+            storage = SupabaseStorageAdapter()
+            remote_path = f"talking_heads/{project_id}/{unique}.mp4"
+
+            await _upload_to_supabase(
+                storage=storage,
+                local_path=local_tmp,
+                remote_path=remote_path,
+                content_type="video/mp4",
+            )
+            permanent_url = await _build_public_url(storage, remote_path)
+            _diag(f"✅ Uploaded to Supabase: {permanent_url[:80]}...")
+        except Exception as e:
+            _diag_err(f"⚠️ Supabase upload failed: {e}", e)
+
+    # Fallback: احفظ محليًا
+    if not permanent_url:
+        local_dest = TALKING_HEADS_DIR / f"{project_id}_{unique}.mp4"
+        local_dest.write_bytes(video_bytes)
+        permanent_url = f"/static/media/talking_heads/{local_dest.name}"
+        remote_path = str(local_dest)
+        _diag(f"⚠️ Using local fallback: {permanent_url}")
+
+    # ═══════════════════════════════════════════════════════════
+    # 5. احفظ الـ clip مع الرابط الدائم + المدة الحقيقية
+    # ═══════════════════════════════════════════════════════════
     data = getattr(project, "data", None) or {}
     clips = data.get("clips", []) or []
 
@@ -2349,9 +2481,11 @@ async def save_talking_head_to_project(
         "id": clip_id,
         "type": "video",
         "title": payload.get("title", "Talking Head"),
-        "url": video_url,
+        "url": permanent_url,              # ✅ رابط دائم
+        "src": permanent_url,              # ✅ للتوافق مع الـ frontend
+        "path": remote_path,
         "start": payload.get("start", 0),
-        "duration": payload.get("duration", 5),
+        "duration": real_duration,         # ✅ المدة الحقيقية
         "source": "talking_head",
         "text": payload.get("text", ""),
         "voice_id": payload.get("voice_id"),
@@ -2370,10 +2504,16 @@ async def save_talking_head_to_project(
         await repo.save(project)
     await session.commit()
 
+    # نظّف الملف المؤقت
+    if local_video_path and local_video_path.exists():
+        local_video_path.unlink(missing_ok=True)
+
+    _diag(f"✅ Talking head saved: {clip_id} ({real_duration:.2f}s)")
+
     return {
         "success": True,
         "clip": new_clip,
-        "message": "✅ تم الحفظ",
+        "message": "✅ تم الحفظ مع الرابط الدائم والمدة الحقيقية",
     }
 
 
