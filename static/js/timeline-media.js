@@ -363,3 +363,171 @@ function moveLayer(direction) {
     renderTimeline();
     saveProjectData();
 }
+
+// ============================================================
+//  ADD CLIP FROM URL — للفيديوهات المولّدة (Talking Head / Property)
+// ============================================================
+
+/**
+ * تضيف clip مباشرة من URL خارجي (Supabase أو أي رابط https)
+ * بدون الحاجة إلى إضافته إلى mediaFiles أولاً.
+ *
+ * @param {string} url       - رابط الملف (https://... أو /static/media/...)
+ * @param {Object} options   - خيارات إضافية
+ * @param {string} options.type        - 'video' | 'audio' | 'image' (افتراضي: مستخلص من الامتداد)
+ * @param {string} options.title       - العنوان (افتراضي: مستخلص من URL)
+ * @param {number} options.duration    - المدة بالثواني (افتراضي: حسب النوع)
+ * @param {number} options.start       - وقت البداية (افتراضي: findNextInsertPoint)
+ * @param {number} options.layer       - الطبقة (افتراضي: selectedLayerIndex)
+ * @param {Object} options.metadata    - بيانات إضافية
+ * @param {boolean} options.autoAddToGallery - أضف أيضاً إلى mediaFiles (افتراضي: true)
+ * @param {boolean} options.autoPlay   - حرّك المؤشر إلى نهاية الـ clip (افتراضي: true)
+ *
+ * @returns {Object|null} - الـ clip المُضاف أو null عند الفشل
+ */
+function addClipFromUrl(url, options = {}) {
+    if (!url || typeof url !== 'string') {
+        console.warn('addClipFromUrl: url مطلوب');
+        return null;
+    }
+
+    // ── استخراج الامتداد لتحديد النوع ──
+    const urlPath = url.split('?')[0];
+    const ext = urlPath.split('.').pop().toLowerCase();
+
+    const extToType = {
+        mp4: 'video', mov: 'video', webm: 'video', mkv: 'video', avi: 'video',
+        mp3: 'audio', wav: 'audio', ogg: 'audio', m4a: 'audio', aac: 'audio',
+        jpg: 'image', jpeg: 'image', png: 'image', gif: 'image', webp: 'image', bmp: 'image',
+    };
+
+    const type = options.type || extToType[ext] || 'video';
+
+    // ── المدة الافتراضية حسب النوع ──
+    const defaultDurations = {
+        video: 5,
+        audio: 3,
+        image: 3,
+    };
+    const duration = options.duration || defaultDurations[type] || 3;
+
+    // ── وقت البداية ──
+    const layerIndex = (typeof options.layer === 'number')
+        ? options.layer
+        : (typeof selectedLayerIndex === 'number' ? selectedLayerIndex : 0);
+
+    const startTime = (typeof options.start === 'number')
+        ? options.start
+        : findNextInsertPoint(layerIndex, currentTime);
+
+    // ── العنوان ──
+    let title = options.title;
+    if (!title) {
+        const fileName = urlPath.split('/').pop() || 'clip';
+        title = decodeURIComponent(fileName.split('.')[0]).slice(0, 18);
+    }
+
+    // ── إنشاء الـ clip ──
+    const clip = {
+        id: clipIdCounter++,
+        type: type,
+        layer: layerIndex,
+        start: startTime,
+        duration: duration,
+        title: title,
+        content: url,
+        color: COLORS[type] || '#666',
+        icon: TYPE_ICONS[type] || '📄',
+        metadata: Object.assign({
+            source: 'url',
+            url: url,
+            addedAt: new Date().toISOString(),
+        }, options.metadata || {}),
+    };
+
+    projectData.clips.push(clip);
+
+    // ── أضف إلى mediaFiles أيضاً (حتى يظهر في المعرض) ──
+    if (options.autoAddToGallery !== false) {
+        const exists = projectData.mediaFiles.some(f => f.url === url);
+        if (!exists) {
+            projectData.mediaFiles.push({
+                name: title + '.' + ext,
+                size: 0,
+                type: type + '/' + ext,
+                url: url,
+            });
+        }
+    }
+
+    // ── تحديث الواجهة ──
+    updateTotalDuration();
+    renderTimeline();
+    renderMediaGallery();
+    renderLayers();
+    updateStatus();
+
+    // ── تحريك المؤشر ──
+    if (options.autoPlay !== false) {
+        currentTime = clip.start + clip.duration;
+        updatePlayhead();
+        renderPreview(currentTime);
+
+        const scroll = document.getElementById('timelineContainer');
+        if (scroll) {
+            const pxPerSec = projectData.cellWidth / 2;
+            const playheadX = currentTime * pxPerSec + 60;
+            if (playheadX > scroll.scrollLeft + scroll.clientWidth - 120) {
+                scroll.scrollLeft = playheadX - scroll.clientWidth + 120;
+            }
+        }
+    }
+
+    // ── حفظ ──
+    if (typeof saveProjectData === 'function') {
+        saveProjectData();
+    }
+
+    if (typeof showToast === 'function') {
+        showToast(
+            `✅ تم إضافة ${title} — ${formatTime(clip.start)} → ${formatTime(clip.start + clip.duration)}`,
+            'success'
+        );
+    }
+
+    return clip;
+}
+
+
+/**
+ * تُضيف فيديو/صوت مولّد إلى الـ timeline من endpoint خارجي.
+ * Wrapper بسيط حول addClipFromUrl مع قيم افتراضية مناسبة للمحتوى المولّد.
+ *
+ * @param {string} url
+ * @param {Object} meta - بيانات إضافية (title, duration, source, ...)
+ */
+function addGeneratedClip(url, meta = {}) {
+    return addClipFromUrl(url, Object.assign({
+        autoAddToGallery: true,
+        autoPlay: true,
+    }, meta));
+}
+
+
+/**
+ * تُضيف صورة من رابط (مولّدة أو مرفوعة).
+ */
+function addImageFromUrl(url, options = {}) {
+    return addClipFromUrl(url, Object.assign({
+        type: 'image',
+        duration: 3,
+    }, options));
+}
+
+
+// ============================================================
+//  EXPORT — اجعلها متاحة عالمياً
+// ============================================================
+window.addClipFromUrl = addClipFromUrl;
+window.addGeneratedClip = addGeneratedClip;
+window.addImageFromUrl = addImageFromUrl;
