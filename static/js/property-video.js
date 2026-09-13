@@ -7,6 +7,8 @@
 //     - معاينة الفيديو بعد الرندر
 //     - خيارات: تنزيل / إضافة للتايم لاين / فيديو جديد
 //     - إزالة الإضافة التلقائية للتايم لاين
+//     - خيار تفعيل/تعطيل التعليق الصوتي (checkbox)
+//     - خيار تفعيل/تعطيل النصوص (checkbox)
 // ============================================================
 
 (function () {
@@ -172,7 +174,7 @@
     }
 
     // ────────────────────────────────────────────────────────
-    //  ✅ NEW: إضافة صور عبر روابط URL
+    //  إضافة صور عبر روابط URL
     // ────────────────────────────────────────────────────────
     window.addPropertyImagesFromUrls = function () {
         const input = $id('propertyImageUrlsInput');
@@ -205,8 +207,8 @@
                 break;
             }
 
-            // ✅ تحقق من الرابط
-            if (!/^https?:\/\/.+\.(jpg|jpeg|png|webp|gif|bmp)(\?.*)?$/i.test(url)) {
+            // ✅ تحقق من الرابط (يقبل https://... حتى بدون امتداد صورة صريح)
+            if (!/^https?:\/\/.+/i.test(url)) {
                 safeToast(`⚠️ رابط غير صالح: ${url.slice(0, 40)}...`, 'warning');
                 failed++;
                 continue;
@@ -429,6 +431,10 @@
             .map(s => s.trim())
             .filter(Boolean);
 
+        // ✅ خيارات التفعيل
+        const voiceoverEnabled = $id('propVoiceoverEnabled')?.checked !== false;
+        const overlaysEnabled = $id('propOverlaysEnabled')?.checked !== false;
+
         const payload = {
             project_id: projectId,
             title: ($id('propTitle')?.value || '').trim(),
@@ -448,11 +454,16 @@
                 motion: i.motion || 'auto',
             })),
             duration_per_image: parseFloat($id('propDurationPerImage')?.value) || 4.5,
+
+            // ✅ خيار التعليق الصوتي
+            voiceover_enabled: voiceoverEnabled,
             voiceover_voice: $id('propVoice')?.value || 'ar-SA-HamedNeural',
-            show_price: $id('propShowPrice')?.checked !== false,
-            show_location: $id('propShowLocation')?.checked !== false,
-            show_area: $id('propShowArea')?.checked !== false,
-            show_contact: $id('propShowContact')?.checked !== false,
+
+            // ✅ خيار النصوص — إذا عُطّلت، كل show_* = false
+            show_price: overlaysEnabled && ($id('propShowPrice')?.checked !== false),
+            show_location: overlaysEnabled && ($id('propShowLocation')?.checked !== false),
+            show_area: overlaysEnabled && ($id('propShowArea')?.checked !== false),
+            show_contact: overlaysEnabled && ($id('propShowContact')?.checked !== false),
         };
 
         // ── UI: حالة الانتظار ──
@@ -554,7 +565,7 @@
     }
 
     // ────────────────────────────────────────────────────────
-    //  ✅ UPDATED: عند اكتمال الـ job — معاينة بدل الإضافة التلقائية
+    //  عند اكتمال الـ job — معاينة بدل الإضافة التلقائية
     // ────────────────────────────────────────────────────────
     async function handleJobCompleted(data) {
         // ✅ احفظ بيانات الفيديو في متغير عام للمعاينة
@@ -577,7 +588,7 @@
     }
 
     // ────────────────────────────────────────────────────────
-    //  ✅ NEW: معاينة الفيديو بعد الرندر
+    //  معاينة الفيديو بعد الرندر
     // ────────────────────────────────────────────────────────
     function showPropertyVideoPreview(data) {
         const container = $id('propertyVideoResult');
