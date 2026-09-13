@@ -244,7 +244,6 @@ async def _save_job_to_storage(job_id: str, data: Dict[str, Any]) -> None:
     يبقى بعد restart لأن Storage دائم.
     """
     try:
-        # احذف الحقول الثقيلة
         data_clean = {
             k: v for k, v in data.items()
             if k not in ("images", "image_urls", "raw_images", "_background_task")
@@ -319,7 +318,6 @@ async def _load_job_from_storage(job_id: str) -> Optional[Dict[str, Any]]:
             except Exception as e:
                 logger.warning(f"Supabase load job failed: {e}")
 
-        # Fallback إلى القرص المحلي
         return _load_job_from_disk(job_id)
 
     except Exception as e:
@@ -355,6 +353,42 @@ async def create_job_async(job_id: str, **initial) -> None:
     }
     TALKING_HEAD_JOBS[job_id] = job
     await _save_job_to_storage(job_id, job)
+
+
+def _compute_job_age_seconds(job: Dict[str, Any]) -> Optional[float]:
+    """
+    ✅ احسب عمر الـ job بالثواني.
+    يتعامل مع timestamps مع/بدون timezone.
+    """
+    updated = job.get("_updated_at") or job.get("created_at")
+    if not updated:
+        return None
+
+    try:
+        updated_str = str(updated)
+
+        # احذف Z النهائي
+        if updated_str.endswith("Z"):
+            updated_str = updated_str[:-1]
+
+        # احذف timezone إذا وُجد (+00:00 أو +03:00)
+        if "+" in updated_str:
+            updated_str = updated_str.split("+")[0]
+
+        # احذف timezone إذا وُجد (-00:00)
+        # (نتجاهل هذا لأنه نادر في حالتنا)
+
+        updated_dt = datetime.fromisoformat(updated_str)
+
+        # احسب الفرق — كلاهما naive
+        now_naive = datetime.utcnow()
+        age_seconds = (now_naive - updated_dt).total_seconds()
+
+        return age_seconds
+
+    except Exception as e:
+        logger.warning(f"Failed to compute job age: {e}")
+        return None
 
 
 async def _get_audio_duration(file_path: Path) -> float:
@@ -889,7 +923,6 @@ async def _upload_media_for_did(
     content_type: str,
 ) -> str:
     """ارفع ملف إلى خدمة عامة للحصول على رابط URL."""
-    # ── 1. جرّب Supabase ──
     if settings.supabase_configured:
         try:
             from application.services.production_service import (
@@ -921,7 +954,6 @@ async def _upload_media_for_did(
         except Exception as e:
             _diag_err(f"⚠️ Supabase upload failed: {e}", e)
 
-    # ── 2. جرّب Catbox ──
     try:
         _diag("🔄 Trying Catbox...")
         url = await _upload_to_catbox(content, filename)
@@ -930,7 +962,6 @@ async def _upload_media_for_did(
     except Exception as e:
         _diag_err(f"⚠️ Catbox failed: {e}", e)
 
-    # ── 3. جرّب tmpfiles.org ──
     try:
         _diag("🔄 Trying tmpfiles.org...")
         async with httpx.AsyncClient(timeout=60.0) as client:
@@ -3019,7 +3050,7 @@ async def add_voiceover_clip(
     payload: Dict[str, Any],
     session: AsyncSession = Depends(get_db),
 ):
-    """✅ إضافة clip صوتي للمشروع (تم إصلاح SyntaxError)."""
+    """✅ إضافة clip صوتي للمشروع."""
     try:
         project_uuid = uuid.UUID(project_id)
     except ValueError:
@@ -4045,7 +4076,7 @@ async def generate_property_video(
 
 
 # ─────────────────────────────────────────────────────────
-# حالة التوليد
+# حالة التوليد — ✅ إصلاح كشف jobs الميتة
 # ─────────────────────────────────────────────────────────
 
 @router.get("/api/property/status/{job_id}")
@@ -4062,23 +4093,27 @@ async def get_property_video_status(job_id: str):
             status_code=404,
         )
 
-    # ✅ إذا الـ job في حالة running/queued لكن قديم جداً (>5 دقائق)، اعتبره فشل
-    if job.get("status") in ("running", "queued"):
-        updated = job.get("_updated_at") or job.get("created_at")
-        if updated:
-            try:
-                updated_dt = datetime.fromisoformat(updated.replace("Z", "+00:00"))
-                age_seconds = (datetime.utcnow() - updated_dt.replace(tzinfo=None)).total_seconds()
-                if age_seconds > 300:
-                    _diag(f"⚠️ Job {job_id} قديم ({age_seconds:.0f}s) — mark as failed")
-                    await update_job_async(
-                        job_id,
-                        status="failed",
-                        error="انتهت المهمة (restart الخادم قبل الإكمال)",
-                    )
-                    job = await get_job_async(job_id)
-            except Exception:
-                pass
+    # ✅ كشف jobs الميتة (restart)
+    status_now = job.get("status")
+    if status_now in ("running", "queued", "created"):
+        age_seconds = _compute_job_age_seconds(job)
+
+        _diag(f"⏱️ Job {job_id}: status={status_now}, age={age_seconds}s")
+
+        # ✅ إذا تجاوز 5 دقائق، اعتبره فشل
+        if age_seconds is not None and age_seconds > 300:
+            _diag(f"⚠️ Job {job_id} ميت ({age_seconds:.0f}s) — mark as failed")
+
+            await update_job_async(
+                job_id,
+                status="failed",
+                error=f"انتهت المهمة (توقف الخادم قبل الإكمال بعد {int(age_seconds)}ث)",
+                progress=0.0,
+                stage="failed",
+            )
+
+            # اقرأ النسخة المُحدَّثة
+            job = await get_job_async(job_id)
 
     return {
         "success": True,
