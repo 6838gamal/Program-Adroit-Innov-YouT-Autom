@@ -1,6 +1,9 @@
 // ============================================================
 //  timeline-playback.js — التشغيل + الصوت + التسجيل + عرض الفيديو
-//  ✅ FIXED: تعارض مع voiceover.js، readyState، error handling
+//  ✅ FIXED: url || src || content للفيديو
+//  ✅ FIXED: readyState handling
+//  ✅ FIXED: error handling
+//  ✅ FIXED: intervalMs = 50
 // ============================================================
 
 // ============================================================
@@ -48,7 +51,7 @@ function startPlay() {
         v.play().catch(() => {});
     });
 
-    const intervalMs = 50;   // ✅ FIXED: 50ms بدلاً من 40ms
+    const intervalMs = 50;
     playInterval = setInterval(() => {
         if (isRecording) return;
         currentTime += (intervalMs / 1000) * playbackSpeed;
@@ -75,7 +78,7 @@ function startPlay() {
         }
         updatePlayhead();
         syncVideoPreview(currentTime);   // ✅ يعرض الفيديو
-        renderPreview(currentTime);      // ✅ لا يرسم إن كان هناك فيديو (تم تعديله)
+        renderPreview(currentTime);      // ✅ لا يرسم إن كان هناك فيديو
     }, intervalMs);
 }
 
@@ -112,6 +115,7 @@ function changeSpeed() {
     if (audioPlayer) audioPlayer.playbackRate = playbackSpeed;
     Object.values(videoElements).forEach(v => { v.playbackRate = playbackSpeed; });
 
+    // ✅ طبّق السرعة على فيديو المعاينة
     const previewVideo = document.getElementById('previewVideo');
     if (previewVideo) previewVideo.playbackRate = playbackSpeed;
 }
@@ -130,6 +134,7 @@ function toggleMute() {
         if (node.gain) node.gain.gain.value = isMuted ? 0 : 0.8;
     });
 
+    // ✅ طبّق الكتم على فيديو المعاينة
     const previewVideo = document.getElementById('previewVideo');
     if (previewVideo) previewVideo.muted = isMuted;
 }
@@ -180,7 +185,9 @@ function seekTo(time) {
 
 // ============================================================
 //  🎬 SYNC VIDEO PREVIEW — عرض الفيديو في المعاينة
-//  ✅ FIXED: readyState + error handling + source validation
+//  ✅ FIXED: url || src || content
+//  ✅ FIXED: readyState handling
+//  ✅ FIXED: error handling
 // ============================================================
 function syncVideoPreview(time) {
     const videoEl = document.getElementById('previewVideo');
@@ -215,9 +222,11 @@ function syncVideoPreview(time) {
         return;
     }
 
-    const videoSrc = activeClip.content || activeClip.url || activeClip.src;
+    // ✅ FIXED: استخدم url || src || content
+    const videoSrc = activeClip.url || activeClip.src || activeClip.content;
+
     if (!videoSrc) {
-        console.warn('⚠️ Video clip has no URL:', activeClip.id);
+        console.warn('⚠️ Video clip has no src:', activeClip.id, activeClip);
         return;
     }
 
@@ -232,7 +241,7 @@ function syncVideoPreview(time) {
         videoEl.playbackRate = playbackSpeed;
         videoEl.preload = 'auto';
 
-        // ✅ FIXED: معالج الأخطاء
+        // ✅ معالج الأخطاء
         videoEl.onerror = (e) => {
             console.error('❌ Video preview failed:', videoSrc, e);
             if (typeof showToast === 'function') {
@@ -266,7 +275,7 @@ function syncVideoPreview(time) {
             }
         };
 
-        // ✅ FIXED: إذا كان جاهزًا، اضبط مباشرة
+        // ✅ إذا كان جاهزًا، اضبط مباشرة
         if (videoEl.readyState >= 1) {
             seekAndPlay();
         } else {
@@ -296,7 +305,7 @@ function syncVideoPreview(time) {
 }
 
 // ============================================================
-//  SYNC AUDIO (كما هو)
+//  SYNC AUDIO
 // ============================================================
 function syncAudio(time) {
     if (Math.abs(time - lastAudioSyncTime) < 0.03) return;
@@ -413,7 +422,7 @@ function playAudioBuffer(src, buffer, rec, time) {
 }
 
 // ============================================================
-//  RECORDING (كما هو — بدون تغيير)
+//  RECORDING
 // ============================================================
 async function toggleRecording() {
     const btn = document.getElementById('recordBtn');
