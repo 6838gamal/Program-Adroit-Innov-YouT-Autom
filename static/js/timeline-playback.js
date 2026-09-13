@@ -1,5 +1,6 @@
 // ============================================================
 //  timeline-playback.js — التشغيل + الصوت + التسجيل + عرض الفيديو
+//  ✅ FIXED: تعارض مع voiceover.js، readyState، error handling
 // ============================================================
 
 // ============================================================
@@ -47,7 +48,7 @@ function startPlay() {
         v.play().catch(() => {});
     });
 
-    const intervalMs = 40;
+    const intervalMs = 50;   // ✅ FIXED: 50ms بدلاً من 40ms
     playInterval = setInterval(() => {
         if (isRecording) return;
         currentTime += (intervalMs / 1000) * playbackSpeed;
@@ -73,8 +74,8 @@ function startPlay() {
             }
         }
         updatePlayhead();
-        syncVideoPreview(currentTime);   // ✅ جديد
-        renderPreview(currentTime);
+        syncVideoPreview(currentTime);   // ✅ يعرض الفيديو
+        renderPreview(currentTime);      // ✅ لا يرسم إن كان هناك فيديو (تم تعديله)
     }, intervalMs);
 }
 
@@ -111,7 +112,6 @@ function changeSpeed() {
     if (audioPlayer) audioPlayer.playbackRate = playbackSpeed;
     Object.values(videoElements).forEach(v => { v.playbackRate = playbackSpeed; });
 
-    // ✅ طبّق السرعة على فيديو المعاينة
     const previewVideo = document.getElementById('previewVideo');
     if (previewVideo) previewVideo.playbackRate = playbackSpeed;
 }
@@ -130,7 +130,6 @@ function toggleMute() {
         if (node.gain) node.gain.gain.value = isMuted ? 0 : 0.8;
     });
 
-    // ✅ طبّق الكتم على فيديو المعاينة
     const previewVideo = document.getElementById('previewVideo');
     if (previewVideo) previewVideo.muted = isMuted;
 }
@@ -161,7 +160,7 @@ function seekTo(time) {
         setTimeout(() => startPlay(), 50);
     } else {
         updatePlayhead();
-        syncVideoPreview(currentTime);   // ✅ جديد
+        syncVideoPreview(currentTime);
         renderPreview(currentTime);
     }
 
@@ -181,6 +180,7 @@ function seekTo(time) {
 
 // ============================================================
 //  🎬 SYNC VIDEO PREVIEW — عرض الفيديو في المعاينة
+//  ✅ FIXED: readyState + error handling + source validation
 // ============================================================
 function syncVideoPreview(time) {
     const videoEl = document.getElementById('previewVideo');
@@ -202,7 +202,7 @@ function syncVideoPreview(time) {
     if (!activeClip) {
         if (_currentVideoPreviewId !== null) {
             videoEl.style.display = 'none';
-            videoEl.pause();
+            try { videoEl.pause(); } catch (e) {}
             videoEl.removeAttribute('src');
             videoEl.load();
             _currentVideoPreviewId = null;
@@ -210,9 +210,14 @@ function syncVideoPreview(time) {
             const canvas = document.getElementById('previewCanvas');
             if (canvas) canvas.style.opacity = '1';
 
-            // أعد رسم Canvas
             if (typeof renderPreview === 'function') renderPreview(currentTime);
         }
+        return;
+    }
+
+    const videoSrc = activeClip.content || activeClip.url || activeClip.src;
+    if (!videoSrc) {
+        console.warn('⚠️ Video clip has no URL:', activeClip.id);
         return;
     }
 
@@ -221,22 +226,54 @@ function syncVideoPreview(time) {
         console.log('🎬 Video preview →', activeClip.title || activeClip.id);
 
         _currentVideoPreviewId = activeClip.id;
-        videoEl.src = activeClip.content || activeClip.url;
+        videoEl.src = videoSrc;
         videoEl.style.display = 'block';
         videoEl.muted = isMuted;
         videoEl.playbackRate = playbackSpeed;
-        videoEl.load();
+        videoEl.preload = 'auto';
+
+        // ✅ FIXED: معالج الأخطاء
+        videoEl.onerror = (e) => {
+            console.error('❌ Video preview failed:', videoSrc, e);
+            if (typeof showToast === 'function') {
+                showToast(`⚠️ فشل تحميل الفيديو: ${activeClip.title || ''}`, 'warning');
+            }
+            videoEl.style.display = 'none';
+            _currentVideoPreviewId = null;
+
+            const canvas = document.getElementById('previewCanvas');
+            if (canvas) canvas.style.opacity = '1';
+        };
 
         const canvas = document.getElementById('previewCanvas');
         if (canvas) canvas.style.opacity = '0';
 
         const localStart = time - (activeClip.start || 0);
-        videoEl.onloadedmetadata = () => {
+
+        const seekAndPlay = () => {
             try {
-                videoEl.currentTime = Math.max(0, Math.min(localStart, videoEl.duration || 9999));
-            } catch (e) {}
-            if (isPlaying) videoEl.play().catch(() => {});
+                const dur = videoEl.duration || activeClip.duration || 9999;
+                videoEl.currentTime = Math.max(0, Math.min(localStart, dur));
+            } catch (e) {
+                console.warn('Failed to seek video:', e);
+            }
+            if (isPlaying) {
+                videoEl.play().catch(err => {
+                    if (err.name !== 'AbortError') {
+                        console.warn('Video play failed:', err);
+                    }
+                });
+            }
         };
+
+        // ✅ FIXED: إذا كان جاهزًا، اضبط مباشرة
+        if (videoEl.readyState >= 1) {
+            seekAndPlay();
+        } else {
+            videoEl.onloadedmetadata = seekAndPlay;
+            videoEl.load();
+        }
+
         return;
     }
 
@@ -259,7 +296,7 @@ function syncVideoPreview(time) {
 }
 
 // ============================================================
-//  SYNC AUDIO
+//  SYNC AUDIO (كما هو)
 // ============================================================
 function syncAudio(time) {
     if (Math.abs(time - lastAudioSyncTime) < 0.03) return;
@@ -376,7 +413,7 @@ function playAudioBuffer(src, buffer, rec, time) {
 }
 
 // ============================================================
-//  RECORDING
+//  RECORDING (كما هو — بدون تغيير)
 // ============================================================
 async function toggleRecording() {
     const btn = document.getElementById('recordBtn');
@@ -496,7 +533,7 @@ async function toggleRecording() {
 
             currentTime = recordingStartTime + duration;
             updatePlayhead();
-            syncVideoPreview(currentTime);   // ✅ جديد
+            syncVideoPreview(currentTime);
             renderPreview(currentTime);
         };
 
