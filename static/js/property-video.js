@@ -1,6 +1,7 @@
 // ============================================================
 //  property-video.js — مولّد فيديو العقارات
-//  يندمج مع الـ timeline الموجود + يستخدم addGeneratedClip
+//  ✅ يدعم: بدون صوت / بدون نصوص / بدون الاثنين
+//  ✅ polling آمن (يتعامل مع 503، 429)
 // ============================================================
 
 (function () {
@@ -9,13 +10,16 @@
     // ────────────────────────────────────────────────────────
     //  State
     // ────────────────────────────────────────────────────────
-    let uploadedImages = [];   // [{ url, path, motion, name }]
+    let uploadedImages = [];   // [{ url, path, motion, name, uploading }]
     let currentJobId = null;
     let pollTimer = null;
     let isGenerating = false;
+    let pollErrorCount = 0;
 
     const MAX_IMAGES = 20;
     const MAX_IMAGE_SIZE_MB = 10;
+    const POLL_INTERVAL_MS = 3000;
+    const MAX_POLL_ERRORS = 5;
 
     // ────────────────────────────────────────────────────────
     //  Helpers
@@ -44,11 +48,17 @@
         return document.getElementById(id);
     }
 
-    function escapeHtml(text) {
-        if (!text) return '';
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
+    function $checked(id, defaultVal) {
+        const el = $id(id);
+        if (!el) return defaultVal !== false;
+        return el.checked;
+    }
+
+    function $value(id, defaultVal) {
+        const el = $id(id);
+        if (!el) return defaultVal;
+        const v = el.value;
+        return (v !== undefined && v !== null) ? v : defaultVal;
     }
 
     // ────────────────────────────────────────────────────────
@@ -77,9 +87,6 @@
             clearInterval(pollTimer);
             pollTimer = null;
         }
-
-        // لا نُفرّغ الصور — قد يريد المستخدم متابعة لاحقاً
-        // uploadedImages = [];  // ← اختياري: علّق عليه إذا أردت الإبقاء
     };
 
     // ────────────────────────────────────────────────────────
@@ -148,6 +155,10 @@
                     body: fd,
                 });
 
+                if (!r.ok) {
+                    throw new Error(`HTTP ${r.status}`);
+                }
+
                 const data = await r.json();
 
                 if (data.success) {
@@ -162,8 +173,10 @@
                 safeToast(`❌ فشل رفع ${file.name}`, 'error');
 
                 // احذف placeholder
-                URL.revokeObjectURL(uploadedImages[tempIndex].url);
-                uploadedImages.splice(tempIndex, 1);
+                if (uploadedImages[tempIndex]) {
+                    URL.revokeObjectURL(uploadedImages[tempIndex].url);
+                    uploadedImages.splice(tempIndex, 1);
+                }
             }
 
             renderPropertyImagesPreview();
@@ -326,40 +339,51 @@
 
         // ── اجمع البيانات ──
         const propTypeEl = document.querySelector('input[name="propType"]:checked');
-        const featuresRaw = ($id('propFeatures')?.value || '').trim();
+        const featuresRaw = ($value('propFeatures', '')).trim();
         const features = featuresRaw
             .split(/[,،]/)
             .map(s => s.trim())
             .filter(Boolean);
 
+        // ✅ اقرأ خيارات المستخدم
+        const voiceoverEnabled = $checked('propVoiceoverEnabled', true);
+        const overlayEnabled = $checked('propOverlayEnabled', true);
+
         const payload = {
             project_id: projectId,
-            title: ($id('propTitle')?.value || '').trim(),
+            title: ($value('propTitle', '')).trim(),
             property_type: propTypeEl ? propTypeEl.value : 'apartment',
-            price: parseFloat($id('propPrice')?.value) || null,
-            currency: $id('propCurrency')?.value || 'SAR',
-            city: ($id('propCity')?.value || '').trim(),
-            district: ($id('propDistrict')?.value || '').trim(),
-            area_sqm: parseFloat($id('propArea')?.value) || null,
-            bedrooms: parseInt($id('propBedrooms')?.value) || null,
-            bathrooms: parseInt($id('propBathrooms')?.value) || null,
+            price: parseFloat($value('propPrice', '')) || null,
+            currency: $value('propCurrency', 'SAR'),
+            city: ($value('propCity', '')).trim(),
+            district: ($value('propDistrict', '')).trim(),
+            area_sqm: parseFloat($value('propArea', '')) || null,
+            bedrooms: parseInt($value('propBedrooms', '')) || null,
+            bathrooms: parseInt($value('propBathrooms', '')) || null,
             features: features,
-            whatsapp: ($id('propWhatsapp')?.value || '').trim(),
+            whatsapp: ($value('propWhatsapp', '')).trim(),
             images: readyImages.map(i => ({
                 url: i.serverUrl || i.url,
                 path: i.path,
                 motion: i.motion || 'auto',
             })),
-            duration_per_image: parseFloat($id('propDurationPerImage')?.value) || 4.5,
-            voiceover_voice: $id('propVoice')?.value || 'ar-SA-HamedNeural',
-            show_price: $id('propShowPrice')?.checked !== false,
-            show_location: $id('propShowLocation')?.checked !== false,
-            show_area: $id('propShowArea')?.checked !== false,
-            show_contact: $id('propShowContact')?.checked !== false,
+            duration_per_image: parseFloat($value('propDurationPerImage', '4.5')) || 4.5,
+            style: $value('propStyle', 'modern'),
+
+            // ✅ جديد: خيارات اختيارية
+            voiceover_enabled: voiceoverEnabled,
+            voiceover_voice: $value('propVoice', 'ar-SA-HamedNeural'),
+
+            // النصوص: إما معطّلة كلياً، أو حسب الاختيارات الفردية
+            show_price: overlayEnabled && $checked('propShowPrice', true),
+            show_location: overlayEnabled && $checked('propShowLocation', true),
+            show_area: overlayEnabled && $checked('propShowArea', true),
+            show_contact: overlayEnabled && $checked('propShowContact', true),
         };
 
         // ── UI: حالة الانتظار ──
         isGenerating = true;
+        pollErrorCount = 0;
         const btn = $id('btnGeneratePropertyVideo');
         if (btn) {
             btn.disabled = true;
@@ -371,6 +395,14 @@
 
         updateProgressUI(0.02, 'queued', '⏳ جاري الإرسال...');
 
+        // ── رسالة توضيحية ──
+        const modeText = [];
+        if (!voiceoverEnabled) modeText.push('بدون صوت');
+        if (!overlayEnabled) modeText.push('بدون نصوص');
+        if (modeText.length > 0) {
+            safeToast(`🎬 توليد ${modeText.join(' + ')} — سيكون أسرع بكثير`, 'info');
+        }
+
         // ── أرسل الطلب ──
         try {
             const r = await fetch('/api/property/generate', {
@@ -378,6 +410,14 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload),
             });
+
+            // ✅ تحقق من content-type قبل parse
+            const contentType = r.headers.get('content-type') || '';
+            if (!contentType.includes('application/json')) {
+                const text = await r.text();
+                console.error('Non-JSON response:', text.slice(0, 500));
+                throw new Error(`الخادم رجّع ${r.status}`);
+            }
 
             const data = await r.json();
 
@@ -402,19 +442,87 @@
     //  متابعة الحالة
     // ────────────────────────────────────────────────────────
     function startPollingPropertyJob() {
+        if (!currentJobId) {
+            console.warn('startPollingPropertyJob: no job ID');
+            resetGenerateButton();
+            return;
+        }
+
         if (pollTimer) clearInterval(pollTimer);
 
-        let errorCount = 0;
+        pollErrorCount = 0;
 
         pollTimer = setInterval(async () => {
             try {
                 const r = await fetch(`/api/property/status/${currentJobId}`);
-                const data = await r.json();
 
-                errorCount = 0;
+                // ✅ 404 = انتهت صلاحية المهمة
+                if (r.status === 404) {
+                    clearInterval(pollTimer);
+                    pollTimer = null;
+                    safeToast('❌ انتهت صلاحية المهمة', 'error');
+                    setStatus('❌ المهمة غير موجودة');
+                    resetGenerateButton();
+                    return;
+                }
+
+                // ✅ 429 = Too Many Requests — نتجاهل ونكمل (بدون زيادة العدّاد)
+                if (r.status === 429) {
+                    console.warn('Rate limited — waiting...');
+                    return;
+                }
+
+                // ✅ 5xx = خطأ خادم — نزيد العدّاد
+                if (r.status >= 500) {
+                    pollErrorCount++;
+                    console.warn(`Server error ${r.status} (${pollErrorCount}/${MAX_POLL_ERRORS})`);
+
+                    if (pollErrorCount >= MAX_POLL_ERRORS) {
+                        clearInterval(pollTimer);
+                        pollTimer = null;
+                        safeToast('❌ الخادم غير متاح — أعد المحاولة لاحقاً', 'error');
+                        setStatus('❌ خطأ في الخادم');
+                        resetGenerateButton();
+                    }
+                    return;
+                }
+
+                // ✅ 4xx أخرى
+                if (!r.ok) {
+                    pollErrorCount++;
+                    console.warn(`HTTP ${r.status} (${pollErrorCount}/${MAX_POLL_ERRORS})`);
+                    if (pollErrorCount >= MAX_POLL_ERRORS) {
+                        clearInterval(pollTimer);
+                        pollTimer = null;
+                        resetGenerateButton();
+                    }
+                    return;
+                }
+
+                // ✅ تحقق من content-type
+                const ct = r.headers.get('content-type') || '';
+                if (!ct.includes('application/json')) {
+                    console.warn('Non-JSON response:', ct);
+                    pollErrorCount++;
+                    return;
+                }
+
+                // ✅ parse آمن
+                let data;
+                try {
+                    data = await r.json();
+                } catch (e) {
+                    console.warn('Invalid JSON:', e);
+                    pollErrorCount++;
+                    return;
+                }
+
+                // ✅ نجح — صفّر العدّاد
+                pollErrorCount = 0;
 
                 if (!data.success) {
-                    throw new Error(data.error || 'Status fetch failed');
+                    console.warn('API returned error:', data.error);
+                    return;
                 }
 
                 updateProgressUI(
@@ -426,23 +534,21 @@
                 if (data.status === 'done') {
                     clearInterval(pollTimer);
                     pollTimer = null;
-
                     await handleJobCompleted(data);
 
                 } else if (data.status === 'failed') {
                     clearInterval(pollTimer);
                     pollTimer = null;
-
                     safeToast('❌ فشل التوليد: ' + (data.error || 'خطأ غير معروف'), 'error');
                     setStatus('❌ ' + (data.error || 'فشل'));
                     resetGenerateButton();
                 }
 
             } catch (e) {
-                errorCount++;
+                pollErrorCount++;
                 console.warn('Poll error:', e);
 
-                if (errorCount > 5) {
+                if (pollErrorCount >= MAX_POLL_ERRORS) {
                     clearInterval(pollTimer);
                     pollTimer = null;
                     safeToast('❌ فشل الاتصال بالخادم', 'error');
@@ -450,7 +556,7 @@
                     resetGenerateButton();
                 }
             }
-        }, 1500);
+        }, POLL_INTERVAL_MS);
     }
 
     async function handleJobCompleted(data) {
@@ -458,26 +564,31 @@
 
         // ── 1. احفظ الـ clip في المشروع (backend) ──
         try {
-            await fetch(`/api/property/save/${projectId}`, {
+            const saveResp = await fetch(`/api/property/save/${projectId}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     video_url: data.video_url,
                     path: data.path,
                     duration: data.duration,
-                    title: data.property_meta?.title || 'فيديو عقاري',
+                    title: (data.property_meta && data.property_meta.title) || 'فيديو عقاري',
                     property_meta: data.property_meta || {},
                 }),
             });
+            if (!saveResp.ok) {
+                console.warn('Save returned:', saveResp.status);
+            }
         } catch (e) {
             console.warn('Backend save failed:', e);
         }
 
         // ── 2. أضف إلى الـ timeline مباشرة ──
+        const clipTitle = (data.property_meta && data.property_meta.title) || 'فيديو عقاري';
+
         if (typeof addGeneratedClip === 'function') {
             addGeneratedClip(data.video_url, {
                 type: 'video',
-                title: data.property_meta?.title || 'فيديو عقاري',
+                title: clipTitle,
                 duration: data.duration || 30,
                 metadata: {
                     source: 'property_video',
@@ -485,17 +596,15 @@
                     property_meta: data.property_meta || {},
                 },
             });
+        } else if (typeof addClipFromUrl === 'function') {
+            addClipFromUrl(data.video_url, {
+                type: 'video',
+                title: clipTitle,
+                duration: data.duration || 30,
+            });
         } else {
-            console.warn('addGeneratedClip not found — trying addClipFromUrl');
-            if (typeof addClipFromUrl === 'function') {
-                addClipFromUrl(data.video_url, {
-                    type: 'video',
-                    title: data.property_meta?.title || 'فيديو عقاري',
-                    duration: data.duration || 30,
-                });
-            } else {
-                safeToast('⚠️ لم يتمكن من إضافة الفيديو للـ timeline', 'warning');
-            }
+            console.warn('Neither addGeneratedClip nor addClipFromUrl found');
+            safeToast('⚠️ لم يتمكن من إضافة الفيديو للـ timeline', 'warning');
         }
 
         // ── 3. UI النجاح ──
@@ -543,6 +652,8 @@
 
     function resetGenerateButton() {
         isGenerating = false;
+        pollErrorCount = 0;
+
         const btn = $id('btnGeneratePropertyVideo');
         if (btn) {
             btn.disabled = false;
@@ -559,7 +670,6 @@
             pollTimer = null;
         }
 
-        // نظّف blob URLs
         uploadedImages.forEach(img => {
             if (img.url && img.url.startsWith('blob:')) {
                 URL.revokeObjectURL(img.url);
@@ -568,7 +678,7 @@
     });
 
     // ────────────────────────────────────────────────────────
-    //  Expose for debugging
+    //  Debug helpers
     // ────────────────────────────────────────────────────────
     window.__propertyVideoDebug = {
         getState: () => ({
@@ -580,8 +690,24 @@
             })),
             currentJobId,
             isGenerating,
+            pollErrorCount,
         }),
         getImages: () => uploadedImages,
+        getPayloadPreview: () => {
+            const propTypeEl = document.querySelector('input[name="propType"]:checked');
+            const featuresRaw = ($value('propFeatures', '')).trim();
+            return {
+                voiceover_enabled: $checked('propVoiceoverEnabled', true),
+                overlay_enabled: $checked('propOverlayEnabled', true),
+                voice: $value('propVoice', 'ar-SA-HamedNeural'),
+                property_type: propTypeEl ? propTypeEl.value : 'apartment',
+                features: featuresRaw.split(/[,،]/).map(s => s.trim()).filter(Boolean),
+                show_price: $checked('propOverlayEnabled', true) && $checked('propShowPrice', true),
+                show_location: $checked('propOverlayEnabled', true) && $checked('propShowLocation', true),
+                show_area: $checked('propOverlayEnabled', true) && $checked('propShowArea', true),
+                show_contact: $checked('propOverlayEnabled', true) && $checked('propShowContact', true),
+            };
+        },
         addTestImage: (url) => {
             uploadedImages.push({
                 url: url,
