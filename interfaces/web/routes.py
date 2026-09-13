@@ -3338,14 +3338,79 @@ async def publishing_queue_page(request: Request, session: AsyncSession = Depend
 
 @router.get("/platforms", response_class=HTMLResponse)
 async def platforms_page(request: Request, session: AsyncSession = Depends(get_db)):
+    """
+    صفحة المنصات المتصلة.
+
+    نبني `accounts_map_json` يحتوي على dict للحقول الجديدة
+    (channel_id/title/handle/thumbnail) لتفادي مشكلة
+    "Object of type Undefined is not JSON serializable" في Jinja.
+    """
     from infrastructure.repositories.sql_publishing_repository import SQLAccountRepository
+
     repo = SQLAccountRepository(session)
     accounts = await repo.list_all()
+
+    # ── بناء خريطة JSON آمنة للقالب ─────────────────────────────────────────
+    accounts_map: Dict[str, Dict[str, Any]] = {}
+    for a in accounts:
+        accounts_map[str(a.id)] = {
+            "id":                str(a.id),
+            "name":              getattr(a, "name", "") or "",
+            "platform_name":     getattr(a, "platform_name", "") or "",
+            "channel_id":        getattr(a, "channel_id", "") or "",
+            "channel_title":     getattr(a, "channel_title", "") or "",
+            "channel_handle":    getattr(a, "channel_handle", "") or "",
+            "channel_thumbnail": getattr(a, "channel_thumbnail", "") or "",
+            "is_active":         bool(getattr(a, "is_active", False)),
+            "last_verified":     (
+                a.last_verified.strftime("%Y-%m-%d %H:%M")
+                if getattr(a, "last_verified", None) else ""
+            ),
+            "created_at":        (
+                a.created_at.strftime("%Y-%m-%d")
+                if getattr(a, "created_at", None) else ""
+            ),
+        }
+
     return templates.TemplateResponse(request, "publishing/platforms.html", {
-        "accounts": accounts,
-        "active_page": "platforms",
-        "supabase": get_supabase_config(),
+        "accounts":          accounts,
+        "accounts_map_json": json.dumps(accounts_map, ensure_ascii=False),
+        "active_page":       "platforms",
+        "supabase":          get_supabase_config(),
     })
+
+
+# ============================================================
+# PUBLISHING ACCOUNTS — DELETE (لزر "فصل الحساب")
+# ============================================================
+
+@router.delete("/api/v1/publishing/accounts/{account_id}")
+async def delete_publishing_account(
+    account_id: str,
+    session: AsyncSession = Depends(get_db),
+):
+    """احذف حساب نشر مربوط (فصل الحساب)."""
+    from infrastructure.repositories.sql_publishing_repository import SQLAccountRepository
+
+    repo = SQLAccountRepository(session)
+    try:
+        ok = await repo.delete(account_id)
+    except Exception as e:
+        logger.exception("Failed to delete publishing account")
+        return JSONResponse(
+            {"success": False, "error": str(e)},
+            status_code=500,
+        )
+
+    if not ok:
+        return JSONResponse(
+            {"success": False, "error": "account not found"},
+            status_code=404,
+        )
+
+    await session.commit()
+
+    return Response(status_code=204)
 
 
 # ============================================================
@@ -4379,7 +4444,7 @@ async def _run_property_video_job(job_id: str, payload: Dict[str, Any]) -> None:
 
 
 # ─────────────────────────────────────────────────────────
-# FFmpeg Helpers — ✅ محدّثة لأداء أفضل
+# FFmpeg Helpers
 # ─────────────────────────────────────────────────────────
 
 async def _render_motion_clip(
@@ -4387,9 +4452,9 @@ async def _render_motion_clip(
     output_path: Path,
     duration: float,
     motion: str = "auto",
-    width: int = 720,       # ✅ 1080 → 720
-    height: int = 1280,     # ✅ 1920 → 1280
-    fps: int = 24,          # ✅ 30 → 24
+    width: int = 720,
+    height: int = 1280,
+    fps: int = 24,
 ) -> None:
     """يولّد مقطع فيديو من صورة بحركة Pan/Zoom — سريع."""
     if motion == "auto":
@@ -4461,8 +4526,8 @@ async def _render_motion_clip(
         "-r", str(fps),
         "-an",
         "-c:v", "libx264",
-        "-preset", "ultrafast",   # ✅ medium → ultrafast
-        "-crf", "26",             # ✅ 20 → 26
+        "-preset", "ultrafast",
+        "-crf", "26",
         "-pix_fmt", "yuv420p",
         "-movflags", "+faststart",
         str(output_path),
@@ -4665,7 +4730,6 @@ async def _add_property_text_overlays(
 
     filters: List[str] = []
 
-    # ✅ أحجام خطوط مصغّرة لتناسب 720p
     if title:
         f = _write_text("title", title)
         filters.append(
@@ -4722,8 +4786,8 @@ async def _add_property_text_overlays(
         "-i", str(input_video),
         "-vf", vf,
         "-c:v", "libx264",
-        "-preset", "ultrafast",   # ✅ medium → ultrafast
-        "-crf", "26",             # ✅ 20 → 26
+        "-preset", "ultrafast",
+        "-crf", "26",
         "-pix_fmt", "yuv420p",
         "-movflags", "+faststart",
         str(output),
