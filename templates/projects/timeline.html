@@ -929,6 +929,27 @@
                 <h4 class="text-white font-semibold text-sm">⚙️ إعدادات الفيديو</h4>
             </div>
 
+            <!-- ✅ خيارات التفعيل الرئيسية -->
+            <div class="grid grid-cols-2 gap-2 mb-3">
+                <label class="cursor-pointer">
+                    <input type="checkbox" id="propVoiceoverEnabled" checked class="hidden peer">
+                    <div class="peer-checked:bg-emerald-600 peer-checked:text-white bg-slate-700 text-slate-300 rounded-lg p-3 text-center transition text-sm border-2 border-transparent peer-checked:border-emerald-400">
+                        <div class="text-lg mb-1">🎙️</div>
+                        <div class="font-semibold">التعليق الصوتي</div>
+                        <div class="text-xs opacity-75 mt-1">تفعيل / تعطيل</div>
+                    </div>
+                </label>
+
+                <label class="cursor-pointer">
+                    <input type="checkbox" id="propOverlaysEnabled" checked class="hidden peer">
+                    <div class="peer-checked:bg-blue-600 peer-checked:text-white bg-slate-700 text-slate-300 rounded-lg p-3 text-center transition text-sm border-2 border-transparent peer-checked:border-blue-400">
+                        <div class="text-lg mb-1">📝</div>
+                        <div class="font-semibold">النصوص</div>
+                        <div class="text-xs opacity-75 mt-1">تفعيل / تعطيل</div>
+                    </div>
+                </label>
+            </div>
+
             <div class="grid grid-cols-2 gap-3">
                 <div>
                     <label class="text-slate-400 text-xs">مدة كل صورة (ث)</label>
@@ -947,7 +968,7 @@
                     </select>
                 </div>
 
-                <div>
+                <div class="col-span-2" id="propVoiceSection">
                     <label class="text-slate-400 text-xs">صوت التعليق</label>
                     <select id="propVoice" class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-white text-sm mt-1">
                         <option value="ar-SA-HamedNeural">🇸🇦 حامد (سعودي)</option>
@@ -957,20 +978,20 @@
                     </select>
                 </div>
 
-                <div>
-                    <label class="text-slate-400 text-xs">عناصر تظهر</label>
-                    <div class="flex flex-wrap gap-2 mt-1">
+                <div class="col-span-2" id="propOverlayOptionsSection">
+                    <label class="text-slate-400 text-xs mb-1 block">عناصر تظهر في النص</label>
+                    <div class="flex flex-wrap gap-3 bg-slate-900/40 rounded-lg p-2">
                         <label class="flex items-center gap-1 text-xs text-slate-300 cursor-pointer">
-                            <input type="checkbox" id="propShowPrice" checked> السعر
+                            <input type="checkbox" id="propShowPrice" checked> 💰 السعر
                         </label>
                         <label class="flex items-center gap-1 text-xs text-slate-300 cursor-pointer">
-                            <input type="checkbox" id="propShowLocation" checked> الموقع
+                            <input type="checkbox" id="propShowLocation" checked> 📍 الموقع
                         </label>
                         <label class="flex items-center gap-1 text-xs text-slate-300 cursor-pointer">
-                            <input type="checkbox" id="propShowArea" checked> المساحة
+                            <input type="checkbox" id="propShowArea" checked> 📐 المساحة
                         </label>
                         <label class="flex items-center gap-1 text-xs text-slate-300 cursor-pointer">
-                            <input type="checkbox" id="propShowContact" checked> التواصل
+                            <input type="checkbox" id="propShowContact" checked> 📞 التواصل
                         </label>
                     </div>
                 </div>
@@ -1137,6 +1158,30 @@ document.addEventListener('DOMContentLoaded', () => {
         lufs.addEventListener('input', () => {
             document.getElementById('lufsVal').textContent = lufs.value;
         });
+    }
+
+    // ✅ ربط checkbox الصوت — إخفاء/إظهار قسم اختيار الصوت
+    const voiceCheckbox = document.getElementById('propVoiceoverEnabled');
+    const voiceSection = document.getElementById('propVoiceSection');
+    if (voiceCheckbox && voiceSection) {
+        const updateVoiceSection = () => {
+            voiceSection.style.opacity = voiceCheckbox.checked ? '1' : '0.4';
+            voiceSection.style.pointerEvents = voiceCheckbox.checked ? 'auto' : 'none';
+        };
+        voiceCheckbox.addEventListener('change', updateVoiceSection);
+        updateVoiceSection();
+    }
+
+    // ✅ ربط checkbox النصوص — إخفاء/إظهار قسم عناصر النص
+    const overlayCheckbox = document.getElementById('propOverlaysEnabled');
+    const overlaySection = document.getElementById('propOverlayOptionsSection');
+    if (overlayCheckbox && overlaySection) {
+        const updateOverlaySection = () => {
+            overlaySection.style.opacity = overlayCheckbox.checked ? '1' : '0.4';
+            overlaySection.style.pointerEvents = overlayCheckbox.checked ? 'auto' : 'none';
+        };
+        overlayCheckbox.addEventListener('change', updateOverlaySection);
+        updateOverlaySection();
     }
 
     // فحص الإعدادات
