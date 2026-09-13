@@ -50,8 +50,8 @@
 <!-- ====== بيانات المشروع (تُمرَّر إلى JS) ====== -->
 <script id="timeline-config" type="application/json">
 {
-    "projectId": {{ project.id | tojson }},
-    "userId": {{ (current_user.id if current_user else '') | tojson }},
+    "projectId": {{ (project.id | string) | tojson }},
+    "userId": {{ ((current_user.id | string) if current_user else '') | tojson }},
     "userEmail": {{ (current_user.email if current_user else '') | tojson }},
     "scenes": {{ scenes_json | safe }},
     "voiceoverClips": {{ (voiceover_clips or []) | tojson | safe }},
