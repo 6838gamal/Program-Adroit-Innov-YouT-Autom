@@ -1,5 +1,6 @@
 // ============================================================
 //  timeline-core.js — الإعدادات + Supabase + الأدوات المساعدة
+//  ✅ FIXED: حفظ/تحميل كل حقول الفيديو والصوت
 // ============================================================
 
 // قراءة الإعدادات من HTML
@@ -135,6 +136,7 @@ async function uploadFileToSupabase(file, projectId) {
     }
 }
 
+// ✅ FIXED: حفظ كل الحقول (url, src, script, scriptSegments, ...)
 async function saveProjectToSupabase(projectId, data) {
     try {
         const response = await fetch(`/api/v1/projects/save`, {
@@ -145,13 +147,45 @@ async function saveProjectToSupabase(projectId, data) {
                 user_id: currentUserId,
                 data: {
                     clips: data.clips.map(c => ({
+                        // ═══════════════════════════════════════════
+                        // الحقول الأساسية
+                        // ═══════════════════════════════════════════
                         id: c.id,
                         type: c.type,
                         layer: c.layer,
                         start: c.start,
                         duration: c.duration,
                         title: c.title,
-                        content: (c.content && c.content.startsWith('http')) ? c.content : null,
+
+                        // ═══════════════════════════════════════════
+                        // ✅ FIXED: حقول الفيديو/الصوت (كانت مفقودة!)
+                        // ═══════════════════════════════════════════
+                        url: c.url || null,
+                        src: c.src || null,
+                        path: c.path || null,
+                        mediaId: c.mediaId || null,
+
+                        // content: احفظه إذا كان http أو / نسبي
+                        content: (c.content && (
+                            c.content.startsWith('http') ||
+                            c.content.startsWith('/')
+                        )) ? c.content : null,
+
+                        // ═══════════════════════════════════════════
+                        // ✅ FIXED: حقول النص والصوت
+                        // ═══════════════════════════════════════════
+                        script: c.script || '',
+                        scriptSegments: c.scriptSegments || [],
+                        tts: c.tts || null,
+                        source: c.source || null,
+                        fileName: c.fileName || null,
+                        voice_id: c.voice_id || null,
+                        processed: c.processed || false,
+                        processingOptions: c.processingOptions || null,
+
+                        // ═══════════════════════════════════════════
+                        // المظهر
+                        // ═══════════════════════════════════════════
                         color: c.color,
                         icon: c.icon,
                         metadata: c.metadata || {}
@@ -185,6 +219,7 @@ async function saveProjectToSupabase(projectId, data) {
     }
 }
 
+// ✅ FIXED: إعادة بناء كل الحقول عند التحميل
 async function loadProjectFromSupabase(projectId) {
     try {
         const response = await fetch(`/api/v1/projects/${projectId}?user_id=${currentUserId}`);
@@ -199,8 +234,47 @@ async function loadProjectFromSupabase(projectId) {
         const saved = result.data;
 
         if (saved && saved.data) {
+            // ═══════════════════════════════════════════════════
+            // ✅ FIXED: إعادة بناء كل الحقول مع fallback ذكي
+            // ═══════════════════════════════════════════════════
+            const clips = (saved.data.clips || []).map(c => {
+                // fallback: url || src || content (بهذا الترتيب)
+                const effectiveUrl = c.url || c.src || c.content || null;
+
+                return {
+                    id: c.id,
+                    type: c.type,
+                    layer: c.layer || 0,
+                    start: c.start || 0,
+                    duration: c.duration || 3,
+                    title: c.title || '',
+
+                    // ✅ استعد url و src و content من أي حقل متاح
+                    url: effectiveUrl,
+                    src: effectiveUrl,
+                    content: effectiveUrl,
+                    path: c.path || null,
+                    mediaId: c.mediaId || null,
+
+                    // ✅ حقول النص والصوت
+                    script: c.script || '',
+                    scriptSegments: c.scriptSegments || [],
+                    tts: c.tts || null,
+                    source: c.source || null,
+                    fileName: c.fileName || null,
+                    voice_id: c.voice_id || null,
+                    processed: c.processed || false,
+                    processingOptions: c.processingOptions || null,
+
+                    // المظهر
+                    color: c.color || '#2563eb',
+                    icon: c.icon || '🎬',
+                    metadata: c.metadata || {}
+                };
+            });
+
             return {
-                clips: saved.data.clips || [],
+                clips: clips,
                 layers: saved.data.layers || [{ name: 'طبقة 1', visible: true, locked: false }],
                 totalDuration: saved.data.total_duration || 10,
                 cellWidth: saved.data.cell_width || 80,
@@ -358,6 +432,8 @@ async function loadProjectData() {
                     duration: scene.duration || 3,
                     title: scene.title || `مشهد ${i+1}`,
                     content: scene.content || '',
+                    url: null,
+                    src: null,
                     color: COLORS.image,
                     icon: '🖼️',
                     metadata: { scene_id: scene.id }
@@ -451,17 +527,23 @@ function startRender(projectId) {
     status.textContent = 'جاري التجهيز...';
     progressFill.style.width = '0%';
 
+    // ✅ FIXED: استخدم url || content في الرندر
     const renderData = {
         project_id: projectId,
-        clips: projectData.clips.map(c => ({
-            type: c.type,
-            start: c.start,
-            duration: c.duration,
-            layer: c.layer,
-            content: (c.content && c.content.startsWith('http')) ? c.content : null,
-            title: c.title,
-            metadata: c.metadata
-        })),
+        clips: projectData.clips.map(c => {
+            const effectiveContent = c.url || c.src || c.content || null;
+            return {
+                type: c.type,
+                start: c.start,
+                duration: c.duration,
+                layer: c.layer,
+                content: (effectiveContent && effectiveContent.startsWith('http'))
+                    ? effectiveContent
+                    : null,
+                title: c.title,
+                metadata: c.metadata
+            };
+        }),
         layers: projectData.layers,
         duration: projectData.totalDuration,
         mediaFiles: projectData.mediaFiles.map(f => ({
