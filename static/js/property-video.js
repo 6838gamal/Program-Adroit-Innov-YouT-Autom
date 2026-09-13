@@ -1,8 +1,12 @@
 // ============================================================
 //  property-video.js — مولّد فيديو العقارات
-//  ✅ يدعم: بدون صوت / بدون نصوص / بدون الاثنين
-//  ✅ polling آمن (يتعامل مع 502، 503، 429)
-//  ✅ يصبر حتى 5 دقائق عند restart الخادم
+//  يندمج مع الـ timeline الموجود + يستخدم addGeneratedClip
+//
+//  ✅ UPDATED:
+//     - إضافة صور عبر روابط URL
+//     - معاينة الفيديو بعد الرندر
+//     - خيارات: تنزيل / إضافة للتايم لاين / فيديو جديد
+//     - إزالة الإضافة التلقائية للتايم لاين
 // ============================================================
 
 (function () {
@@ -11,18 +15,13 @@
     // ────────────────────────────────────────────────────────
     //  State
     // ────────────────────────────────────────────────────────
-    let uploadedImages = [];   // [{ url, path, motion, name, uploading }]
+    let uploadedImages = [];   // [{ url, path, motion, name, uploading, serverUrl, isExternalUrl }]
     let currentJobId = null;
     let pollTimer = null;
     let isGenerating = false;
-    let pollErrorCount = 0;
-    let serverErrorCount = 0;   // ← عداد منفصل لأخطاء 502/503 (restart)
 
     const MAX_IMAGES = 20;
     const MAX_IMAGE_SIZE_MB = 10;
-    const POLL_INTERVAL_MS = 3000;
-    const MAX_POLL_ERRORS = 5;         // أخطاء شبكة/4xx
-    const MAX_SERVER_ERRORS = 100;     // 502/503 — 100 محاولة × 3 ثوانٍ = 5 دقائق
 
     // ────────────────────────────────────────────────────────
     //  Helpers
@@ -51,17 +50,11 @@
         return document.getElementById(id);
     }
 
-    function $checked(id, defaultVal) {
-        const el = $id(id);
-        if (!el) return defaultVal !== false;
-        return el.checked;
-    }
-
-    function $value(id, defaultVal) {
-        const el = $id(id);
-        if (!el) return defaultVal;
-        const v = el.value;
-        return (v !== undefined && v !== null) ? v : defaultVal;
+    function escapeHtml(text) {
+        if (!text) return '';
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
     }
 
     // ────────────────────────────────────────────────────────
@@ -92,7 +85,7 @@
     };
 
     // ────────────────────────────────────────────────────────
-    //  رفع الصور
+    //  رفع الصور من الجهاز
     // ────────────────────────────────────────────────────────
     window.handlePropertyImages = async function (event) {
         const files = Array.from(event.target.files || []);
@@ -141,6 +134,7 @@
                 name: file.name,
                 uploading: true,
                 _file: file,
+                isExternalUrl: false,
             });
             renderPropertyImagesPreview();
 
@@ -153,10 +147,6 @@
                     method: 'POST',
                     body: fd,
                 });
-
-                if (!r.ok) {
-                    throw new Error(`HTTP ${r.status}`);
-                }
 
                 const data = await r.json();
 
@@ -171,10 +161,8 @@
                 console.error('Upload failed:', e);
                 safeToast(`❌ فشل رفع ${file.name}`, 'error');
 
-                if (uploadedImages[tempIndex]) {
-                    URL.revokeObjectURL(uploadedImages[tempIndex].url);
-                    uploadedImages.splice(tempIndex, 1);
-                }
+                URL.revokeObjectURL(uploadedImages[tempIndex].url);
+                uploadedImages.splice(tempIndex, 1);
             }
 
             renderPropertyImagesPreview();
@@ -182,6 +170,108 @@
 
         updateImagesCounter();
     }
+
+    // ────────────────────────────────────────────────────────
+    //  ✅ NEW: إضافة صور عبر روابط URL
+    // ────────────────────────────────────────────────────────
+    window.addPropertyImagesFromUrls = function () {
+        const input = $id('propertyImageUrlsInput');
+        if (!input) return;
+
+        const raw = (input.value || '').trim();
+        if (!raw) {
+            safeToast('⚠️ أدخل رابطاً واحداً على الأقل', 'warning');
+            return;
+        }
+
+        // ✅ افصل بالأسطر، أو الفواصل، أو الفواصل المنقوطة، أو المسافات
+        const urls = raw
+            .split(/[\n,;،]+/)
+            .map(u => u.trim())
+            .filter(u => u.length > 0);
+
+        if (urls.length === 0) {
+            safeToast('⚠️ لم يتم العثور على روابط صالحة', 'warning');
+            return;
+        }
+
+        let added = 0;
+        let failed = 0;
+        let skipped = 0;
+
+        for (const url of urls) {
+            if (uploadedImages.length >= MAX_IMAGES) {
+                safeToast(`⚠️ وصلت للحد الأقصى (${MAX_IMAGES})`, 'warning');
+                break;
+            }
+
+            // ✅ تحقق من الرابط
+            if (!/^https?:\/\/.+\.(jpg|jpeg|png|webp|gif|bmp)(\?.*)?$/i.test(url)) {
+                safeToast(`⚠️ رابط غير صالح: ${url.slice(0, 40)}...`, 'warning');
+                failed++;
+                continue;
+            }
+
+            // ✅ تحقق أنه ليس موجوداً مسبقاً
+            if (uploadedImages.some(img =>
+                (img.serverUrl && img.serverUrl === url) ||
+                (img.path && img.path === url)
+            )) {
+                skipped++;
+                continue;
+            }
+
+            uploadedImages.push({
+                url: url,
+                serverUrl: url,
+                path: url,          // ✅ نستخدم URL كـ path مباشرة
+                motion: 'auto',
+                name: url.split('/').pop().split('?')[0] || 'image.jpg',
+                uploading: false,
+                isExternalUrl: true,
+            });
+            added++;
+        }
+
+        if (added > 0) {
+            renderPropertyImagesPreview();
+            updateImagesCounter();
+            input.value = '';
+
+            let msg = `✅ تم إضافة ${added} صورة`;
+            if (failed > 0) msg += ` (فشل ${failed})`;
+            if (skipped > 0) msg += ` (تخطي ${skipped} مكررة)`;
+
+            safeToast(msg, 'success');
+        } else {
+            if (skipped > 0) {
+                safeToast(`⚠️ كل الروابط موجودة مسبقاً (${skipped})`, 'warning');
+            } else if (failed > 0) {
+                safeToast(`❌ فشل إضافة ${failed} رابط`, 'error');
+            }
+        }
+    };
+
+    // ✅ امسح حقل الروابط
+    window.clearPropertyUrlsInput = function () {
+        const input = $id('propertyImageUrlsInput');
+        if (input) input.value = '';
+    };
+
+    // ✅ امسح كل الصور
+    window.clearAllPropertyImages = function () {
+        if (uploadedImages.length === 0) return;
+        if (!confirm(`حذف كل الصور (${uploadedImages.length})؟`)) return;
+
+        uploadedImages.forEach(img => {
+            if (img.url && img.url.startsWith('blob:')) {
+                URL.revokeObjectURL(img.url);
+            }
+        });
+
+        uploadedImages = [];
+        renderPropertyImagesPreview();
+    };
 
     // ────────────────────────────────────────────────────────
     //  معاينة الصور
@@ -198,13 +288,20 @@
 
             const imgUrl = img.serverUrl || img.url;
             const isUploading = img.uploading;
+            const isExternal = img.isExternalUrl;
 
             div.innerHTML = `
                 <img src="${imgUrl}"
-                     class="w-full h-20 object-cover rounded border border-slate-600 ${isUploading ? 'opacity-50' : ''}">
+                     class="w-full h-20 object-cover rounded border border-slate-600 ${isUploading ? 'opacity-50' : ''}"
+                     onerror="this.src='data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%22100%22 height=%2280%22><rect width=%22100%22 height=%2280%22 fill=%22%23334155%22/><text x=%2250%22 y=%2245%22 text-anchor=%22middle%22 fill=%22%23ef4444%22 font-size=%2220%22>⚠️</text></svg>'">
                 ${isUploading ? `
                     <div class="absolute inset-0 flex items-center justify-center bg-black/50 rounded">
                         <span class="text-white text-xs">⏳</span>
+                    </div>
+                ` : ''}
+                ${isExternal ? `
+                    <div class="absolute top-1 left-1 bg-blue-600 text-white rounded px-1.5 py-0.5 text-[9px] z-10 font-bold">
+                        🔗 URL
                     </div>
                 ` : ''}
                 <button type="button"
@@ -238,10 +335,14 @@
 
         const ready = uploadedImages.filter(i => !i.uploading).length;
         const uploading = uploadedImages.filter(i => i.uploading).length;
+        const external = uploadedImages.filter(i => i.isExternalUrl).length;
 
         let text = `${ready} / ${MAX_IMAGES} صورة`;
         if (uploading > 0) {
             text += ` (⏳ ${uploading} جاري الرفع)`;
+        }
+        if (external > 0) {
+            text += ` — 🔗 ${external} من روابط`;
         }
         counter.textContent = text;
     }
@@ -262,20 +363,6 @@
         if (uploadedImages[idx]) {
             uploadedImages[idx].motion = motion;
         }
-    };
-
-    window.clearAllPropertyImages = function () {
-        if (uploadedImages.length === 0) return;
-        if (!confirm(`حذف كل الصور (${uploadedImages.length})؟`)) return;
-
-        uploadedImages.forEach(img => {
-            if (img.url && img.url.startsWith('blob:')) {
-                URL.revokeObjectURL(img.url);
-            }
-        });
-
-        uploadedImages = [];
-        renderPropertyImagesPreview();
     };
 
     // ────────────────────────────────────────────────────────
@@ -316,6 +403,7 @@
             return;
         }
 
+        // ── تحقق من الصور ──
         const readyImages = uploadedImages.filter(i => !i.uploading && i.path);
         if (readyImages.length === 0) {
             safeToast('⚠️ أضف صورة واحدة على الأقل (بانتظار اكتمال الرفع)', 'warning');
@@ -333,81 +421,63 @@
             return;
         }
 
+        // ── اجمع البيانات ──
         const propTypeEl = document.querySelector('input[name="propType"]:checked');
-        const featuresRaw = ($value('propFeatures', '')).trim();
+        const featuresRaw = ($id('propFeatures')?.value || '').trim();
         const features = featuresRaw
             .split(/[,،]/)
             .map(s => s.trim())
             .filter(Boolean);
 
-        const voiceoverEnabled = $checked('propVoiceoverEnabled', true);
-        const overlayEnabled = $checked('propOverlayEnabled', true);
-
         const payload = {
             project_id: projectId,
-            title: ($value('propTitle', '')).trim(),
+            title: ($id('propTitle')?.value || '').trim(),
             property_type: propTypeEl ? propTypeEl.value : 'apartment',
-            price: parseFloat($value('propPrice', '')) || null,
-            currency: $value('propCurrency', 'SAR'),
-            city: ($value('propCity', '')).trim(),
-            district: ($value('propDistrict', '')).trim(),
-            area_sqm: parseFloat($value('propArea', '')) || null,
-            bedrooms: parseInt($value('propBedrooms', '')) || null,
-            bathrooms: parseInt($value('propBathrooms', '')) || null,
+            price: parseFloat($id('propPrice')?.value) || null,
+            currency: $id('propCurrency')?.value || 'SAR',
+            city: ($id('propCity')?.value || '').trim(),
+            district: ($id('propDistrict')?.value || '').trim(),
+            area_sqm: parseFloat($id('propArea')?.value) || null,
+            bedrooms: parseInt($id('propBedrooms')?.value) || null,
+            bathrooms: parseInt($id('propBathrooms')?.value) || null,
             features: features,
-            whatsapp: ($value('propWhatsapp', '')).trim(),
+            whatsapp: ($id('propWhatsapp')?.value || '').trim(),
             images: readyImages.map(i => ({
                 url: i.serverUrl || i.url,
                 path: i.path,
                 motion: i.motion || 'auto',
             })),
-            duration_per_image: parseFloat($value('propDurationPerImage', '4.5')) || 4.5,
-            style: $value('propStyle', 'modern'),
-
-            voiceover_enabled: voiceoverEnabled,
-            voiceover_voice: $value('propVoice', 'ar-SA-HamedNeural'),
-
-            show_price: overlayEnabled && $checked('propShowPrice', true),
-            show_location: overlayEnabled && $checked('propShowLocation', true),
-            show_area: overlayEnabled && $checked('propShowArea', true),
-            show_contact: overlayEnabled && $checked('propShowContact', true),
+            duration_per_image: parseFloat($id('propDurationPerImage')?.value) || 4.5,
+            voiceover_voice: $id('propVoice')?.value || 'ar-SA-HamedNeural',
+            show_price: $id('propShowPrice')?.checked !== false,
+            show_location: $id('propShowLocation')?.checked !== false,
+            show_area: $id('propShowArea')?.checked !== false,
+            show_contact: $id('propShowContact')?.checked !== false,
         };
 
+        // ── UI: حالة الانتظار ──
         isGenerating = true;
-        pollErrorCount = 0;
-        serverErrorCount = 0;
-
         const btn = $id('btnGeneratePropertyVideo');
         if (btn) {
             btn.disabled = true;
             btn.innerHTML = '⏳ جاري التوليد...';
         }
 
+        // ✅ امسح أي معاينة سابقة
+        resetPropertyVideoPreview();
+
         const progressWrap = $id('propertyVideoProgress');
         if (progressWrap) progressWrap.style.display = 'block';
 
         updateProgressUI(0.02, 'queued', '⏳ جاري الإرسال...');
 
-        const modeText = [];
-        if (!voiceoverEnabled) modeText.push('بدون صوت');
-        if (!overlayEnabled) modeText.push('بدون نصوص');
-        if (modeText.length > 0) {
-            safeToast(`🎬 توليد ${modeText.join(' + ')} — سيكون أسرع بكثير`, 'info');
-        }
-
+        // ── أرسل الطلب ──
         try {
             const r = await fetch('/api/property/generate', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload),
             });
-
-            const contentType = r.headers.get('content-type') || '';
-            if (!contentType.includes('application/json')) {
-                const text = await r.text();
-                console.error('Non-JSON response:', text.slice(0, 500));
-                throw new Error(`الخادم رجّع ${r.status}`);
-            }
 
             const data = await r.json();
 
@@ -429,119 +499,22 @@
     };
 
     // ────────────────────────────────────────────────────────
-    //  متابعة الحالة — ✅ يصبر 5 دقائق عند restart
+    //  متابعة الحالة
     // ────────────────────────────────────────────────────────
     function startPollingPropertyJob() {
-        if (!currentJobId) {
-            console.warn('startPollingPropertyJob: no job ID');
-            resetGenerateButton();
-            return;
-        }
-
         if (pollTimer) clearInterval(pollTimer);
 
-        pollErrorCount = 0;
-        serverErrorCount = 0;
-
-        console.log(`📡 Polling started for job: ${currentJobId}`);
-        console.log(`   Will tolerate up to ${MAX_SERVER_ERRORS} server errors (${MAX_SERVER_ERRORS * POLL_INTERVAL_MS / 1000}s)`);
+        let errorCount = 0;
 
         pollTimer = setInterval(async () => {
             try {
                 const r = await fetch(`/api/property/status/${currentJobId}`);
+                const data = await r.json();
 
-                // ✅ 404 = انتهت صلاحية المهمة
-                if (r.status === 404) {
-                    clearInterval(pollTimer);
-                    pollTimer = null;
-                    safeToast('❌ انتهت صلاحية المهمة', 'error');
-                    setStatus('❌ المهمة غير موجودة');
-                    resetGenerateButton();
-                    return;
-                }
-
-                // ✅ 429 = Too Many Requests — نتجاهل بلا عدّ
-                if (r.status === 429) {
-                    console.warn('Rate limited — waiting...');
-                    return;
-                }
-
-                // ✅✅ 502/503 = Server restart — ننتظر بصبر
-                if (r.status === 502 || r.status === 503) {
-                    serverErrorCount++;
-                    console.warn(
-                        `⏳ Server restarting (${serverErrorCount}/${MAX_SERVER_ERRORS}) — waiting...`
-                    );
-
-                    // اعرض رسالة واضحة للمستخدم
-                    const elapsed = Math.round(serverErrorCount * POLL_INTERVAL_MS / 1000);
-                    setStatus(
-                        `⏳ الخادم يُعيد التشغيل... انتظر (${elapsed}ث) — لا تُغلق النافذة`
-                    );
-
-                    // إذا استمر لفترة طويلة → استسلم
-                    if (serverErrorCount >= MAX_SERVER_ERRORS) {
-                        clearInterval(pollTimer);
-                        pollTimer = null;
-                        safeToast(
-                            '⏱️ الخادم أُعيد تشغيله كثيراً — أعد المحاولة بعد قليل',
-                            'warning'
-                        );
-                        setStatus('⏱️ الخادم في restart — أعد المحاولة');
-                        resetGenerateButton();
-                    }
-                    return;
-                }
-
-                // 5xx أخرى (500, 504)
-                if (r.status >= 500) {
-                    pollErrorCount++;
-                    console.warn(`Server error ${r.status} (${pollErrorCount}/${MAX_POLL_ERRORS})`);
-
-                    if (pollErrorCount >= MAX_POLL_ERRORS) {
-                        clearInterval(pollTimer);
-                        pollTimer = null;
-                        safeToast('❌ الخادم غير متاح', 'error');
-                        setStatus('❌ خطأ في الخادم');
-                        resetGenerateButton();
-                    }
-                    return;
-                }
-
-                // 4xx أخرى
-                if (!r.ok) {
-                    pollErrorCount++;
-                    console.warn(`HTTP ${r.status} (${pollErrorCount}/${MAX_POLL_ERRORS})`);
-                    if (pollErrorCount >= MAX_POLL_ERRORS) {
-                        clearInterval(pollTimer);
-                        pollTimer = null;
-                        resetGenerateButton();
-                    }
-                    return;
-                }
-
-                // ✅ نجح — صفّر العدّادات
-                pollErrorCount = 0;
-                serverErrorCount = 0;
-
-                // ✅ تحقق من content-type
-                const ct = r.headers.get('content-type') || '';
-                if (!ct.includes('application/json')) {
-                    console.warn('Non-JSON response:', ct);
-                    return;
-                }
-
-                let data;
-                try {
-                    data = await r.json();
-                } catch (e) {
-                    console.warn('Invalid JSON:', e);
-                    return;
-                }
+                errorCount = 0;
 
                 if (!data.success) {
-                    console.warn('API returned error:', data.error);
-                    return;
+                    throw new Error(data.error || 'Status fetch failed');
                 }
 
                 updateProgressUI(
@@ -553,23 +526,23 @@
                 if (data.status === 'done') {
                     clearInterval(pollTimer);
                     pollTimer = null;
+
                     await handleJobCompleted(data);
 
                 } else if (data.status === 'failed') {
                     clearInterval(pollTimer);
                     pollTimer = null;
 
-                    const errMsg = data.error || 'خطأ غير معروف';
-                    safeToast('❌ فشل التوليد: ' + errMsg, 'error');
-                    setStatus('❌ ' + errMsg);
+                    safeToast('❌ فشل التوليد: ' + (data.error || 'خطأ غير معروف'), 'error');
+                    setStatus('❌ ' + (data.error || 'فشل'));
                     resetGenerateButton();
                 }
 
             } catch (e) {
-                pollErrorCount++;
+                errorCount++;
                 console.warn('Poll error:', e);
 
-                if (pollErrorCount >= MAX_POLL_ERRORS) {
+                if (errorCount > 5) {
                     clearInterval(pollTimer);
                     pollTimer = null;
                     safeToast('❌ فشل الاتصال بالخادم', 'error');
@@ -577,69 +550,205 @@
                     resetGenerateButton();
                 }
             }
-        }, POLL_INTERVAL_MS);
+        }, 1500);
     }
 
+    // ────────────────────────────────────────────────────────
+    //  ✅ UPDATED: عند اكتمال الـ job — معاينة بدل الإضافة التلقائية
+    // ────────────────────────────────────────────────────────
     async function handleJobCompleted(data) {
-        const projectId = getProjectId();
+        // ✅ احفظ بيانات الفيديو في متغير عام للمعاينة
+        window._lastPropertyVideo = {
+            url: data.video_url,
+            path: data.path,
+            duration: data.duration,
+            title: data.property_meta?.title || 'فيديو عقاري',
+            property_meta: data.property_meta || {},
+            job_id: currentJobId,
+        };
 
-        // ── 1. احفظ الـ clip في المشروع (backend) ──
-        try {
-            const saveResp = await fetch(`/api/property/save/${projectId}`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    video_url: data.video_url,
-                    path: data.path,
-                    duration: data.duration,
-                    title: (data.property_meta && data.property_meta.title) || 'فيديو عقاري',
-                    property_meta: data.property_meta || {},
-                }),
-            });
-            if (!saveResp.ok) {
-                console.warn('Save returned:', saveResp.status);
-            }
-        } catch (e) {
-            console.warn('Backend save failed:', e);
-        }
+        // ✅ اعرض المعاينة (بدل إضافة تلقائية للتايم لاين)
+        showPropertyVideoPreview(data);
 
-        // ── 2. أضف إلى الـ timeline مباشرة ──
-        const clipTitle = (data.property_meta && data.property_meta.title) || 'فيديو عقاري';
-
-        if (typeof addGeneratedClip === 'function') {
-            addGeneratedClip(data.video_url, {
-                type: 'video',
-                title: clipTitle,
-                duration: data.duration || 30,
-                metadata: {
-                    source: 'property_video',
-                    job_id: currentJobId,
-                    property_meta: data.property_meta || {},
-                },
-            });
-        } else if (typeof addClipFromUrl === 'function') {
-            addClipFromUrl(data.video_url, {
-                type: 'video',
-                title: clipTitle,
-                duration: data.duration || 30,
-            });
-        } else {
-            console.warn('Neither addGeneratedClip nor addClipFromUrl found');
-            safeToast('⚠️ لم يتمكن من إضافة الفيديو للـ timeline', 'warning');
-        }
-
-        // ── 3. UI النجاح ──
         const duration = data.duration ? `${data.duration.toFixed(1)}s` : '—';
-        setStatus(
-            `✅ تم التوليد بنجاح! (${duration}) ` +
-            `<a href="${data.video_url}" target="_blank" class="text-blue-400 underline ml-2">فتح الفيديو</a>`
-        );
-
-        safeToast('✅ تم توليد الفيديو العقاري وإضافته للمشروع', 'success');
+        safeToast(`✅ تم التوليد بنجاح! (${duration})`, 'success');
 
         resetGenerateButton();
     }
 
+    // ────────────────────────────────────────────────────────
+    //  ✅ NEW: معاينة الفيديو بعد الرندر
+    // ────────────────────────────────────────────────────────
+    function showPropertyVideoPreview(data) {
+        const container = $id('propertyVideoResult');
+        if (!container) {
+            console.warn('propertyVideoResult container not found');
+            return;
+        }
+
+        const duration = data.duration ? `${data.duration.toFixed(1)}s` : '—';
+
+        container.innerHTML = `
+            <div class="bg-slate-900/60 border border-slate-700 rounded-lg p-3 mt-3">
+                <div class="flex items-center justify-between mb-3">
+                    <div class="flex items-center gap-2">
+                        <span class="text-green-400 text-lg">✅</span>
+                        <span class="text-white text-sm font-semibold">تم التوليد بنجاح</span>
+                    </div>
+                    <div class="flex gap-2 text-xs">
+                        <span class="bg-slate-700 text-slate-300 px-2 py-1 rounded">
+                            ⏱️ ${duration}
+                        </span>
+                    </div>
+                </div>
+
+                <!-- ✅ مشغّل الفيديو -->
+                <div class="rounded-lg overflow-hidden bg-black mb-3" style="aspect-ratio: 9/16; max-height: 400px;">
+                    <video
+                        id="propertyVideoPreviewPlayer"
+                        src="${data.video_url}"
+                        controls
+                        playsinline
+                        preload="metadata"
+                        style="width: 100%; height: 100%; object-fit: contain; background: #000;"
+                    ></video>
+                </div>
+
+                <!-- ✅ خيارات -->
+                <div class="grid grid-cols-3 gap-2">
+                    <button type="button" onclick="downloadPropertyVideo()"
+                            class="btn-secondary btn-sm"
+                            title="تنزيل الفيديو">
+                        ⬇️ تنزيل
+                    </button>
+                    <button type="button" onclick="addPropertyVideoToTimeline()"
+                            class="btn-primary btn-sm"
+                            title="إضافة إلى التايم لاين">
+                        ➕ إضافة للتايم لاين
+                    </button>
+                    <button type="button" onclick="resetPropertyVideoPreview()"
+                            class="btn-secondary btn-sm"
+                            title="توليد فيديو جديد">
+                        🔄 فيديو جديد
+                    </button>
+                </div>
+            </div>
+        `;
+
+        container.style.display = 'block';
+
+        // ✅ اسحب الشاشة للمعاينة
+        setTimeout(() => {
+            container.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }, 100);
+    }
+
+    // ✅ تنزيل الفيديو
+    window.downloadPropertyVideo = async function () {
+        const info = window._lastPropertyVideo;
+        if (!info || !info.url) {
+            safeToast('⚠️ لا يوجد فيديو للتنزيل', 'warning');
+            return;
+        }
+
+        try {
+            safeToast('⏳ جاري التنزيل...', 'info');
+
+            const r = await fetch(info.url);
+            if (!r.ok) throw new Error('فشل التنزيل');
+
+            const blob = await r.blob();
+            const url = URL.createObjectURL(blob);
+
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `property_${Date.now()}.mp4`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
+
+            safeToast('✅ تم التنزيل', 'success');
+        } catch (e) {
+            console.error('Download failed:', e);
+            safeToast('❌ فشل التنزيل — سيُفتح في نافذة جديدة', 'error');
+            window.open(info.url, '_blank');
+        }
+    };
+
+    // ✅ إضافة الفيديو للتايم لاين يدوياً
+    window.addPropertyVideoToTimeline = async function () {
+        const info = window._lastPropertyVideo;
+        if (!info || !info.url) {
+            safeToast('⚠️ لا يوجد فيديو', 'warning');
+            return;
+        }
+
+        const projectId = getProjectId();
+
+        // احفظ في backend (project.data.clips)
+        try {
+            await fetch(`/api/property/save/${projectId}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    video_url: info.url,
+                    path: info.path,
+                    duration: info.duration,
+                    title: info.title,
+                    property_meta: info.property_meta,
+                }),
+            });
+        } catch (e) {
+            console.warn('Backend save failed:', e);
+        }
+
+        // أضف للتايم لاين
+        if (typeof addGeneratedClip === 'function') {
+            addGeneratedClip(info.url, {
+                type: 'video',
+                title: info.title,
+                duration: info.duration || 30,
+                metadata: {
+                    source: 'property_video',
+                    job_id: info.job_id,
+                    property_meta: info.property_meta,
+                },
+            });
+            safeToast('✅ تم إضافة الفيديو للتايم لاين', 'success');
+        } else if (typeof addClipFromUrl === 'function') {
+            addClipFromUrl(info.url, {
+                type: 'video',
+                title: info.title,
+                duration: info.duration || 30,
+            });
+            safeToast('✅ تم إضافة الفيديو للتايم لاين', 'success');
+        } else {
+            safeToast('⚠️ لم يتمكن من إضافة الفيديو للتايم لاين', 'warning');
+        }
+    };
+
+    // ✅ إعادة تعيين المعاينة (لتوليد جديد)
+    window.resetPropertyVideoPreview = function () {
+        const container = $id('propertyVideoResult');
+        if (container) {
+            container.innerHTML = '';
+            container.style.display = 'none';
+        }
+
+        const progress = $id('propertyVideoProgress');
+        if (progress) progress.style.display = 'none';
+
+        const status = $id('propertyVideoStatus');
+        if (status) status.innerHTML = '';
+
+        window._lastPropertyVideo = null;
+    };
+
+    // ────────────────────────────────────────────────────────
+    //  Helpers للـ UI
+    // ────────────────────────────────────────────────────────
     function getStageLabel(stage) {
         const labels = {
             queued: '⏳ في الانتظار',
@@ -650,7 +759,6 @@
             audio: '🎵 دمج الصوت',
             upload: '📤 رفع الفيديو',
             done: '✅ اكتمل',
-            failed: '❌ فشل',
         };
         return labels[stage] || stage || '';
     }
@@ -674,9 +782,6 @@
 
     function resetGenerateButton() {
         isGenerating = false;
-        pollErrorCount = 0;
-        serverErrorCount = 0;
-
         const btn = $id('btnGeneratePropertyVideo');
         if (btn) {
             btn.disabled = false;
@@ -701,7 +806,7 @@
     });
 
     // ────────────────────────────────────────────────────────
-    //  Debug helpers
+    //  Expose for debugging
     // ────────────────────────────────────────────────────────
     window.__propertyVideoDebug = {
         getState: () => ({
@@ -710,28 +815,12 @@
                 motion: i.motion,
                 uploading: i.uploading,
                 hasPath: !!i.path,
+                isExternal: !!i.isExternalUrl,
             })),
             currentJobId,
             isGenerating,
-            pollErrorCount,
-            serverErrorCount,
         }),
         getImages: () => uploadedImages,
-        getPayloadPreview: () => {
-            const propTypeEl = document.querySelector('input[name="propType"]:checked');
-            const featuresRaw = ($value('propFeatures', '')).trim();
-            return {
-                voiceover_enabled: $checked('propVoiceoverEnabled', true),
-                overlay_enabled: $checked('propOverlayEnabled', true),
-                voice: $value('propVoice', 'ar-SA-HamedNeural'),
-                property_type: propTypeEl ? propTypeEl.value : 'apartment',
-                features: featuresRaw.split(/[,،]/).map(s => s.trim()).filter(Boolean),
-                show_price: $checked('propOverlayEnabled', true) && $checked('propShowPrice', true),
-                show_location: $checked('propOverlayEnabled', true) && $checked('propShowLocation', true),
-                show_area: $checked('propOverlayEnabled', true) && $checked('propShowArea', true),
-                show_contact: $checked('propOverlayEnabled', true) && $checked('propShowContact', true),
-            };
-        },
         addTestImage: (url) => {
             uploadedImages.push({
                 url: url,
@@ -740,15 +829,9 @@
                 motion: 'auto',
                 name: 'test.jpg',
                 uploading: false,
+                isExternalUrl: true,
             });
             renderPropertyImagesPreview();
-        },
-        stopPolling: () => {
-            if (pollTimer) {
-                clearInterval(pollTimer);
-                pollTimer = null;
-                console.log('🛑 Polling stopped manually');
-            }
         },
     };
 
