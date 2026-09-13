@@ -569,6 +569,33 @@ _SCHEMA_MIGRATIONS: list[tuple[str, str]] = [
         "ON projects (status)",
     ),
 
+    # ── 2026-09-13: add channel metadata columns to publisher_accounts ─────
+    (
+        "publisher_accounts.channel_id",
+        "ALTER TABLE publisher_accounts "
+        "ADD COLUMN IF NOT EXISTS channel_id VARCHAR(64)",
+    ),
+    (
+        "publisher_accounts.channel_title",
+        "ALTER TABLE publisher_accounts "
+        "ADD COLUMN IF NOT EXISTS channel_title VARCHAR(255)",
+    ),
+    (
+        "publisher_accounts.channel_handle",
+        "ALTER TABLE publisher_accounts "
+        "ADD COLUMN IF NOT EXISTS channel_handle VARCHAR(128)",
+    ),
+    (
+        "publisher_accounts.channel_thumbnail",
+        "ALTER TABLE publisher_accounts "
+        "ADD COLUMN IF NOT EXISTS channel_thumbnail TEXT",
+    ),
+    (
+        "publisher_accounts.channel_id_index",
+        "CREATE INDEX IF NOT EXISTS ix_publisher_accounts_channel_id "
+        "ON publisher_accounts (channel_id)",
+    ),
+
     # ── أضف migrations جديدة هنا ──────────────────────────────────────────
     # (
     #     "table.column",
