@@ -42,23 +42,65 @@
                 {% endif %}
             </div>
             <div class="flex-1 min-w-0">
-                <div class="text-white font-medium text-sm truncate">{{ account.name }}</div>
-                <div class="text-slate-400 text-xs capitalize">{{ account.platform_name }}</div>
+                <div class="text-white font-medium text-sm truncate" title="{{ account.channel_title or account.name }}">
+                    {{ account.channel_title or account.name }}
+                </div>
+                <div class="text-slate-400 text-xs capitalize truncate">
+                    {{ account.platform_name }}{% if account.channel_handle %} · {{ account.channel_handle }}{% endif %}
+                </div>
             </div>
-            {# Disconnect button #}
-            <button onclick="disconnectAccount('{{ account.id }}')"
-                    title="فصل الحساب"
-                    class="text-slate-600 hover:text-red-400 transition-colors p-1 flex-shrink-0">
-                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101M10.172 13.828a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/></svg>
-            </button>
+            {# Actions #}
+            <div class="flex items-center gap-0.5 flex-shrink-0">
+                <button onclick='showAccountDetails({{ {
+                        "id": account.id,
+                        "name": account.name,
+                        "platform_name": account.platform_name,
+                        "channel_id": account.channel_id,
+                        "channel_title": account.channel_title,
+                        "channel_handle": account.channel_handle,
+                        "channel_thumbnail": account.channel_thumbnail,
+                        "is_active": account.is_active,
+                        "last_verified": account.last_verified.strftime("%Y-%m-%d %H:%M") if account.last_verified else None,
+                        "created_at": account.created_at.strftime("%Y-%m-%d") if account.created_at else None
+                    } | tojson }})'
+                        title="عرض التفاصيل"
+                        class="text-slate-600 hover:text-blue-400 transition-colors p-1">
+                    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
+                    </svg>
+                </button>
+                <button onclick="disconnectAccount('{{ account.id }}')"
+                        title="فصل الحساب"
+                        class="text-slate-600 hover:text-red-400 transition-colors p-1">
+                    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101M10.172 13.828a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/></svg>
+                </button>
+            </div>
         </div>
 
-        {# Channel thumbnail / info if present #}
-        {% if account.channel_thumbnail %}
-        <div class="flex items-center gap-2 mb-3 px-1">
-            <img src="{{ account.channel_thumbnail }}" alt="thumbnail"
-                 class="w-7 h-7 rounded-full object-cover flex-shrink-0">
-            <span class="text-slate-400 text-xs truncate">{{ account.channel_id }}</span>
+        {# ── Channel info block ── #}
+        {% if account.channel_thumbnail or account.channel_title or account.channel_id %}
+        <div class="flex items-center gap-2.5 mb-3 p-2 bg-slate-800/50 rounded-lg">
+            {% if account.channel_thumbnail %}
+            <img src="{{ account.channel_thumbnail }}" alt="{{ account.channel_title }}"
+                 class="w-9 h-9 rounded-full object-cover flex-shrink-0 ring-2 ring-slate-700">
+            {% else %}
+            <div class="w-9 h-9 rounded-full bg-slate-700 flex items-center justify-center flex-shrink-0 ring-2 ring-slate-700">
+                <svg class="w-4 h-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/></svg>
+            </div>
+            {% endif %}
+            <div class="min-w-0 flex-1">
+                {% if account.channel_title %}
+                <div class="text-slate-200 text-xs font-medium truncate" title="{{ account.channel_title }}">
+                    {{ account.channel_title }}
+                </div>
+                {% endif %}
+                {% if account.channel_id %}
+                <div class="text-slate-500 text-[11px] font-mono truncate" title="{{ account.channel_id }}">
+                    {{ account.channel_id }}
+                </div>
+                {% endif %}
+            </div>
         </div>
         {% endif %}
 
@@ -160,6 +202,23 @@
     </ol>
 </div>
 
+{# ── Account details modal ────────────────────────────────────────────────── #}
+<div id="account-modal" class="hidden fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"
+     onclick="if (event.target === this) this.classList.add('hidden')">
+    <div class="bg-slate-900 border border-slate-700 rounded-2xl max-w-md w-full p-5 shadow-2xl">
+        <div class="flex items-center justify-between mb-4">
+            <h3 class="text-white font-semibold">تفاصيل الحساب</h3>
+            <button onclick="document.getElementById('account-modal').classList.add('hidden')"
+                    class="text-slate-500 hover:text-white transition-colors">
+                <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                </svg>
+            </button>
+        </div>
+        <div id="account-modal-body" class="space-y-2.5 text-sm"></div>
+    </div>
+</div>
+
 {% endblock %}
 
 {% block scripts %}
@@ -174,5 +233,37 @@ async function disconnectAccount(accountId) {
         showToast('فشل الفصل', 'error');
     }
 }
+
+function showAccountDetails(account) {
+    const rows = [
+        ['الاسم المعروض',   account.channel_title || account.name || '—'],
+        ['اسم المستخدم',    account.channel_handle || '—'],
+        ['المنصة',          account.platform_name || '—'],
+        ['معرّف القناة',     account.channel_id || '—'],
+        ['الحالة',          account.is_active ? 'نشط' : 'غير نشط'],
+        ['آخر تحقق',        account.last_verified || '—'],
+        ['تاريخ الربط',      account.created_at || '—'],
+    ];
+
+    const thumb = account.channel_thumbnail
+        ? `<img src="${account.channel_thumbnail}" class="w-14 h-14 rounded-full object-cover mx-auto ring-2 ring-slate-700 mb-3">`
+        : '';
+
+    document.getElementById('account-modal-body').innerHTML = thumb + rows.map(([k, v]) => `
+        <div class="flex justify-between items-start gap-3 border-b border-slate-800 pb-2 last:border-0">
+            <span class="text-slate-500 text-xs flex-shrink-0">${k}</span>
+            <span class="text-slate-200 text-xs font-mono truncate max-w-[65%] text-left" dir="ltr" title="${v ?? '—'}">${v ?? '—'}</span>
+        </div>
+    `).join('');
+
+    document.getElementById('account-modal').classList.remove('hidden');
+}
+
+// Close modal on ESC
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+        document.getElementById('account-modal')?.classList.add('hidden');
+    }
+});
 </script>
 {% endblock %}
