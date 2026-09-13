@@ -2,9 +2,9 @@
  * voiceover.js — نظام شامل لتسجيل/توليد/استنساخ الصوت
  * Multi-Provider: Edge TTS + HuggingFace + ElevenLabs + D-ID
  *
- * ✅ FIXED: المدة الحقيقية لـ Talking Head
- * ✅ FIXED: تشغيل الفيديو في التايم لاين
- * ✅ NEW: VideoPlaybackState + syncVideoClipsPlayback
+ * ⚠️ مهم: هذا الملف لا يتعامل مع تشغيل الفيديو!
+ * تشغيل الفيديو يتم عبر timeline-playback.js فقط.
+ * هذا الملف مسؤول عن: الصوت + التسجيل + TTS + إنشاء/hحفظ Talking Head.
  */
 
 // ============================================================
@@ -105,13 +105,13 @@ const TalkingHeadState = {
     currentTalkId: null,
     pollingInterval: null,
     resultUrl: null,
-    resultDuration: 0,          // ✅ NEW: المدة الحقيقية من D-ID
+    resultDuration: 0,
     isGenerating: false,
 };
 
 
 // ============================================================
-// 🔊 Audio Playback State — تشغيل الصوت في الـ timeline
+// 🔊 Audio Playback State (صوت فقط — الفيديو في timeline-playback.js)
 // ============================================================
 const AudioPlaybackState = {
     activeAudios: {},        // { clipId: HTMLAudioElement }
@@ -119,13 +119,6 @@ const AudioPlaybackState = {
     isMuted: false,
     playbackRate: 1,
     syncIntervalId: null,
-};
-
-
-// ✅ NEW: حالة تشغيل الفيديو
-const VideoPlaybackState = {
-    activeVideo: null,       // HTMLVideoElement
-    activeClipId: null,
 };
 
 
@@ -967,7 +960,7 @@ async function addVoiceoverClip(clipData) {
 
         // حقول إضافية
         url: clipData.url || null,
-        src: clipData.url || null,                  // ✅ NEW: للتوافق مع previewVideo
+        src: clipData.url || null,                  // للتوافق
         path: clipData.path || null,
         mediaId: clipData.mediaId || null,
         script: clipData.script || '',
@@ -1040,6 +1033,7 @@ function scrollToClipById(clipId) {
 
 // ============================================================
 // 🔊 AUDIO PLAYBACK — تشغيل الأصوات في الـ timeline
+// ملاحظة: الفيديو يُدار عبر timeline-playback.js
 // ============================================================
 
 function stopAllAudioClips() {
@@ -1051,11 +1045,6 @@ function stopAllAudioClips() {
     });
     AudioPlaybackState.activeAudios = {};
     AudioPlaybackState.lastSyncTime = -1;
-
-    // ✅ NEW: أوقف الفيديو أيضًا
-    if (typeof _stopActiveVideo === 'function') {
-        _stopActiveVideo();
-    }
 }
 
 
@@ -1167,13 +1156,7 @@ function syncAudioMute(isMuted) {
         audio.muted = isMuted;
         audio.volume = isMuted ? 0 : 1;
     });
-
-    // ✅ NEW: الفيديو أيضًا
-    const videoEl = document.getElementById('previewVideo');
-    if (videoEl) {
-        videoEl.muted = isMuted;
-        videoEl.volume = isMuted ? 0 : 1;
-    }
+    // ملاحظة: الفيديو يُدار عبر timeline-playback.js
 }
 
 
@@ -1182,136 +1165,12 @@ function syncAudioSpeed(speed) {
     Object.values(AudioPlaybackState.activeAudios).forEach(audio => {
         audio.playbackRate = speed || 1;
     });
-
-    // ✅ NEW: الفيديو أيضًا
-    const videoEl = document.getElementById('previewVideo');
-    if (videoEl) {
-        videoEl.playbackRate = speed || 1;
-    }
+    // ملاحظة: الفيديو يُدار عبر timeline-playback.js
 }
 
 
 // ============================================================
-// 🎬 VIDEO PLAYBACK — تشغيل فيديوهات Talking Head
-// ============================================================
-
-/**
- * ✅ NEW: مزامنة تشغيل الفيديو مع الوقت الحالي
- */
-function syncVideoClipsPlayback(time) {
-    if (typeof projectData === 'undefined' || !projectData.clips) return;
-
-    const videoClips = projectData.clips.filter(c =>
-        c.type === 'video' && (c.url || c.src || c.content)
-    );
-
-    if (!videoClips.length) {
-        // لا توجد فيديوهات — أوقف أي فيديو نشط
-        if (VideoPlaybackState.activeVideo) {
-            _stopActiveVideo();
-        }
-        return;
-    }
-
-    // ابحث عن المقطع النشط حاليًا
-    const activeClip = videoClips.find(c =>
-        time >= c.start && time <= (c.start + c.duration)
-    );
-
-    if (!activeClip) {
-        _stopActiveVideo();
-        return;
-    }
-
-    const url = activeClip.url || activeClip.src || activeClip.content;
-    if (!url) return;
-
-    // إذا تغيّر المقطع النشط، بدّل
-    if (VideoPlaybackState.activeClipId !== activeClip.id) {
-        _stopActiveVideo();
-        _startVideoClip(activeClip, url, time);
-    } else {
-        // نفس المقطع — زامن الوقت
-        const localTime = time - activeClip.start;
-        const video = VideoPlaybackState.activeVideo;
-        if (video && video.readyState >= 2) {
-            const drift = Math.abs(video.currentTime - localTime);
-            if (drift > 0.5) {
-                try { video.currentTime = localTime; } catch (e) { }
-            }
-        }
-    }
-}
-
-
-function _startVideoClip(clip, url, time) {
-    const videoEl = document.getElementById('previewVideo');
-    if (!videoEl) {
-        console.warn('⚠️ previewVideo غير موجود في DOM');
-        return;
-    }
-
-    // إذا كان نفس الرابط، لا تعد التحميل
-    if (videoEl.src !== url) {
-        videoEl.src = url;
-    }
-
-    videoEl.style.display = 'block';
-    videoEl.muted = AudioPlaybackState.isMuted || false;
-    videoEl.volume = AudioPlaybackState.isMuted ? 0 : 1;
-    videoEl.playbackRate = AudioPlaybackState.playbackRate || 1;
-
-    const localTime = Math.max(0, time - clip.start);
-
-    const onReady = () => {
-        try {
-            videoEl.currentTime = localTime;
-            videoEl.play().catch(err => {
-                if (err.name !== 'AbortError') {
-                    console.warn('⚠️ Video play failed:', err);
-                }
-            });
-        } catch (e) { }
-    };
-
-    if (videoEl.readyState >= 1) {
-        onReady();
-    } else {
-        videoEl.onloadedmetadata = onReady;
-        videoEl.load();
-    }
-
-    videoEl.onerror = (e) => {
-        console.error('❌ Video load error:', url, e);
-        showToast(`⚠️ فشل تحميل الفيديو: ${clip.title}`, 'warning');
-    };
-
-    VideoPlaybackState.activeVideo = videoEl;
-    VideoPlaybackState.activeClipId = clip.id;
-    console.log(`🎬 Started video [${clip.id}] at ${localTime.toFixed(2)}s`);
-}
-
-
-function _stopActiveVideo() {
-    const videoEl = document.getElementById('previewVideo');
-    if (videoEl) {
-        try {
-            if (!videoEl.paused) videoEl.pause();
-        } catch (e) { }
-        videoEl.style.display = 'none';
-    }
-    VideoPlaybackState.activeVideo = null;
-    VideoPlaybackState.activeClipId = null;
-}
-
-
-function stopAllVideoClips() {
-    _stopActiveVideo();
-}
-
-
-// ============================================================
-// 🎯 بدء حلقة المزامنة — Audio + Video
+// 🎯 حلقة مزامنة الصوت (فقط — لا فيديو!)
 // ============================================================
 function startAudioSyncLoop() {
     if (AudioPlaybackState.syncIntervalId) {
@@ -1322,9 +1181,9 @@ function startAudioSyncLoop() {
         if (typeof isPlaying !== 'undefined' && isPlaying) {
             const t = typeof currentTime !== 'undefined' ? currentTime : 0;
             syncAudioClipsPlayback(t);
-            syncVideoClipsPlayback(t);   // ✅ NEW
+            // ⚠️ لا نستدعي أي دالة فيديو — timeline-playback.js مسؤول
         } else {
-            // أوقف كل شيء
+            // أوقف الأصوات عند التوقف
             if (Object.keys(AudioPlaybackState.activeAudios).length > 0) {
                 Object.values(AudioPlaybackState.activeAudios).forEach(audio => {
                     try {
@@ -1332,11 +1191,10 @@ function startAudioSyncLoop() {
                     } catch (e) { }
                 });
             }
-            _stopActiveVideo();   // ✅ NEW
         }
     }, 100);
 
-    console.log('🎧 Audio+Video sync loop started');
+    console.log('🎧 Audio sync loop started (فيديو يُدار بـ timeline-playback.js)');
 }
 
 
@@ -1353,14 +1211,13 @@ function patchPlaybackFunctions() {
                 const nt = typeof currentTime !== 'undefined' ? currentTime : t;
                 if (typeof isPlaying !== 'undefined' && isPlaying) {
                     syncAudioClipsPlayback(nt);
-                    syncVideoClipsPlayback(nt);   // ✅ NEW
                 } else {
                     stopAllAudioClips();
                 }
             }, 50);
         };
         window._seekToPatched = true;
-        console.log('✅ seekTo patched');
+        console.log('✅ seekTo patched (audio)');
     }
 
     // ── togglePlay ──
@@ -1373,16 +1230,15 @@ function patchPlaybackFunctions() {
                 if (np) {
                     const t = typeof currentTime !== 'undefined' ? currentTime : 0;
                     syncAudioClipsPlayback(t);
-                    syncVideoClipsPlayback(t);   // ✅ NEW
-                    console.log('▶️ Playback started — audio+video sync');
+                    console.log('▶️ Playback started — audio sync');
                 } else {
                     stopAllAudioClips();
-                    console.log('⏸ Playback paused — audio+video stopped');
+                    console.log('⏸ Playback paused — audio stopped');
                 }
             }, 50);
         };
         window._togglePlayPatched = true;
-        console.log('✅ togglePlay patched');
+        console.log('✅ togglePlay patched (audio)');
     }
 
     // ── toggleMute ──
@@ -1396,7 +1252,7 @@ function patchPlaybackFunctions() {
             }, 50);
         };
         window._toggleMutePatched = true;
-        console.log('✅ toggleMute patched');
+        console.log('✅ toggleMute patched (audio)');
     }
 
     // ── changeSpeed ──
@@ -1410,7 +1266,7 @@ function patchPlaybackFunctions() {
             }, 50);
         };
         window._changeSpeedPatched = true;
-        console.log('✅ changeSpeed patched');
+        console.log('✅ changeSpeed patched (audio)');
     }
 }
 
@@ -1420,23 +1276,6 @@ function initAudioPlayback() {
     startAudioSyncLoop();
 
     console.log('🎧 Audio playback initialized');
-
-    document.addEventListener('click', (e) => {
-        const clipEl = e.target.closest('.clip-block');
-        if (!clipEl) return;
-
-        const clipId = clipEl.dataset.id || clipEl.dataset.clipId;
-        if (!clipId) return;
-
-        const pd = safeGetProjectData();
-        const clip = pd.clips.find(c =>
-            String(c.id) === String(clipId) && c.type === 'audio'
-        );
-
-        if (clip && clip.url) {
-            console.log(`🎧 كتم/تشغيل معاينة [${clipId}]: ${clip.title}`);
-        }
-    });
 }
 
 
@@ -2469,7 +2308,7 @@ function renderSegmentsForSync() {
 
 
 // ============================================================
-// 🎭 TALKING HEAD
+// 🎭 TALKING HEAD (إنشاء + حفظ فقط — التشغيل في timeline-playback.js)
 // ============================================================
 function openTalkingHeadModal() {
     const modal = document.getElementById('talkingHeadModal');
@@ -2479,7 +2318,7 @@ function openTalkingHeadModal() {
     TalkingHeadState.imageUrl = null;
     TalkingHeadState.currentTalkId = null;
     TalkingHeadState.resultUrl = null;
-    TalkingHeadState.resultDuration = 0;    // ✅ FIXED
+    TalkingHeadState.resultDuration = 0;
     TalkingHeadState.isGenerating = false;
 
     if (TalkingHeadState.pollingInterval) {
@@ -2742,7 +2581,6 @@ function startTalkingHeadPolling(talkId) {
             if (data.status === 'done') {
                 clearInterval(TalkingHeadState.pollingInterval);
                 TalkingHeadState.pollingInterval = null;
-                // ✅ FIXED: مرّر المدة الحقيقية
                 handleTalkingHeadSuccess(data.result_url, data.duration);
             } else if (data.status === 'error') {
                 clearInterval(TalkingHeadState.pollingInterval);
@@ -2767,7 +2605,6 @@ function updateTHProgress(percent, text) {
 }
 
 
-// ✅ FIXED: استقبل المدة الحقيقية من الـ backend
 function handleTalkingHeadSuccess(videoUrl, duration) {
     const btn = document.getElementById('btnGenerateTalkingHead');
     const statusEl = document.getElementById('talkingHeadStatus');
@@ -2781,7 +2618,7 @@ function handleTalkingHeadSuccess(videoUrl, duration) {
     if (statusEl) statusEl.innerHTML = `<div style="color:#34d399;">✅ تم بنجاح!${durText}</div>`;
 
     TalkingHeadState.resultUrl = videoUrl;
-    TalkingHeadState.resultDuration = duration || 0;   // ✅ احفظ المدة
+    TalkingHeadState.resultDuration = duration || 0;
     TalkingHeadState.isGenerating = false;
 
     if (resultEl) {
@@ -2819,7 +2656,7 @@ function handleTalkingHeadError(message) {
 }
 
 
-// ✅ FIXED: استخدام المدة الحقيقية من الـ backend
+// ✅ FIXED: استخدام duration الحقيقية من الـ backend
 async function saveTalkingHeadToProject() {
     if (!TalkingHeadState.resultUrl) return showToast('⚠️ لا يوجد فيديو', 'warning');
 
@@ -2828,7 +2665,6 @@ async function saveTalkingHeadToProject() {
     const voiceSelect = document.getElementById('talkingHeadVoice');
     const voiceId = voiceSelect?.value;
 
-    // ✅ FIXED: لا ترسل duration إلا إذا كانت حقيقية
     const payload = {
         video_url: TalkingHeadState.resultUrl,
         title: `Talking Head - ${new Date().toLocaleTimeString('ar')}`,
@@ -2840,7 +2676,6 @@ async function saveTalkingHeadToProject() {
     if (TalkingHeadState.resultDuration > 0) {
         payload.duration = TalkingHeadState.resultDuration;
     }
-    // إذا لم نُرسل duration، الـ backend سيستخرجها عبر ffprobe
 
     try {
         const res = await fetch(`/api/talking-head/save/${safeGetProjectId()}`, {
@@ -2852,14 +2687,13 @@ async function saveTalkingHeadToProject() {
         const data = await res.json();
         if (!data.success) throw new Error(data.error);
 
-        // ✅ FIXED: استخدم duration من الـ backend (مضمونة)
         await addVoiceoverClip({
             type: 'video',
             title: data.clip.title,
             url: data.clip.url,
             script: text,
             script_segments: [],
-            duration: data.clip.duration,   // ← من الـ backend
+            duration: data.clip.duration,
             start: data.clip.start,
             source: 'talking_head',
             voice_id: voiceId,
@@ -2934,12 +2768,12 @@ document.addEventListener('DOMContentLoaded', () => {
     initSavedVoices();
     loadEdgeVoices();
 
-    // 🔊 تهيئة نظام تشغيل الصوت والفيديو
+    // 🔊 تهيئة نظام تشغيل الصوت فقط (الفيديو في timeline-playback.js)
     setTimeout(() => {
         initAudioPlayback();
     }, 300);
 
-    console.log('✅ voiceover.js loaded — Audio+Video sync enabled');
+    console.log('✅ voiceover.js loaded — Audio only (Video handled by timeline-playback.js)');
 });
 
 
@@ -3014,7 +2848,7 @@ window.updateTalkingHeadCharCount = updateTalkingHeadCharCount;
 window.populateTalkingHeadVoices = populateTalkingHeadVoices;
 window.updateTalkingHeadGenerateBtn = updateTalkingHeadGenerateBtn;
 
-// 🔊 Audio Playback
+// 🔊 Audio Playback (صوت فقط)
 window.syncAudioClipsPlayback = syncAudioClipsPlayback;
 window.stopAllAudioClips = stopAllAudioClips;
 window.syncAudioMute = syncAudioMute;
@@ -3022,9 +2856,7 @@ window.syncAudioSpeed = syncAudioSpeed;
 window.initAudioPlayback = initAudioPlayback;
 window.startAudioSyncLoop = startAudioSyncLoop;
 
-// 🎬 Video Playback (جديد)
-window.syncVideoClipsPlayback = syncVideoClipsPlayback;
-window.stopAllVideoClips = stopAllVideoClips;
+// ⚠️ ملاحظة: لم يتم تصدير أي دالة فيديو — timeline-playback.js مسؤول عنها
 
 window.escapeHtml = escapeHtml;
 window.getCurrentPlayheadTime = getCurrentPlayheadTime;
