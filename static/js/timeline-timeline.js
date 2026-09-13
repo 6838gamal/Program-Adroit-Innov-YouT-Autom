@@ -2,23 +2,22 @@
 //  timeline-timeline.js — التايم لاين + الكليبس + السحب
 //  ✅ FIXED: url || src || content للفيديو
 //  ✅ FIXED: drawVideoFrame يقبل srcOverride
-//  ✅ FIXED: renderPreview يتحقق من src
+//  ✅ FIXED: renderPreview يتحقق من window._currentVideoPreviewId
 // ============================================================
 
 // ============================================================
 //  RENDER PREVIEW (Canvas)
+//  ✅ FIXED: استخدام window._currentVideoPreviewId (أكثر موثوقية)
 // ============================================================
 function renderPreview(time) {
     if (!isCanvasReady || !ctx) return;
 
-    // ✅ FIXED: تحقق من الفيديو بشكل أعمق
-    const videoEl = document.getElementById('previewVideo');
-    const videoIsActive = videoEl && 
-                          videoEl.style.display === 'block' && 
-                          videoEl.src && 
-                          videoEl.readyState >= 1;
-    
-    if (videoIsActive) {
+    // ✅ FIXED: فحص window._currentVideoPreviewId (أكثر موثوقية من display)
+    const hasActiveVideo = (typeof window._currentVideoPreviewId !== 'undefined') &&
+                           (window._currentVideoPreviewId !== null);
+
+    if (hasActiveVideo) {
+        // فيديو نشط — لا ترسم على canvas
         document.getElementById('currentTimeDisplay').textContent = formatTime(time);
         document.getElementById('totalTimeDisplay').textContent = formatTime(projectData.totalDuration);
         const slider = document.getElementById('seekSlider');
@@ -955,6 +954,7 @@ function setupPlayheadDragging() {
             currentTime = time;
             updatePlayhead();
             renderPreview(currentTime);
+            syncVideoPreview(currentTime);
             autoScrollDuringDrag(e.clientX, timelineScroll);
             e.preventDefault();
         });
@@ -996,6 +996,7 @@ function setupPlayheadDragging() {
         currentTime = time;
         updatePlayhead();
         renderPreview(currentTime);
+        syncVideoPreview(currentTime);
         autoScrollDuringDrag(touch.clientX, timelineScroll);
         e.preventDefault();
     }, { passive: false });
@@ -1033,6 +1034,7 @@ function setupPlayheadDragging() {
         currentTime = time;
         updatePlayhead();
         renderPreview(currentTime);
+        syncVideoPreview(currentTime);
         autoScrollDuringDrag(e.clientX, timelineScroll);
     });
 
@@ -1068,6 +1070,7 @@ function setupPlayheadDragging() {
                 currentTime = time;
                 updatePlayhead();
                 renderPreview(currentTime);
+                syncVideoPreview(currentTime);
                 e.preventDefault();
             });
 
@@ -1097,6 +1100,7 @@ function setupPlayheadDragging() {
                 currentTime = time;
                 updatePlayhead();
                 renderPreview(currentTime);
+                syncVideoPreview(currentTime);
                 e.preventDefault();
             }, { passive: false });
 
