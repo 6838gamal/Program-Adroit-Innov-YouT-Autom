@@ -1,0 +1,295 @@
+{% extends "base.html" %}
+
+{% block title %}سياسة الخصوصية{% endblock %}
+{% block page_title %}سياسة الخصوصية{% endblock %}
+
+{% block header_actions %}
+<span class="text-xs text-slate-500 hidden sm:inline">
+    آخر تحديث: {{ last_updated or "2026-09-14" }}
+</span>
+{% endblock %}
+
+{% block content %}
+<div class="max-w-4xl mx-auto space-y-6">
+
+    <!-- Hero -->
+    <div class="card bg-gradient-to-br from-blue-950 to-slate-900 border-blue-900">
+        <div class="flex items-start gap-4">
+            <div class="w-12 h-12 bg-blue-600 rounded-xl flex items-center justify-center flex-shrink-0">
+                <svg class="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                          d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/>
+                </svg>
+            </div>
+            <div class="flex-1">
+                <h2 class="text-xl font-bold text-white mb-2">سياسة الخصوصية</h2>
+                <p class="text-slate-400 text-sm leading-relaxed">
+                    نحن في <strong class="text-slate-200">{{ settings.APP_NAME or "Content Platform" }}</strong>
+                    نلتزم بحماية خصوصيتك وبياناتك الشخصية. توضح هذه السياسة كيفية جمعنا واستخدامنا وحمايتنا لمعلوماتك
+                    عند استخدامك لمنصتنا لإنتاج المحتوى.
+                </p>
+                <div class="flex flex-wrap gap-3 mt-4 text-xs">
+                    <span class="badge status-published">
+                        <svg class="w-3 h-3 ml-1" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/></svg>
+                        متوافق مع GDPR
+                    </span>
+                    <span class="badge status-rendered">آخر تحديث: {{ last_updated or "2026-09-14" }}</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Table of Contents -->
+    <div class="card">
+        <h3 class="text-sm font-semibold text-white mb-3 flex items-center gap-2">
+            <svg class="w-4 h-4 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h7"/>
+            </svg>
+            المحتويات
+        </h3>
+        <nav class="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
+            <a href="#section-1" class="text-slate-400 hover:text-blue-400 transition-colors py-1">١. المعلومات التي نجمعها</a>
+            <a href="#section-2" class="text-slate-400 hover:text-blue-400 transition-colors py-1">٢. كيفية استخدام المعلومات</a>
+            <a href="#section-3" class="text-slate-400 hover:text-blue-400 transition-colors py-1">٣. مشاركة البيانات مع الأطراف الثالثة</a>
+            <a href="#section-4" class="text-slate-400 hover:text-blue-400 transition-colors py-1">٤. مزودو الخدمات (TTS / التخزين)</a>
+            <a href="#section-5" class="text-slate-400 hover:text-blue-400 transition-colors py-1">٥. أمن البيانات</a>
+            <a href="#section-6" class="text-slate-400 hover:text-blue-400 transition-colors py-1">٦. حقوقك</a>
+            <a href="#section-7" class="text-slate-400 hover:text-blue-400 transition-colors py-1">٧. ملفات تعريف الارتباط</a>
+            <a href="#section-8" class="text-slate-400 hover:text-blue-400 transition-colors py-1">٨. التعديلات والتواصل</a>
+        </nav>
+    </div>
+
+    <!-- 1 -->
+    <div id="section-1" class="card">
+        <h3 class="text-base font-semibold text-white mb-3 flex items-center gap-2">
+            <span class="w-6 h-6 bg-blue-600 rounded-md flex items-center justify-center text-xs font-bold text-white flex-shrink-0">١</span>
+            المعلومات التي نجمعها
+        </h3>
+        <div class="space-y-3 text-sm text-slate-300 leading-relaxed">
+            <p>نجمع الأنواع التالية من المعلومات لتقديم خدماتنا:</p>
+            <ul class="space-y-2 pr-5">
+                <li class="flex gap-2"><span class="text-blue-400 flex-shrink-0">•</span><span><strong class="text-slate-100">بيانات الحساب:</strong> الاسم، البريد الإلكتروني، وبيانات تسجيل الدخول.</span></li>
+                <li class="flex gap-2"><span class="text-blue-400 flex-shrink-0">•</span><span><strong class="text-slate-100">المحتوى المُنتَج:</strong> النصوص، الصور، التسجيلات الصوتية، والفيديوهات التي تنشئها على المنصة.</span></li>
+                <li class="flex gap-2"><span class="text-blue-400 flex-shrink-0">•</span><span><strong class="text-slate-100">التسجيلات الصوتية:</strong> عند استخدام ميزة استنساخ الصوت، نحتفظ بعينات صوتك بشكل مؤقت لمعالجتها.</span></li>
+                <li class="flex gap-2"><span class="text-blue-400 flex-shrink-0">•</span><span><strong class="text-slate-100">بيانات الاستخدام:</strong> عنوان IP، نوع المتصفح، الصفحات التي تزورها، وأوقات الاستخدام.</span></li>
+                <li class="flex gap-2"><span class="text-blue-400 flex-shrink-0">•</span><span><strong class="text-slate-100">بيانات المنصات المتصلة:</strong> عند ربط قنواتك (مثل YouTube)، نحفظ رموز الوصول (tokens) بشكل مشفّر.</span></li>
+            </ul>
+        </div>
+    </div>
+
+    <!-- 2 -->
+    <div id="section-2" class="card">
+        <h3 class="text-base font-semibold text-white mb-3 flex items-center gap-2">
+            <span class="w-6 h-6 bg-blue-600 rounded-md flex items-center justify-center text-xs font-bold text-white flex-shrink-0">٢</span>
+            كيفية استخدام المعلومات
+        </h3>
+        <div class="space-y-3 text-sm text-slate-300 leading-relaxed">
+            <p>نستخدم معلوماتك للأغراض التالية:</p>
+            <ul class="space-y-2 pr-5">
+                <li class="flex gap-2"><span class="text-blue-400 flex-shrink-0">•</span><span>تشغيل الخدمة وتقديم الميزات المطلوبة (توليد الصوت، الرندر، النشر).</span></li>
+                <li class="flex gap-2"><span class="text-blue-400 flex-shrink-0">•</span><span>تحسين جودة الخدمة وتطوير ميزات جديدة.</span></li>
+                <li class="flex gap-2"><span class="text-blue-400 flex-shrink-0">•</span><span>التواصل معك بخصوص التحديثات والدعم الفني.</span></li>
+                <li class="flex gap-2"><span class="text-blue-400 flex-shrink-0">•</span><span>منع إساءة الاستخدام والامتثال للقوانين المعمول بها.</span></li>
+                <li class="flex gap-2"><span class="text-blue-400 flex-shrink-0">•</span><span>تحليل الأداء الإجمالي (بشكل مجمّع ومجهول الهوية).</span></li>
+            </ul>
+            <div class="bg-blue-950/50 border border-blue-900 rounded-lg p-3 mt-3">
+                <p class="text-xs text-blue-200">
+                    <strong>ملاحظة:</strong> لا نبيع بياناتك الشخصية لأي طرف ثالث تحت أي ظرف.
+                </p>
+            </div>
+        </div>
+    </div>
+
+    <!-- 3 -->
+    <div id="section-3" class="card">
+        <h3 class="text-base font-semibold text-white mb-3 flex items-center gap-2">
+            <span class="w-6 h-6 bg-blue-600 rounded-md flex items-center justify-center text-xs font-bold text-white flex-shrink-0">٣</span>
+            مشاركة البيانات مع الأطراف الثالثة
+        </h3>
+        <div class="space-y-3 text-sm text-slate-300 leading-relaxed">
+            <p>قد نشارك بيانات محدودة مع مزودين خارجيين لتشغيل الخدمة، بما في ذلك:</p>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3">
+                <div class="card-sm">
+                    <div class="flex items-center gap-2 mb-1">
+                        <span class="w-2 h-2 bg-green-400 rounded-full"></span>
+                        <span class="text-xs font-medium text-white">Supabase</span>
+                    </div>
+                    <p class="text-xs text-slate-400">تخزين الملفات والبيانات</p>
+                </div>
+                <div class="card-sm">
+                    <div class="flex items-center gap-2 mb-1">
+                        <span class="w-2 h-2 bg-blue-400 rounded-full"></span>
+                        <span class="text-xs font-medium text-white">Microsoft Edge TTS</span>
+                    </div>
+                    <p class="text-xs text-slate-400">توليد الصوت (مجاني)</p>
+                </div>
+                <div class="card-sm">
+                    <div class="flex items-center gap-2 mb-1">
+                        <span class="w-2 h-2 bg-amber-400 rounded-full"></span>
+                        <span class="text-xs font-medium text-white">HuggingFace</span>
+                    </div>
+                    <p class="text-xs text-slate-400">استنساخ الصوت</p>
+                </div>
+                <div class="card-sm">
+                    <div class="flex items-center gap-2 mb-1">
+                        <span class="w-2 h-2 bg-purple-400 rounded-full"></span>
+                        <span class="text-xs font-medium text-white">D-ID</span>
+                    </div>
+                    <p class="text-xs text-slate-400">فيديوهات Talking Head</p>
+                </div>
+            </div>
+            <p class="text-xs text-slate-400 mt-3">
+                كل مزود له سياسة خصوصية مستقلة، ونحن نختار مزودين يلتزمون بمعايير حماية البيانات.
+            </p>
+        </div>
+    </div>
+
+    <!-- 4 -->
+    <div id="section-4" class="card">
+        <h3 class="text-base font-semibold text-white mb-3 flex items-center gap-2">
+            <span class="w-6 h-6 bg-blue-600 rounded-md flex items-center justify-center text-xs font-bold text-white flex-shrink-0">٤</span>
+            مزودو الخدمات (TTS / التخزين)
+        </h3>
+        <div class="space-y-3 text-sm text-slate-300 leading-relaxed">
+            <p>عند استخدام ميزات معينة، تُرسل بيانات محدودة إلى مزودي الخدمة:</p>
+            <div class="overflow-x-auto -mx-5 px-5 sm:mx-0 sm:px-0">
+                <table class="w-full text-xs border border-slate-700 rounded-lg overflow-hidden">
+                    <thead class="bg-slate-800">
+                        <tr class="text-slate-300">
+                            <th class="text-right p-2 font-medium">الميزة</th>
+                            <th class="text-right p-2 font-medium">ما يُرسل</th>
+                            <th class="text-right p-2 font-medium">المزود</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-slate-700">
+                        <tr>
+                            <td class="p-2 text-slate-300">توليد الصوت</td>
+                            <td class="p-2 text-slate-400">النص فقط</td>
+                            <td class="p-2 text-slate-300">Edge TTS / ElevenLabs</td>
+                        </tr>
+                        <tr>
+                            <td class="p-2 text-slate-300">استنساخ الصوت</td>
+                            <td class="p-2 text-slate-400">عينة صوتية + النص</td>
+                            <td class="p-2 text-slate-300">HuggingFace / ElevenLabs</td>
+                        </tr>
+                        <tr>
+                            <td class="p-2 text-slate-300">Talking Head</td>
+                            <td class="p-2 text-slate-400">صورة + صوت</td>
+                            <td class="p-2 text-slate-300">D-ID</td>
+                        </tr>
+                        <tr>
+                            <td class="p-2 text-slate-300">تخزين الملفات</td>
+                            <td class="p-2 text-slate-400">الملفات الناتجة</td>
+                            <td class="p-2 text-slate-300">Supabase</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- 5 -->
+    <div id="section-5" class="card">
+        <h3 class="text-base font-semibold text-white mb-3 flex items-center gap-2">
+            <span class="w-6 h-6 bg-blue-600 rounded-md flex items-center justify-center text-xs font-bold text-white flex-shrink-0">٥</span>
+            أمن البيانات
+        </h3>
+        <div class="space-y-3 text-sm text-slate-300 leading-relaxed">
+            <p>نتخذ إجراءات أمنية مناسبة لحماية بياناتك:</p>
+            <ul class="space-y-2 pr-5">
+                <li class="flex gap-2"><span class="text-green-400 flex-shrink-0">✓</span><span>تشفير البيانات أثناء النقل (HTTPS/TLS).</span></li>
+                <li class="flex gap-2"><span class="text-green-400 flex-shrink-0">✓</span><span>تشفير رموز الوصول (API tokens) في قاعدة البيانات.</span></li>
+                <li class="flex gap-2"><span class="text-green-400 flex-shrink-0">✓</span><span>الوصول المحدود للبيانات على أساس الحاجة فقط.</span></li>
+                <li class="flex gap-2"><span class="text-green-400 flex-shrink-0">✓</span><span>حذف تلقائي للملفات المؤقتة بعد المعالجة.</span></li>
+                <li class="flex gap-2"><span class="text-green-400 flex-shrink-0">✓</span><span>نسخ احتياطي دوري مع إجراءات استعادة.</span></li>
+            </ul>
+            <div class="bg-amber-950/50 border border-amber-900 rounded-lg p-3 mt-3">
+                <p class="text-xs text-amber-200">
+                    <strong>⚠️ تنبيه:</strong> رغم جهودنا، لا يمكن ضمان أمان مطلق لأي نظام. استخدم كلمات مرور قوية ولا تشارك بياناتك الحساسة.
+                </p>
+            </div>
+        </div>
+    </div>
+
+    <!-- 6 -->
+    <div id="section-6" class="card">
+        <h3 class="text-base font-semibold text-white mb-3 flex items-center gap-2">
+            <span class="w-6 h-6 bg-blue-600 rounded-md flex items-center justify-center text-xs font-bold text-white flex-shrink-0">٦</span>
+            حقوقك
+        </h3>
+        <div class="space-y-3 text-sm text-slate-300 leading-relaxed">
+            <p>لديك الحقوق التالية بخصوص بياناتك:</p>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div class="card-sm">
+                    <p class="text-xs font-medium text-white mb-1">🔍 الوصول</p>
+                    <p class="text-xs text-slate-400">طلب نسخة من بياناتك المخزنة.</p>
+                </div>
+                <div class="card-sm">
+                    <p class="text-xs font-medium text-white mb-1">✏️ التصحيح</p>
+                    <p class="text-xs text-slate-400">تصحيح أي بيانات غير دقيقة.</p>
+                </div>
+                <div class="card-sm">
+                    <p class="text-xs font-medium text-white mb-1">🗑️ الحذف</p>
+                    <p class="text-xs text-slate-400">طلب حذف حسابك وبياناتك نهائياً.</p>
+                </div>
+                <div class="card-sm">
+                    <p class="text-xs font-medium text-white mb-1">📦 التصدير</p>
+                    <p class="text-xs text-slate-400">تصدير بياناتك بصيغة JSON.</p>
+                </div>
+            </div>
+            <p class="text-xs text-slate-400 mt-2">
+                لممارسة أي من هذه الحقوق، تواصل معنا عبر البريد الإلكتروني أدناه.
+            </p>
+        </div>
+    </div>
+
+    <!-- 7 -->
+    <div id="section-7" class="card">
+        <h3 class="text-base font-semibold text-white mb-3 flex items-center gap-2">
+            <span class="w-6 h-6 bg-blue-600 rounded-md flex items-center justify-center text-xs font-bold text-white flex-shrink-0">٧</span>
+            ملفات تعريف الارتباط (Cookies)
+        </h3>
+        <div class="space-y-3 text-sm text-slate-300 leading-relaxed">
+            <p>نستخدم ملفات تعريف ارتباط أساسية فقط لتشغيل الخدمة:</p>
+            <ul class="space-y-2 pr-5">
+                <li class="flex gap-2"><span class="text-blue-400 flex-shrink-0">•</span><span><strong class="text-slate-100">جلسة تسجيل الدخول:</strong> للحفاظ على تسجيل دخولك.</span></li>
+                <li class="flex gap-2"><span class="text-blue-400 flex-shrink-0">•</span><span><strong class="text-slate-100">تفضيلات الواجهة:</strong> مثل اللغة والثيم.</span></li>
+            </ul>
+            <p class="text-xs text-slate-400">لا نستخدم ملفات تعريف ارتباط إعلانية أو تتبعية.</p>
+        </div>
+    </div>
+
+    <!-- 8 -->
+    <div id="section-8" class="card">
+        <h3 class="text-base font-semibold text-white mb-3 flex items-center gap-2">
+            <span class="w-6 h-6 bg-blue-600 rounded-md flex items-center justify-center text-xs font-bold text-white flex-shrink-0">٨</span>
+            التعديلات والتواصل
+        </h3>
+        <div class="space-y-3 text-sm text-slate-300 leading-relaxed">
+            <p>
+                قد نُحدّث هذه السياسة من وقت لآخر. سنُعلمك بأي تغييرات جوهرية عبر البريد الإلكتروني أو إشعار على المنصة.
+                استمرارك في استخدام الخدمة بعد التعديلات يُعد موافقة عليها.
+            </p>
+            <div class="bg-slate-800/60 border border-slate-700 rounded-lg p-4 mt-3">
+                <p class="text-xs text-slate-400 mb-2">للتواصل بخصوص الخصوصية:</p>
+                <div class="flex flex-wrap gap-3 text-sm">
+                    <a href="mailto:privacy@example.com" class="text-blue-400 hover:text-blue-300 flex items-center gap-1.5">
+                        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
+                        privacy@example.com
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Footer -->
+    <div class="card-sm text-center">
+        <p class="text-xs text-slate-500">
+            باستخدامك للمنصة، فإنك توافق على هذه السياسة.
+            اطلع أيضاً على
+            <a href="/terms-of-service" class="text-blue-400 hover:text-blue-300 mx-1">شروط الخدمة</a>.
+        </p>
+    </div>
+
+</div>
+{% endblock %}
