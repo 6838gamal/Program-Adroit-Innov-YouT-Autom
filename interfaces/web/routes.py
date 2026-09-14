@@ -3822,10 +3822,6 @@ async def settings_page(request: Request):
 
 
 
-# ============================================================
-# PRIVACY POLICY
-# ============================================================
-
 @router.get("/privacy-policy", response_class=HTMLResponse)
 async def privacy_policy_page(request: Request):
     """صفحة سياسة الخصوصية."""
@@ -3833,12 +3829,12 @@ async def privacy_policy_page(request: Request):
         "active_page": "privacy_policy",
         "supabase": get_supabase_config(),
         "last_updated": "2026-09-14",
+        "settings": {                          # ← أضف هذا
+            "APP_NAME": settings.APP_NAME,
+            "APP_VERSION": settings.APP_VERSION,
+        },
     })
 
-
-# ============================================================
-# TERMS OF SERVICE
-# ============================================================
 
 @router.get("/terms-of-service", response_class=HTMLResponse)
 async def terms_of_service_page(request: Request):
@@ -3847,8 +3843,11 @@ async def terms_of_service_page(request: Request):
         "active_page": "terms_of_service",
         "supabase": get_supabase_config(),
         "last_updated": "2026-09-14",
+        "settings": {                          # ← أضف هذا
+            "APP_NAME": settings.APP_NAME,
+            "APP_VERSION": settings.APP_VERSION,
+        },
     })
-
 
 # ============================================================
 # SUPABASE CONFIG
