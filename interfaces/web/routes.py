@@ -3821,6 +3821,35 @@ async def settings_page(request: Request):
     })
 
 
+
+# ============================================================
+# PRIVACY POLICY
+# ============================================================
+
+@router.get("/privacy-policy", response_class=HTMLResponse)
+async def privacy_policy_page(request: Request):
+    """صفحة سياسة الخصوصية."""
+    return templates.TemplateResponse(request, "privacy_policy.html", {
+        "active_page": "privacy_policy",
+        "supabase": get_supabase_config(),
+        "last_updated": "2026-09-14",
+    })
+
+
+# ============================================================
+# TERMS OF SERVICE
+# ============================================================
+
+@router.get("/terms-of-service", response_class=HTMLResponse)
+async def terms_of_service_page(request: Request):
+    """صفحة شروط الخدمة."""
+    return templates.TemplateResponse(request, "terms_of_service.html", {
+        "active_page": "terms_of_service",
+        "supabase": get_supabase_config(),
+        "last_updated": "2026-09-14",
+    })
+
+
 # ============================================================
 # SUPABASE CONFIG
 # ============================================================
