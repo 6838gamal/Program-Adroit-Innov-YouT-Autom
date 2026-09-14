@@ -1,0 +1,241 @@
+{% extends "base.html" %}
+
+{% block title %}شروط الخدمة{% endblock %}
+{% block page_title %}شروط الخدمة{% endblock %}
+
+{% block header_actions %}
+<span class="text-xs text-slate-500 hidden sm:inline">
+    آخر تحديث: {{ last_updated or "2026-09-14" }}
+</span>
+{% endblock %}
+
+{% block content %}
+<div class="max-w-4xl mx-auto space-y-6">
+
+    <!-- Hero -->
+    <div class="card bg-gradient-to-br from-slate-900 to-slate-950 border-slate-700">
+        <div class="flex items-start gap-4">
+            <div class="w-12 h-12 bg-slate-700 rounded-xl flex items-center justify-center flex-shrink-0">
+                <svg class="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                          d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                </svg>
+            </div>
+            <div class="flex-1">
+                <h2 class="text-xl font-bold text-white mb-2">شروط الخدمة</h2>
+                <p class="text-slate-400 text-sm leading-relaxed">
+                    تحدد هذه الشروط القواعد والأحكام لاستخدامك لمنصة
+                    <strong class="text-slate-200">{{ settings.APP_NAME or "Content Platform" }}</strong>.
+                    يرجى قراءتها بعناية قبل استخدام الخدمة. استخدامك للمنصة يعني موافقتك الكاملة على هذه الشروط.
+                </p>
+                <div class="flex flex-wrap gap-3 mt-4 text-xs">
+                    <span class="badge status-published">سارية المفعول</span>
+                    <span class="badge status-rendered">آخر تحديث: {{ last_updated or "2026-09-14" }}</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Table of Contents -->
+    <div class="card">
+        <h3 class="text-sm font-semibold text-white mb-3 flex items-center gap-2">
+            <svg class="w-4 h-4 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h7"/>
+            </svg>
+            المحتويات
+        </h3>
+        <nav class="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
+            <a href="#t-section-1" class="text-slate-400 hover:text-blue-400 transition-colors py-1">١. قبول الشروط</a>
+            <a href="#t-section-2" class="text-slate-400 hover:text-blue-400 transition-colors py-1">٢. وصف الخدمة</a>
+            <a href="#t-section-3" class="text-slate-400 hover:text-blue-400 transition-colors py-1">٣. حساب المستخدم</a>
+            <a href="#t-section-4" class="text-slate-400 hover:text-blue-400 transition-colors py-1">٤. الاستخدام المقبول</a>
+            <a href="#t-section-5" class="text-slate-400 hover:text-blue-400 transition-colors py-1">٥. الملكية الفكرية</a>
+            <a href="#t-section-6" class="text-slate-400 hover:text-blue-400 transition-colors py-1">٦. المحتوى المُنتَج</a>
+            <a href="#t-section-7" class="text-slate-400 hover:text-blue-400 transition-colors py-1">٧. إخلاء المسؤولية</a>
+            <a href="#t-section-8" class="text-slate-400 hover:text-blue-400 transition-colors py-1">٨. الإنهاء والتعديلات</a>
+        </nav>
+    </div>
+
+    <!-- 1 -->
+    <div id="t-section-1" class="card">
+        <h3 class="text-base font-semibold text-white mb-3 flex items-center gap-2">
+            <span class="w-6 h-6 bg-slate-600 rounded-md flex items-center justify-center text-xs font-bold text-white flex-shrink-0">١</span>
+            قبول الشروط
+        </h3>
+        <div class="space-y-3 text-sm text-slate-300 leading-relaxed">
+            <p>
+                باستخدامك لهذه المنصة، فإنك تقر بأنك قرأت وفهمت ووافقت على الالتزام بهذه الشروط والأحكام،
+                بالإضافة إلى سياسة الخصوصية. إذا كنت لا توافق على أي من هذه الشروط، يرجى عدم استخدام الخدمة.
+            </p>
+            <p>
+                يجب أن يكون عمرك <strong class="text-slate-100">١٨ سنة على الأقل</strong> لاستخدام هذه المنصة،
+                أو أن تستخدمها تحت إشراف ولي أمر قانوني.
+            </p>
+        </div>
+    </div>
+
+    <!-- 2 -->
+    <div id="t-section-2" class="card">
+        <h3 class="text-base font-semibold text-white mb-3 flex items-center gap-2">
+            <span class="w-6 h-6 bg-slate-600 rounded-md flex items-center justify-center text-xs font-bold text-white flex-shrink-0">٢</span>
+            وصف الخدمة
+        </h3>
+        <div class="space-y-3 text-sm text-slate-300 leading-relaxed">
+            <p>تقدم المنصة مجموعة من الأدوات لإنتاج المحتوى، وتشمل على سبيل المثال لا الحصر:</p>
+            <ul class="space-y-2 pr-5">
+                <li class="flex gap-2"><span class="text-blue-400 flex-shrink-0">•</span><span>توليد الصوت من النص (Text-to-Speech) عبر مزودين متعددين.</span></li>
+                <li class="flex gap-2"><span class="text-blue-400 flex-shrink-0">•</span><span>استنساخ الأصوات باستخدام عينات صوتية.</span></li>
+                <li class="flex gap-2"><span class="text-blue-400 flex-shrink-0">•</span><span>إنتاج فيديوهات Talking Head من صورة + صوت.</span></li>
+                <li class="flex gap-2"><span class="text-blue-400 flex-shrink-0">•</span><span>توليد فيديوهات العقارات مع نصوص صوتية وتفاعلية.</span></li>
+                <li class="flex gap-2"><span class="text-blue-400 flex-shrink-0">•</span><span>جدولة النشر على المنصات المختلفة.</span></li>
+            </ul>
+            <div class="bg-blue-950/50 border border-blue-900 rounded-lg p-3 mt-3">
+                <p class="text-xs text-blue-200">
+                    <strong>ملاحظة:</strong> نحتفظ بالحق في تعديل أو إيقاف أي ميزة دون إشعار مسبق.
+                </p>
+            </div>
+        </div>
+    </div>
+
+    <!-- 3 -->
+    <div id="t-section-3" class="card">
+        <h3 class="text-base font-semibold text-white mb-3 flex items-center gap-2">
+            <span class="w-6 h-6 bg-slate-600 rounded-md flex items-center justify-center text-xs font-bold text-white flex-shrink-0">٣</span>
+            حساب المستخدم
+        </h3>
+        <div class="space-y-3 text-sm text-slate-300 leading-relaxed">
+            <p>عند إنشاء حساب على المنصة، تلتزم بما يلي:</p>
+            <ul class="space-y-2 pr-5">
+                <li class="flex gap-2"><span class="text-green-400 flex-shrink-0">✓</span><span>تقديم معلومات صحيحة ودقيقة ومحدثة.</span></li>
+                <li class="flex gap-2"><span class="text-green-400 flex-shrink-0">✓</span><span>الحفاظ على سرية كلمة المرور وبيانات الدخول.</span></li>
+                <li class="flex gap-2"><span class="text-green-400 flex-shrink-0">✓</span><span>إبلاغنا فوراً عن أي استخدام غير مصرح به لحسابك.</span></li>
+                <li class="flex gap-2"><span class="text-green-400 flex-shrink-0">✓</span><span>تحمّل المسؤولية الكاملة عن جميع الأنشطة التي تجري عبر حسابك.</span></li>
+            </ul>
+            <p class="text-xs text-slate-400 mt-2">
+                نحتفظ بالحق في تعليق أو حذف أي حساب يخالف هذه الشروط دون إشعار مسبق.
+            </p>
+        </div>
+    </div>
+
+    <!-- 4 -->
+    <div id="t-section-4" class="card">
+        <h3 class="text-base font-semibold text-white mb-3 flex items-center gap-2">
+            <span class="w-6 h-6 bg-slate-600 rounded-md flex items-center justify-center text-xs font-bold text-white flex-shrink-0">٤</span>
+            الاستخدام المقبول
+        </h3>
+        <div class="space-y-3 text-sm text-slate-300 leading-relaxed">
+            <p>يُمنع منعاً باتاً استخدام المنصة في:</p>
+            <div class="grid grid-cols-1 gap-2 mt-2">
+                <div class="flex items-start gap-2 bg-red-950/40 border border-red-900/50 rounded-lg p-2.5">
+                    <span class="text-red-400 flex-shrink-0 mt-0.5">✗</span>
+                    <span class="text-xs text-red-200">استنساخ أصوات أشخاص آخرين دون موافقتهم الصريحة.</span>
+                </div>
+                <div class="flex items-start gap-2 bg-red-950/40 border border-red-900/50 rounded-lg p-2.5">
+                    <span class="text-red-400 flex-shrink-0 mt-0.5">✗</span>
+                    <span class="text-xs text-red-200">إنتاج محتوى مسيء أو كراهية أو تحريضي أو عنيف.</span>
+                </div>
+                <div class="flex items-start gap-2 bg-red-950/40 border border-red-900/50 rounded-lg p-2.5">
+                    <span class="text-red-400 flex-shrink-0 mt-0.5">✗</span>
+                    <span class="text-xs text-red-200">انتحال شخصية الآخرين أو الجهات الرسمية.</span>
+                </div>
+                <div class="flex items-start gap-2 bg-red-950/40 border border-red-900/50 rounded-lg p-2.5">
+                    <span class="text-red-400 flex-shrink-0 mt-0.5">✗</span>
+                    <span class="text-xs text-red-200">نشر معلومات مضللة أو أخبار كاذبة.</span>
+                </div>
+                <div class="flex items-start gap-2 bg-red-950/40 border border-red-900/50 rounded-lg p-2.5">
+                    <span class="text-red-400 flex-shrink-0 mt-0.5">✗</span>
+                    <span class="text-xs text-red-200">انتهاك حقوق الملكية الفكرية أو حقوق النشر.</span>
+                </div>
+                <div class="flex items-start gap-2 bg-red-950/40 border border-red-900/50 rounded-lg p-2.5">
+                    <span class="text-red-400 flex-shrink-0 mt-0.5">✗</span>
+                    <span class="text-xs text-red-200">محاولة اختراق المنصة أو تعطيل خدماتها.</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 5 -->
+    <div id="t-section-5" class="card">
+        <h3 class="text-base font-semibold text-white mb-3 flex items-center gap-2">
+            <span class="w-6 h-6 bg-slate-600 rounded-md flex items-center justify-center text-xs font-bold text-white flex-shrink-0">٥</span>
+            الملكية الفكرية
+        </h3>
+        <div class="space-y-3 text-sm text-slate-300 leading-relaxed">
+            <p><strong class="text-slate-100">ملكية المنصة:</strong> جميع حقوق المنصة، بما في ذلك الكود، التصميم، العلامات التجارية، والمحتوى، مملوكة لنا ومحمية بموجب قوانين الملكية الفكرية.</p>
+            <p><strong class="text-slate-100">ملكية المحتوى المُنتَج:</strong> تحتفظ بملكية المحتوى الذي تُنتجه على المنصة (نصوص، أصوات، فيديوهات)، مع منحنا ترخيصاً محدوداً لتخزينه ومعالجته وتقديم الخدمة.</p>
+        </div>
+    </div>
+
+    <!-- 6 -->
+    <div id="t-section-6" class="card">
+        <h3 class="text-base font-semibold text-white mb-3 flex items-center gap-2">
+            <span class="w-6 h-6 bg-slate-600 rounded-md flex items-center justify-center text-xs font-bold text-white flex-shrink-0">٦</span>
+            المحتوى المُنتَج
+        </h3>
+        <div class="space-y-3 text-sm text-slate-300 leading-relaxed">
+            <p>أنت المسؤول الوحيد عن:</p>
+            <ul class="space-y-2 pr-5">
+                <li class="flex gap-2"><span class="text-blue-400 flex-shrink-0">•</span><span>المحتوى الذي تُنتجه باستخدام المنصة.</span></li>
+                <li class="flex gap-2"><span class="text-blue-400 flex-shrink-0">•</span><span>الحصول على الموافقات اللازمة قبل استخدام أصوات أو صور الآخرين.</span></li>
+                <li class="flex gap-2"><span class="text-blue-400 flex-shrink-0">•</span><span>الامتثال لقوانين بلدك والمنصات التي تنشر عليها.</span></li>
+                <li class="flex gap-2"><span class="text-blue-400 flex-shrink-0">•</span><span>أي عواقب قانونية ناتجة عن محتواك.</span></li>
+            </ul>
+            <div class="bg-amber-950/50 border border-amber-900 rounded-lg p-3 mt-3">
+                <p class="text-xs text-amber-200">
+                    <strong>⚠️ تنبيه:</strong> استنساخ صوت شخص آخر دون إذنه قد يُعرّضك للمساءلة القانونية. المنصة غير مسؤولة عن أي استخدام غير قانوني.
+                </p>
+            </div>
+        </div>
+    </div>
+
+    <!-- 7 -->
+    <div id="t-section-7" class="card">
+        <h3 class="text-base font-semibold text-white mb-3 flex items-center gap-2">
+            <span class="w-6 h-6 bg-slate-600 rounded-md flex items-center justify-center text-xs font-bold text-white flex-shrink-0">٧</span>
+            إخلاء المسؤولية
+        </h3>
+        <div class="space-y-3 text-sm text-slate-300 leading-relaxed">
+            <p>تُقدَّم الخدمة <strong class="text-slate-100">"كما هي"</strong> و <strong class="text-slate-100">"حسب التوفر"</strong> دون أي ضمانات صريحة أو ضمنية.</p>
+            <p>لا نتحمل المسؤولية عن:</p>
+            <ul class="space-y-2 pr-5">
+                <li class="flex gap-2"><span class="text-red-400 flex-shrink-0">•</span><span>انقطاع الخدمة أو تعطل مزودي الخدمات الخارجيين.</span></li>
+                <li class="flex gap-2"><span class="text-red-400 flex-shrink-0">•</span><span>فقدان البيانات بسبب عوامل خارجة عن إرادتنا.</span></li>
+                <li class="flex gap-2"><span class="text-red-400 flex-shrink-0">•</span><span>أي أضرار مباشرة أو غير مباشرة ناتجة عن استخدام الخدمة.</span></li>
+                <li class="flex gap-2"><span class="text-red-400 flex-shrink-0">•</span><span>جودة المخرجات الناتجة عن مزودي الذكاء الاصطناعي.</span></li>
+            </ul>
+        </div>
+    </div>
+
+    <!-- 8 -->
+    <div id="t-section-8" class="card">
+        <h3 class="text-base font-semibold text-white mb-3 flex items-center gap-2">
+            <span class="w-6 h-6 bg-slate-600 rounded-md flex items-center justify-center text-xs font-bold text-white flex-shrink-0">٨</span>
+            الإنهاء والتعديلات
+        </h3>
+        <div class="space-y-3 text-sm text-slate-300 leading-relaxed">
+            <p><strong class="text-slate-100">الإنهاء:</strong> يحق لنا تعليق أو إنهاء وصولك إلى المنصة في أي وقت، دون إشعار مسبق، في حال مخالفة هذه الشروط. يمكنك أيضاً إنهاء حسابك في أي وقت.</p>
+            <p><strong class="text-slate-100">التعديلات:</strong> قد نُحدّث هذه الشروط من وقت لآخر. سنُعلمك بالتغييرات الجوهرية، واستمرارك في الاستخدام يعني موافقتك على الشروط المُحدّثة.</p>
+            <p><strong class="text-slate-100">القانون المُطبَّق:</strong> تخضع هذه الشروط للقوانين المعمول بها في بلد تشغيل المنصة.</p>
+            <div class="bg-slate-800/60 border border-slate-700 rounded-lg p-4 mt-3">
+                <p class="text-xs text-slate-400 mb-2">للتواصل بخصوص الشروط:</p>
+                <div class="flex flex-wrap gap-3 text-sm">
+                    <a href="mailto:legal@example.com" class="text-blue-400 hover:text-blue-300 flex items-center gap-1.5">
+                        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
+                        legal@example.com
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Footer -->
+    <div class="card-sm text-center">
+        <p class="text-xs text-slate-500">
+            باستخدامك للمنصة، فإنك توافق على هذه الشروط.
+            اطلع أيضاً على
+            <a href="/privacy-policy" class="text-blue-400 hover:text-blue-300 mx-1">سياسة الخصوصية</a>.
+        </p>
+    </div>
+
+</div>
+{% endblock %}
