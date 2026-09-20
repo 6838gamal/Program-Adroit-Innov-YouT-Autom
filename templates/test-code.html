@@ -1,0 +1,334 @@
+{% extends "base.html" %}
+
+{% block title %}تنزيل الفيديو{% endblock %}
+{% block page_title %}تنزيل الفيديو{% endblock %}
+
+{% block header_actions %}
+<span class="text-xs text-slate-500 hidden sm:inline">
+    معاينة فورية قبل الحفظ
+</span>
+{% endblock %}
+
+{% block content %}
+<div class="max-w-4xl mx-auto space-y-6">
+
+    <!-- Hero -->
+    <div class="card bg-gradient-to-br from-blue-950 to-slate-900 border-blue-900">
+        <div class="flex items-start gap-4">
+            <div class="w-12 h-12 bg-blue-600 rounded-xl flex items-center justify-center flex-shrink-0">
+                <svg class="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                          d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/>
+                </svg>
+            </div>
+            <div class="flex-1">
+                <h2 class="text-xl font-bold text-white mb-2">تنزيل الفيديو من الرابط</h2>
+                <p class="text-slate-400 text-sm leading-relaxed">
+                    الصق رابط الفيديو (YouTube، Vimeo، أو أي رابط مباشر) وسنقوم بجلبه ومعاينته قبل الحفظ.
+                </p>
+                <div class="flex flex-wrap gap-3 mt-4 text-xs">
+                    <span class="badge status-published">دعم روابط متعددة</span>
+                    <span class="badge status-rendered">معاينة فورية</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Form -->
+    <div class="card">
+        <h3 class="text-sm font-semibold text-white mb-3 flex items-center gap-2">
+            <svg class="w-4 h-4 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/>
+            </svg>
+            رابط الفيديو
+        </h3>
+
+        <form id="download-form" class="space-y-4" onsubmit="return false;">
+            <div class="flex flex-col sm:flex-row gap-3">
+                <div class="flex-1 relative">
+                    <input type="url" id="video-url" name="url" required
+                           placeholder="https://www.youtube.com/watch?v=..."
+                           class="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-3 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors pr-10">
+                    <button type="button" id="paste-btn"
+                            class="absolute left-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-blue-400 transition-colors"
+                            title="لصق">
+                        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/>
+                        </svg>
+                    </button>
+                </div>
+                <button type="submit" id="fetch-btn"
+                        class="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium rounded-lg px-6 py-3 flex items-center justify-center gap-2 transition-colors">
+                    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+                    </svg>
+                    جلب الفيديو
+                </button>
+            </div>
+        </form>
+
+        <!-- Alert -->
+        <div id="alert-box" class="hidden mt-4 rounded-lg p-3 text-xs border"></div>
+    </div>
+
+    <!-- Loading -->
+    <div id="loading-card" class="card hidden">
+        <div class="flex items-center gap-3">
+            <svg class="w-5 h-5 text-blue-400 animate-spin" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+            </svg>
+            <span class="text-sm text-slate-300">جارٍ جلب الفيديو ومعالجته...</span>
+        </div>
+        <div class="mt-3 h-1.5 bg-slate-800 rounded-full overflow-hidden">
+            <div id="progress-bar" class="h-full bg-blue-500 transition-all duration-300" style="width: 0%"></div>
+        </div>
+    </div>
+
+    <!-- Preview -->
+    <div id="preview-card" class="card hidden">
+        <h3 class="text-sm font-semibold text-white mb-3 flex items-center gap-2">
+            <svg class="w-4 h-4 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
+            </svg>
+            معاينة الفيديو
+        </h3>
+
+        <div class="rounded-lg overflow-hidden bg-black border border-slate-700">
+            <video id="preview-video" controls playsinline class="w-full max-h-[420px] bg-black">
+                متصفحك لا يدعم عرض الفيديو.
+            </video>
+        </div>
+
+        <!-- Meta -->
+        <div id="video-meta" class="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4 text-xs">
+            <div class="card-sm">
+                <p class="text-slate-500 mb-1">العنوان</p>
+                <p id="meta-title" class="text-slate-200 font-medium truncate">—</p>
+            </div>
+            <div class="card-sm">
+                <p class="text-slate-500 mb-1">المدة</p>
+                <p id="meta-duration" class="text-slate-200 font-medium">—</p>
+            </div>
+            <div class="card-sm">
+                <p class="text-slate-500 mb-1">الجودة</p>
+                <p id="meta-quality" class="text-slate-200 font-medium">—</p>
+            </div>
+            <div class="card-sm">
+                <p class="text-slate-500 mb-1">الحجم</p>
+                <p id="meta-size" class="text-slate-200 font-medium">—</p>
+            </div>
+        </div>
+
+        <!-- Actions -->
+        <div class="flex flex-wrap gap-3 mt-5">
+            <button id="save-btn"
+                    class="bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg px-5 py-2.5 flex items-center gap-2 transition-colors">
+                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4"/>
+                </svg>
+                حفظ في المكتبة
+            </button>
+            <a id="direct-download" href="#" download
+               class="bg-slate-700 hover:bg-slate-600 text-white text-sm font-medium rounded-lg px-5 py-2.5 flex items-center gap-2 transition-colors">
+                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+                </svg>
+                تنزيل مباشر
+            </a>
+            <button id="reset-btn"
+                    class="bg-transparent hover:bg-slate-800 border border-slate-700 text-slate-300 text-sm font-medium rounded-lg px-5 py-2.5 flex items-center gap-2 transition-colors">
+                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                </svg>
+                إعادة تعيين
+            </button>
+        </div>
+    </div>
+
+    <!-- Footer -->
+    <div class="card-sm text-center">
+        <p class="text-xs text-slate-500">
+            تأكد من امتلاكك حقوق تنزيل المحتوى. اطلع على
+            <a href="/terms-of-service" class="text-blue-400 hover:text-blue-300 mx-1">شروط الخدمة</a>.
+        </p>
+    </div>
+
+</div>
+
+<script>
+(function () {
+    const form         = document.getElementById('download-form');
+    const urlInput     = document.getElementById('video-url');
+    const pasteBtn     = document.getElementById('paste-btn');
+    const fetchBtn     = document.getElementById('fetch-btn');
+    const alertBox     = document.getElementById('alert-box');
+    const loadingCard  = document.getElementById('loading-card');
+    const progressBar  = document.getElementById('progress-bar');
+    const previewCard  = document.getElementById('preview-card');
+    const videoEl      = document.getElementById('preview-video');
+    const metaTitle    = document.getElementById('meta-title');
+    const metaDuration = document.getElementById('meta-duration');
+    const metaQuality  = document.getElementById('meta-quality');
+    const metaSize     = document.getElementById('meta-size');
+    const directLink   = document.getElementById('direct-download');
+    const saveBtn      = document.getElementById('save-btn');
+    const resetBtn     = document.getElementById('reset-btn');
+
+    let currentData = null;
+
+    // ===== Helpers =====
+    function showAlert(msg, type = 'error') {
+        const styles = {
+            error:   'bg-red-950/50 border-red-900 text-red-200',
+            success: 'bg-green-950/50 border-green-900 text-green-200',
+            info:    'bg-blue-950/50 border-blue-900 text-blue-200'
+        };
+        alertBox.className = 'mt-4 rounded-lg p-3 text-xs border ' + styles[type];
+        alertBox.textContent = msg;
+        alertBox.classList.remove('hidden');
+    }
+
+    function hideAlert() {
+        alertBox.classList.add('hidden');
+    }
+
+    function formatDuration(sec) {
+        if (!sec && sec !== 0) return '—';
+        const h = Math.floor(sec / 3600);
+        const m = Math.floor((sec % 3600) / 60);
+        const s = Math.floor(sec % 60);
+        const pad = n => String(n).padStart(2, '0');
+        return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
+    }
+
+    function formatSize(bytes) {
+        if (!bytes) return '—';
+        const units = ['B', 'KB', 'MB', 'GB'];
+        let i = 0;
+        let n = bytes;
+        while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
+        return n.toFixed(1) + ' ' + units[i];
+    }
+
+    function resetPreview() {
+        videoEl.pause();
+        videoEl.removeAttribute('src');
+        videoEl.load();
+        previewCard.classList.add('hidden');
+        loadingCard.classList.add('hidden');
+        progressBar.style.width = '0%';
+        currentData = null;
+    }
+
+    // ===== Paste =====
+    pasteBtn.addEventListener('click', async () => {
+        try {
+            const text = await navigator.clipboard.readText();
+            if (text) {
+                urlInput.value = text.trim();
+                urlInput.focus();
+            }
+        } catch (e) {
+            showAlert('تعذر الوصول إلى الحافظة. الصق الرابط يدوياً.', 'info');
+        }
+    });
+
+    // ===== Fetch =====
+    form.addEventListener('submit', async () => {
+        const url = urlInput.value.trim();
+        hideAlert();
+        resetPreview();
+
+        if (!url) {
+            showAlert('الرجاء إدخال رابط الفيديو.');
+            return;
+        }
+        try {
+            new URL(url);
+        } catch {
+            showAlert('الرابط غير صالح. تأكد من كتابته بشكل صحيح.');
+            return;
+        }
+
+        fetchBtn.disabled = true;
+        loadingCard.classList.remove('hidden');
+        progressBar.style.width = '15%';
+
+        try {
+            const res = await fetch('/api/video/fetch', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ url })
+            });
+
+            progressBar.style.width = '60%';
+
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                throw new Error(err.message || 'فشل جلب الفيديو.');
+            }
+
+            const data = await res.json();
+            progressBar.style.width = '100%';
+            currentData = data;
+
+            // Meta
+            metaTitle.textContent    = data.title    || '—';
+            metaDuration.textContent = formatDuration(data.duration);
+            metaQuality.textContent  = data.quality  || '—';
+            metaSize.textContent     = formatSize(data.size);
+
+            // Video src (يدعم streaming أو ملف مباشر)
+            videoEl.src = data.preview_url || data.url || '';
+            videoEl.load();
+
+            directLink.href = data.download_url || data.url || '#';
+            if (data.filename) {
+                directLink.setAttribute('download', data.filename);
+            }
+
+            previewCard.classList.remove('hidden');
+            showAlert('تم جلب الفيديو بنجاح. يمكنك المعاينة الآن.', 'success');
+
+        } catch (err) {
+            showAlert(err.message || 'حدث خطأ غير متوقع.');
+        } finally {
+            fetchBtn.disabled = false;
+            loadingCard.classList.add('hidden');
+        }
+    });
+
+    // ===== Save =====
+    saveBtn.addEventListener('click', async () => {
+        if (!currentData) return;
+        saveBtn.disabled = true;
+        try {
+            const res = await fetch('/api/video/save', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    url: currentData.url,
+                    title: currentData.title,
+                    filename: currentData.filename
+                })
+            });
+            if (!res.ok) throw new Error('فشل الحفظ.');
+            showAlert('تم حفظ الفيديو في المكتبة.', 'success');
+        } catch (err) {
+            showAlert(err.message);
+        } finally {
+            saveBtn.disabled = false;
+        }
+    });
+
+    // ===== Reset =====
+    resetBtn.addEventListener('click', () => {
+        urlInput.value = '';
+        hideAlert();
+        resetPreview();
+    });
+})();
+</script>
+{% endblock %}
