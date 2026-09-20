@@ -5,7 +5,7 @@
 import {
     state, showToast, addMessage,
     formatNumber, formatDuration,
-    showProgress, hideProgress   // ✅ أضفناهما
+    showProgress, hideProgress
 } from './app.js';
 
 import { generateVideoFromPrompt, addVideoLink } from './video.js';
@@ -137,9 +137,16 @@ export async function searchYouTube() {
     }
 }
 
-// ---------- المشروع ----------
+// ---------- المشروع: تأكيد وإنشاء ----------
 export async function confirmProject() {
-    if (!state.generatedVideo) return showToast('⚠️ لا يوجد فيديو لتأكيده', 'warning');
+    // ⭐ دعم حالتين: التنزيل + التوليد
+    const downloadData = state.currentDownloadData;
+    const generatedData = state.generatedVideo;
+    const data = downloadData || generatedData?.data;
+
+    if (!data) {
+        return showToast('⚠️ لا يوجد فيديو لتأكيده', 'warning');
+    }
 
     const confirmBtn = document.getElementById('confirm-btn');
     if (confirmBtn) {
@@ -147,42 +154,111 @@ export async function confirmProject() {
         confirmBtn.innerHTML = '<div class="spinner-sm"></div> جاري الحفظ...';
     }
 
+    showProgress('جاري إنشاء المشروع...', 30);
+
     try {
-        const projectData = {
-            title: state.generatedVideo.data.title || 'فيديو جديد',
-            description: state.generatedVideo.data.description || 'تم إنشاؤه عبر الذكاء الاصطناعي',
-            script: buildScriptFromChat(),
-            tags: ['ai-generated', ...state.videoLinks.map(() => 'video-source')],
-            video_url: state.generatedVideo.original_url || state.generatedVideo.url,
-            video_links: state.videoLinks,
-            duration: state.generatedVideo.data.duration || 0,
-            format: state.generatedVideo.data.format || 'mp4',
-            dimensions: state.generatedVideo.data.dimensions || '',
-            uploader: state.generatedVideo.data.uploader || '',
-            view_count: state.generatedVideo.data.view_count || 0,
-            like_count: state.generatedVideo.data.like_count || 0,
-            status: 'rendered',
-            session_id: state.sessionId,
-            thumbnail: state.generatedVideo.data.thumbnail || null,
-            video_id: state.generatedVideo.data.video_id || null,
-            platform: state.generatedVideo.data.platform || 'generic'
-        };
-        const response = await fetch('/api/v1/projects', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(projectData)
-        });
-        if (!response.ok) {
-            let msg = 'فشل إنشاء المشروع';
-            try { msg = (await response.json()).detail || msg; } catch (e) {}
-            throw new Error(msg);
+        let project;
+
+        // ⭐ الحالة 1: التنزيل عبر الرابط (عندنا filename)
+        if (downloadData?.filename) {
+            // 1) حفظ الفيديو (نقله من preview → downloads)
+            const saveRes = await fetch('/api/video/save', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    url: downloadData.url,
+                    title: downloadData.title,
+                    filename: downloadData.filename
+                })
+            });
+
+            if (!saveRes.ok) {
+                const err = await saveRes.json().catch(() => ({}));
+                throw new Error(err.detail || 'فشل حفظ الفيديو');
+            }
+
+            // 2) إنشاء Project (مع رفع Supabase)
+            const projRes = await fetch('/api/projects/create-from-video', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    title: downloadData.title || 'مشروع جديد',
+                    description: buildScriptFromChat(),
+                    script: buildScriptFromChat(),
+                    tags: ['video-download', 'ai-project'],
+                    filename: downloadData.filename,
+                    source: downloadData.source,
+                    duration: downloadData.duration,
+                    platform: downloadData.platform,
+                })
+            });
+
+            if (!projRes.ok) {
+                const err = await projRes.json().catch(() => ({}));
+                throw new Error(err.detail || 'فشل إنشاء المشروع');
+            }
+
+            project = await projRes.json();
         }
-        const project = await response.json();
-        state.currentProjectId = project.id;
+
+        // ⭐ الحالة 2: التوليد (الطريقة القديمة)
+        else if (generatedData) {
+            const projectData = {
+                title: generatedData.data.title || 'فيديو جديد',
+                description: generatedData.data.description || 'تم إنشاؤه عبر الذكاء الاصطناعي',
+                script: buildScriptFromChat(),
+                tags: ['ai-generated', ...state.videoLinks.map(() => 'video-source')],
+                video_url: generatedData.original_url || generatedData.url,
+                video_links: state.videoLinks,
+                duration: generatedData.data.duration || 0,
+                format: generatedData.data.format || 'mp4',
+                dimensions: generatedData.data.dimensions || '',
+                uploader: generatedData.data.uploader || '',
+                view_count: generatedData.data.view_count || 0,
+                like_count: generatedData.data.like_count || 0,
+                status: 'rendered',
+                session_id: state.sessionId,
+                thumbnail: generatedData.data.thumbnail || null,
+                video_id: generatedData.data.video_id || null,
+                platform: generatedData.data.platform || 'generic'
+            };
+
+            const response = await fetch('/api/v1/projects', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(projectData)
+            });
+
+            if (!response.ok) {
+                let msg = 'فشل إنشاء المشروع';
+                try { msg = (await response.json()).detail || msg; } catch (e) {}
+                throw new Error(msg);
+            }
+
+            project = await response.json();
+        }
+
+        else {
+            throw new Error('لا توجد بيانات كافية لإنشاء المشروع');
+        }
+
+        // ⭐ حفظ project_id والانتقال
+        state.currentProjectId = project.id || project.project_id;
+
+        hideProgress();
         showToast('✅ تم إنشاء المشروع بنجاح!', 'success');
-        window.dispatchEvent(new CustomEvent('projectCreated', { detail: { projectId: project.id, project } }));
-        setTimeout(() => window.location.href = `/projects/${project.id}`, 1000);
+        addMessage('assistant', '🎬 تم إنشاء المشروع بنجاح! جاري الانتقال...');
+
+        window.dispatchEvent(new CustomEvent('projectCreated', {
+            detail: { projectId: state.currentProjectId, project }
+        }));
+
+        setTimeout(() => {
+            window.location.href = `/projects/${state.currentProjectId}`;
+        }, 1000);
+
     } catch (error) {
+        hideProgress();
         showToast('❌ ' + error.message, 'error');
         addMessage('assistant', `❌ عذراً، فشل إنشاء المشروع: ${error.message}`);
     } finally {
@@ -197,6 +273,7 @@ export async function confirmProject() {
     }
 }
 
+// ---------- بناء السكريبت من الدردشة ----------
 export function buildScriptFromChat() {
     let script = '';
     const userMessages = state.chatHistory.filter(msg => msg.role === 'user');
