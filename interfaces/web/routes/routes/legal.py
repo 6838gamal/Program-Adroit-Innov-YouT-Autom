@@ -18,15 +18,23 @@ from config.settings import settings
 from ..core.config_helpers import get_supabase_config
 from ..core.templates import templates
 
-# استيراد pytubefix بشكل آمن (لو لم يكن مثبتاً، نتجاهل اليوتيوب عبره)
+# ===== استيراد pytubefix بشكل آمن =====
 try:
     from pytubefix import YouTube as PyTubeYouTube
     from pytubefix.exceptions import PytubeFixException
     PYTUBEFIX_AVAILABLE = True
-except ImportError:
+    try:
+        import pytubefix
+        PYTUBEFIX_VERSION = getattr(pytubefix, "__version__", "unknown")
+    except Exception:
+        PYTUBEFIX_VERSION = "unknown"
+    print(f"✅ pytubefix loaded successfully (version {PYTUBEFIX_VERSION})", flush=True)
+except ImportError as e:
     PYTUBEFIX_AVAILABLE = False
+    PYTUBEFIX_VERSION = "not installed"
     PyTubeYouTube = None
     PytubeFixException = Exception
+    print(f"❌ pytubefix NOT available: {e}", flush=True)
 
 
 router = APIRouter()
@@ -97,7 +105,7 @@ class InfoRequest(BaseModel):
 class FetchRequest(BaseModel):
     url: HttpUrl
     format_id: Optional[str] = None
-    source: Optional[str] = None   # "youtube" أو "generic" (يُرسل من الـ info)
+    source: Optional[str] = None   # "youtube" أو "facebook" أو "generic"
 
 
 class SaveRequest(BaseModel):
@@ -106,12 +114,28 @@ class SaveRequest(BaseModel):
     filename: Optional[str] = None
 
 
-# ---------- Helpers ----------
+# ---------- Source detection ----------
 def is_youtube(url: str) -> bool:
     """يتحقق إن كان الرابط من يوتيوب."""
     return any(d in url.lower() for d in (
         "youtube.com", "youtu.be", "youtube-nocookie.com", "m.youtube.com"
     ))
+
+
+def is_facebook(url: str) -> bool:
+    """يتحقق إن كان الرابط من فيسبوك."""
+    return any(d in url.lower() for d in (
+        "facebook.com", "fb.watch", "fb.com", "m.facebook.com"
+    ))
+
+
+def detect_source(url: str) -> str:
+    """يكتشف مصدر الفيديو من الرابط."""
+    if is_youtube(url):
+        return "youtube"
+    if is_facebook(url):
+        return "facebook"
+    return "generic"
 
 
 def _safe_filename(name: str, fallback: str = "video") -> str:
@@ -124,7 +148,7 @@ def _safe_filename(name: str, fallback: str = "video") -> str:
 
 
 # =====================================================================
-#                          YT-DLP (Generic)
+#                          YT-DLP (Generic / Facebook)
 # =====================================================================
 
 def _ytdlp_extract_info(url: str) -> dict:
@@ -211,16 +235,30 @@ def _ytdlp_download(url: str, out_path: Path, format_id: Optional[str] = None) -
 
 
 # =====================================================================
-#                          PYTUBEFIX (YouTube)
+#                          PYTUBEFIX (YouTube only)
 # =====================================================================
 
-def _pytubefix_info(url: str) -> dict:
-    """يجلب معلومات فيديو يوتيوب + قائمة الجودات عبر pytubefix."""
+def _pytubefix_build(url: str):
+    """ينشئ كائن YouTube مع محاولة use_po_token أولاً."""
     if not PYTUBEFIX_AVAILABLE:
         raise RuntimeError("pytubefix غير مثبت.")
 
     try:
-        yt = PyTubeYouTube(url)
+        # محاولة مع po_token (يتجاوز حماية YouTube الحديثة)
+        return PyTubeYouTube(url, use_po_token=True)
+    except TypeError:
+        # النسخة لا تدعم use_po_token
+        return PyTubeYouTube(url)
+    except Exception as e:
+        print(f"   ℹ️ use_po_token فشل ({e})، محاولة بدونها...", flush=True)
+        return PyTubeYouTube(url)
+
+
+def _pytubefix_info(url: str) -> dict:
+    """يجلب معلومات فيديو يوتيوب + قائمة الجودات عبر pytubefix."""
+    yt = _pytubefix_build(url)
+
+    try:
         title = yt.title
     except PytubeFixException as e:
         raise ValueError(f"تعذر جلب الفيديو: {e}")
@@ -229,10 +267,10 @@ def _pytubefix_info(url: str) -> dict:
     thumbnail = yt.thumbnail_url
     uploader = yt.author
 
-    formats: list[dict] = []
+    formats: list = []
     seen: set = set()
 
-    # progressive streams (فيديو + صوت)
+    # 1) progressive streams (فيديو + صوت مدموج)
     for s in yt.streams.filter(progressive=True, file_extension="mp4"):
         height_str = s.resolution or ""
         h = int(height_str.replace("p", "")) if height_str.endswith("p") else 0
@@ -250,7 +288,7 @@ def _pytubefix_info(url: str) -> dict:
             "note": "progressive",
         })
 
-    # adaptive streams (فيديو فقط) - نعرض فقط ≥ 720p
+    # 2) adaptive streams (فيديو فقط) — فقط ≥ 720p
     for s in yt.streams.filter(adaptive=True, file_extension="mp4", only_video=True):
         height_str = s.resolution or ""
         h = int(height_str.replace("p", "")) if height_str.endswith("p") else 0
@@ -281,10 +319,7 @@ def _pytubefix_info(url: str) -> dict:
 
 def _pytubefix_download(url: str, out_path: Path, format_id: Optional[str] = None) -> Path:
     """ينزّل الفيديو عبر pytubefix."""
-    if not PYTUBEFIX_AVAILABLE:
-        raise RuntimeError("pytubefix غير مثبت.")
-
-    yt = PyTubeYouTube(url)
+    yt = _pytubefix_build(url)
 
     if format_id:
         stream = yt.streams.get_by_itag(int(format_id))
@@ -317,16 +352,35 @@ async def _get_info(url: str) -> dict:
     - YouTube → pytubefix (مع fallback إلى yt-dlp)
     - غيره → yt-dlp
     """
-    if is_youtube(url) and PYTUBEFIX_AVAILABLE:
+    source = detect_source(url)
+
+    # ===== DEBUG =====
+    print("=" * 60, flush=True)
+    print(f"🔍 _get_info", flush=True)
+    print(f"   URL: {url}", flush=True)
+    print(f"   detect_source: {source}", flush=True)
+    print(f"   is_youtube: {is_youtube(url)}", flush=True)
+    print(f"   is_facebook: {is_facebook(url)}", flush=True)
+    print(f"   PYTUBEFIX_AVAILABLE: {PYTUBEFIX_AVAILABLE}", flush=True)
+    print(f"   PYTUBEFIX_VERSION: {PYTUBEFIX_VERSION}", flush=True)
+    print("=" * 60, flush=True)
+
+    # ===== YouTube → pytubefix =====
+    if source == "youtube" and PYTUBEFIX_AVAILABLE:
         try:
+            print("   → Using pytubefix...", flush=True)
             data = await asyncio.to_thread(_pytubefix_info, url)
             data["source"] = "youtube"
+            print("   ✅ pytubefix succeeded!", flush=True)
             return data
         except Exception as e:
-            # fallback إلى yt-dlp
-            print(f"⚠️ pytubefix فشل، سيتم استخدام yt-dlp: {e}")
+            print(f"   ⚠️ pytubefix failed: {type(e).__name__}: {e}", flush=True)
+            print("   → Falling back to yt-dlp...", flush=True)
+    elif source == "youtube" and not PYTUBEFIX_AVAILABLE:
+        print("   ⏭️ pytubefix غير مثبت — سيتم استخدام yt-dlp", flush=True)
 
-    # yt-dlp
+    # ===== yt-dlp (Facebook + generic + fallback) =====
+    print("   → Using yt-dlp...", flush=True)
     info = await asyncio.to_thread(_ytdlp_extract_info, url)
     return {
         "title": info.get("title") or "video",
@@ -334,7 +388,7 @@ async def _get_info(url: str) -> dict:
         "thumbnail": info.get("thumbnail"),
         "uploader": info.get("uploader"),
         "formats": _ytdlp_list_formats(info),
-        "source": "generic",
+        "source": source,
     }
 
 
@@ -346,17 +400,18 @@ async def _download_video(
 ) -> Path:
     """
     ينزّل الفيديو من المكتبة المناسبة حسب source.
-    source: "youtube" أو "generic"
     """
     if source == "youtube" and PYTUBEFIX_AVAILABLE:
         try:
+            print(f"   → Downloading via pytubefix (format_id={format_id})", flush=True)
             return await asyncio.to_thread(
                 _pytubefix_download, url, out_path, format_id
             )
         except Exception as e:
-            print(f"⚠️ pytubefix فشل في التنزيل، سيتم استخدام yt-dlp: {e}")
+            print(f"   ⚠️ pytubefix download failed: {e}", flush=True)
+            print("   → Falling back to yt-dlp...", flush=True)
 
-    # yt-dlp
+    print(f"   → Downloading via yt-dlp (format_id={format_id})", flush=True)
     info = await asyncio.to_thread(_ytdlp_download, url, out_path, format_id)
     return Path(info["_final_path"])
 
@@ -392,11 +447,9 @@ async def fetch_video(payload: FetchRequest):
     """ينزّل الفيديو مؤقتاً بالجودة المختارة."""
     url = str(payload.url)
     format_id = payload.format_id
-    source = payload.source
 
     # إذا لم يُرسل source، اكتشف تلقائياً
-    if not source:
-        source = "youtube" if is_youtube(url) and PYTUBEFIX_AVAILABLE else "generic"
+    source = payload.source or detect_source(url)
 
     # 1) جلب الميتاداتا
     try:
