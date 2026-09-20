@@ -42,6 +42,39 @@
             </div>
         </div>
 
+        <!-- Alert Box -->
+        <div id="alert-box" class="hidden mx-4 mt-2 rounded-lg p-3 text-xs border"></div>
+
+        <!-- ⭐ قسم اختيار الجودة (جديد) -->
+        <div id="quality-card" class="hidden border-t border-slate-700 bg-slate-900/50">
+            <div class="p-4">
+                <h4 class="text-sm font-medium text-slate-300 mb-3">⚙️ اختر الجودة</h4>
+
+                <div id="video-info-box" class="mb-4 p-3 bg-slate-800/50 border border-slate-700 rounded-lg">
+                    <p class="text-xs text-slate-500 mb-1">العنوان</p>
+                    <p id="info-title" class="text-sm text-slate-200 font-medium truncate">—</p>
+                    <div class="flex flex-wrap gap-2 mt-2">
+                        <span id="info-source" class="text-[10px] px-2 py-0.5 rounded-full bg-slate-700 text-slate-300">—</span>
+                        <span id="info-duration" class="text-[10px] px-2 py-0.5 rounded-full bg-slate-700 text-slate-300">—</span>
+                    </div>
+                </div>
+
+                <div id="quality-list" class="space-y-2 max-h-72 overflow-y-auto pr-1"></div>
+
+                <div class="flex flex-wrap gap-3 mt-4">
+                    <button data-action="download-selected" id="download-selected-btn"
+                            class="btn-primary btn-sm inline-flex items-center gap-2">
+                        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+                        </svg>
+                        تنزيل الجودة المختارة
+                    </button>
+                    <button data-action="cancel-quality" id="cancel-quality-btn"
+                            class="btn-secondary btn-sm">إلغاء</button>
+                </div>
+            </div>
+        </div>
+
         <!-- منطقة معاينة الفيديو -->
         <div id="preview-area" class="hidden border-t border-slate-700 bg-slate-900/50">
             <div class="p-4">
@@ -342,6 +375,5 @@
 {% endblock %}
 
 {% block scripts %}
-    <!-- ✅ تحميل الملفات الثلاثة بترتيب صحيح -->
     <script type="module" src="/static/js/main.js"></script>
 {% endblock %}
