@@ -257,7 +257,7 @@
         progressBar.style.width = '15%';
 
         try {
-            const res = await fetch('/api/video/fetch', {
+            const res = await fetch('/fetch', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ url })
@@ -305,7 +305,7 @@
         if (!currentData) return;
         saveBtn.disabled = true;
         try {
-            const res = await fetch('/api/video/save', {
+            const res = await fetch('/save', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
