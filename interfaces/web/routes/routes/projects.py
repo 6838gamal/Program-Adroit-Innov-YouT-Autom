@@ -1,6 +1,7 @@
 """Projects pages: list, create, detail, timeline + Video API."""
 import asyncio
 import json
+import logging
 import os
 import re
 import uuid
@@ -17,12 +18,18 @@ from infrastructure.database.session import get_db
 from infrastructure.repositories.sql_project_repository import SQLProjectRepository
 from infrastructure.repositories.sql_render_job_repository import SQLRenderJobRepository
 
+from core.domain.project.project import Project
+from shared.value_objects import ProjectStatus, BrandColors
+from infrastructure.storage.supabase_storage_adapter import SupabaseStorageAdapter
+
 from ..core.config_helpers import (
     get_supabase_config,
     _resolve_thumbnail_url,
     _resolve_video_url,
 )
 from ..core.templates import templates
+
+logger = logging.getLogger(__name__)
 
 # ---------- yt-dlp ----------
 try:
@@ -440,10 +447,20 @@ async def save_video(payload: SaveRequest):
 
     filename = os.path.basename(filename)
     src = PREVIEW_DIR / filename
+    dst = DOWNLOAD_DIR / filename
+
+    # ✅ إذا كان منقولاً مسبقاً، لا تفعل شيئاً
+    if dst.exists():
+        return {
+            "success": True,
+            "saved_to": f"/media/downloads/{filename}",
+            "title": payload.title,
+            "already_saved": True,
+        }
+
     if not src.exists():
         raise HTTPException(status_code=404, detail="الملف غير موجود في المعاينة.")
 
-    dst = DOWNLOAD_DIR / filename
     try:
         src.replace(dst)
     except Exception as e:
@@ -453,6 +470,99 @@ async def save_video(payload: SaveRequest):
         "success": True,
         "saved_to": f"/media/downloads/{filename}",
         "title": payload.title,
+    }
+
+
+# =====================================================================
+#                    CREATE PROJECT FROM VIDEO
+# =====================================================================
+@router.post("/api/projects/create-from-video", tags=["projects"])
+async def create_project_from_video(
+    payload: dict,
+    session: AsyncSession = Depends(get_db),
+):
+    """
+    إنشاء Project من فيديو تم تنزيله.
+    
+    التدفق:
+    1) نقل الفيديو من media/preview/ → media/downloads/
+    2) رفع الفيديو إلى Supabase Storage (إذا مُهيأ)
+    3) إنشاء Project مع data = {video_url, video_path, ...}
+    4) إرجاع project_id
+    """
+    filename = payload.get("filename")
+    title = payload.get("title") or "مشروع جديد"
+
+    if not filename:
+        raise HTTPException(status_code=400, detail="اسم الملف مفقود.")
+
+    filename = os.path.basename(filename)
+    src = PREVIEW_DIR / filename
+    dst = DOWNLOAD_DIR / filename
+
+    # 1) نقل الملف (إذا لم يكن منقولاً مسبقاً)
+    if not dst.exists():
+        if not src.exists():
+            raise HTTPException(status_code=404, detail="الملف غير موجود.")
+        try:
+            src.replace(dst)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"فشل نقل الملف: {e}")
+
+    # 2) رفع إلى Supabase Storage
+    video_url = None
+    video_path = str(dst)
+
+    if settings.supabase_configured:
+        try:
+            storage = SupabaseStorageAdapter()
+            storage_key = f"videos/{filename}"
+
+            # ✅ SupabaseStorageAdapter.save() يرجع الـ key
+            saved_key = await storage.save(dst, storage_key)
+
+            if saved_key:
+                video_path = saved_key
+                # ✅ نبني public URL
+                video_url = await storage.get_url(saved_key)
+                print(f"✅ تم رفع الفيديو إلى Supabase: {video_url}", flush=True)
+        except Exception as e:
+            logger.warning(f"⚠️ فشل الرفع إلى Supabase: {e}")
+            video_url = None
+
+    # fallback: static URL
+    if not video_url:
+        video_url = f"/media/downloads/{filename}"
+
+    # 3) إنشاء Project
+    project = Project(
+        title=title,
+        description=payload.get("description") or "",
+        script=payload.get("script") or "",
+        tags=payload.get("tags") or ["video-download"],
+        brand_colors=BrandColors(),
+        settings={},
+    )
+
+    project.update_data({
+        "video_url": video_url,
+        "video_path": video_path,
+        "original_filename": filename,
+        "source": payload.get("source") or "generic",
+        "platform": payload.get("platform"),
+        "total_duration": payload.get("duration") or 0,
+        "created_from": "video_download",
+    })
+
+    repo = SQLProjectRepository(session)
+    await repo.save(project)
+    await session.commit()
+
+    return {
+        "success": True,
+        "project_id": str(project.id),
+        "id": str(project.id),
+        "video_url": video_url,
     }
 
 
