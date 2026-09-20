@@ -2,7 +2,12 @@
 // integrations.js — YouTube + Projects + Events
 // ============================================
 
-import { state, showToast, addMessage, formatNumber, formatDuration } from './app.js';
+import {
+    state, showToast, addMessage,
+    formatNumber, formatDuration,
+    showProgress, hideProgress   // ✅ أضفناهما
+} from './app.js';
+
 import { generateVideoFromPrompt, addVideoLink } from './video.js';
 
 // ---------- YouTube OAuth ----------
@@ -26,8 +31,11 @@ export async function handleYouTubeAuth() {
                         if (statusData.authenticated) {
                             clearInterval(checkInterval);
                             state.isYoutubeAuth = true;
-                            document.getElementById('auth-status').textContent = '✅ مسجل';
-                            document.getElementById('auth-status').className = 'text-xs text-green-400';
+                            const authStatus = document.getElementById('auth-status');
+                            if (authStatus) {
+                                authStatus.textContent = '✅ مسجل';
+                                authStatus.className = 'text-xs text-green-400';
+                            }
                             showToast('✅ تم تسجيل الدخول إلى يوتيوب بنجاح!', 'success');
                             addMessage('assistant', '🔑 تم تسجيل الدخول إلى يوتيوب بنجاح!');
                         }
@@ -134,8 +142,10 @@ export async function confirmProject() {
     if (!state.generatedVideo) return showToast('⚠️ لا يوجد فيديو لتأكيده', 'warning');
 
     const confirmBtn = document.getElementById('confirm-btn');
-    confirmBtn.disabled = true;
-    confirmBtn.innerHTML = '<div class="spinner-sm"></div> جاري الحفظ...';
+    if (confirmBtn) {
+        confirmBtn.disabled = true;
+        confirmBtn.innerHTML = '<div class="spinner-sm"></div> جاري الحفظ...';
+    }
 
     try {
         const projectData = {
@@ -176,12 +186,14 @@ export async function confirmProject() {
         showToast('❌ ' + error.message, 'error');
         addMessage('assistant', `❌ عذراً، فشل إنشاء المشروع: ${error.message}`);
     } finally {
-        confirmBtn.disabled = false;
-        confirmBtn.innerHTML = `
-            <svg class="w-4 h-4 inline ml-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
-            </svg>
-            تأكيد وإنشاء المشروع`;
+        if (confirmBtn) {
+            confirmBtn.disabled = false;
+            confirmBtn.innerHTML = `
+                <svg class="w-4 h-4 inline ml-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                </svg>
+                تأكيد وإنشاء المشروع`;
+        }
     }
 }
 
@@ -198,35 +210,44 @@ export function buildScriptFromChat() {
 
 // ---------- مستمعو الأحداث ----------
 export function setupEventListeners() {
-    document.getElementById('chat-form').addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const input = document.getElementById('chat-input');
-        const message = input.value.trim();
-        if (!message) return;
-        input.value = '';
-        addMessage('user', message);
-        const btn = document.getElementById('send-btn');
-        btn.disabled = true;
-        btn.innerHTML = '<div class="spinner-sm"></div>';
-        try { await generateVideoFromPrompt(message); }
-        catch (error) { showToast('❌ حدث خطأ: ' + error.message, 'error'); }
-        finally {
-            btn.disabled = false;
-            btn.innerHTML = `
-                <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/>
-                </svg> إرسال`;
-        }
-    });
-
-    document.getElementById('chat-input').addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' && !e.shiftKey) {
+    const chatForm = document.getElementById('chat-form');
+    if (chatForm) {
+        chatForm.addEventListener('submit', async (e) => {
             e.preventDefault();
-            document.getElementById('chat-form').dispatchEvent(new Event('submit'));
-        }
-    });
+            const input = document.getElementById('chat-input');
+            const message = input.value.trim();
+            if (!message) return;
+            input.value = '';
+            addMessage('user', message);
+            const btn = document.getElementById('send-btn');
+            btn.disabled = true;
+            btn.innerHTML = '<div class="spinner-sm"></div>';
+            try { await generateVideoFromPrompt(message); }
+            catch (error) { showToast('❌ حدث خطأ: ' + error.message, 'error'); }
+            finally {
+                btn.disabled = false;
+                btn.innerHTML = `
+                    <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/>
+                    </svg> إرسال`;
+            }
+        });
+    }
 
-    document.getElementById('url-input').addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') { e.preventDefault(); addVideoLink(); }
-    });
+    const chatInput = document.getElementById('chat-input');
+    if (chatInput && chatForm) {
+        chatInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                chatForm.dispatchEvent(new Event('submit'));
+            }
+        });
+    }
+
+    const urlInput = document.getElementById('url-input');
+    if (urlInput) {
+        urlInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') { e.preventDefault(); addVideoLink(); }
+        });
+    }
 }
