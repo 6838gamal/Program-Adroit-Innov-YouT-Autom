@@ -109,11 +109,54 @@ def detect_source(url: str) -> str:
 
 
 def _safe_filename(name: str, fallback: str = "video") -> str:
+    """تنظيف اسم الملف المحلي (يسمح بالعربية)."""
     if not name:
         return fallback
     name = re.sub(r"[^\w\s\-\.]", "", name, flags=re.UNICODE).strip()
     name = re.sub(r"\s+", "_", name)
     return name[:120] or fallback
+
+
+def _safe_supabase_key(name: str, fallback: str = "video") -> str:
+    """
+    يحوّل أي اسم إلى ASCII آمن لـ Supabase Storage.
+    
+    Supabase يرفض:
+    - الأحرف العربية
+    - الإيموجي
+    - المسافات والرموز الخاصة (: ? = # ...)
+    - الأسماء الطويلة جداً
+    
+    مثال:
+        "13_comments_بص_بقا_..._0986757c39.mp4" → "13_comments_0986757c39.mp4"
+        "🎬 فيديو.mp4" → "video_a1b2c3d4.mp4"
+    """
+    if not name:
+        return f"{fallback}_{uuid.uuid4().hex[:8]}.mp4"
+
+    stem = Path(name).stem
+    ext = Path(name).suffix or ".mp4"
+
+    # 1) احتفظ بـ ASCII فقط (يهمل العربية والإيموجي)
+    ascii_name = stem.encode("ascii", "ignore").decode("ascii")
+
+    # 2) استبدل الرموز غير الآمنة بـ _
+    ascii_name = re.sub(r"[^\w\-]", "_", ascii_name)
+
+    # 3) دمج _ المتعددة
+    ascii_name = re.sub(r"_+", "_", ascii_name)
+
+    # 4) إزالة _ من الأطراف
+    ascii_name = ascii_name.strip("_")
+
+    # 5) إذا صار فارغاً أو قصيراً جداً → fallback + uuid
+    if not ascii_name or len(ascii_name) < 3:
+        ascii_name = f"{fallback}_{uuid.uuid4().hex[:8]}"
+
+    # 6) اقتصر على 80 حرف
+    ascii_name = ascii_name[:80]
+
+    return f"{ascii_name}{ext}"
 
 
 # =====================================================================
@@ -449,7 +492,7 @@ async def save_video(payload: SaveRequest):
     src = PREVIEW_DIR / filename
     dst = DOWNLOAD_DIR / filename
 
-    # ✅ إذا كان منقولاً مسبقاً، لا تفعل شيئاً
+    # إذا كان منقولاً مسبقاً، لا تفعل شيئاً
     if dst.exists():
         return {
             "success": True,
@@ -486,7 +529,7 @@ async def create_project_from_video(
 
     التدفق:
     1) نقل الفيديو من media/preview/ → media/downloads/
-    2) رفع الفيديو إلى Supabase Storage (إذا مُهيأ)
+    2) رفع الفيديو إلى Supabase Storage (مع تنظيف الاسم)
     3) إنشاء Project مع data = {video_url, video_path, local_path, ...}
     4) إرجاع project_id
     """
@@ -511,13 +554,19 @@ async def create_project_from_video(
 
     # 2) رفع إلى Supabase Storage
     video_url = None
-    video_path = None       # ← Supabase key فقط عند النجاح
-    local_path = str(dst)   # ← المسار المحلي دائماً
+    video_path = None
+    local_path = str(dst)
+    supabase_filename = None
 
     if settings.supabase_configured:
         try:
             storage = SupabaseStorageAdapter()
-            storage_key = f"videos/{filename}"
+
+            # ⭐ نظّف الاسم قبل الرفع (Supabase يرفض العربية والإيموجي)
+            supabase_filename = _safe_supabase_key(filename, "video")
+            storage_key = f"videos/{supabase_filename}"
+
+            print(f"📤 Uploading to Supabase: {storage_key}", flush=True)
 
             saved_key = await storage.save(dst, storage_key)
 
@@ -529,6 +578,7 @@ async def create_project_from_video(
             logger.warning(f"⚠️ فشل الرفع إلى Supabase: {e}")
             video_url = None
             video_path = None
+            supabase_filename = None
 
     # fallback: static URL
     if not video_url:
@@ -544,12 +594,12 @@ async def create_project_from_video(
         settings={},
     )
 
-    # ⭐ حفظ بيانات الفيديو في data blob
     project.update_data({
         "video_url": video_url,
-        "video_path": video_path,        # ← None إذا فشل الرفع
-        "local_path": local_path,        # ← المسار المحلي دائماً
-        "original_filename": filename,
+        "video_path": video_path,                  # Supabase key أو None
+        "local_path": local_path,                  # المسار المحلي دائماً
+        "original_filename": filename,             # الاسم الأصلي (للعرض)
+        "supabase_filename": supabase_filename,    # الاسم بعد التنظيف
         "source": payload.get("source") or "generic",
         "platform": payload.get("platform"),
         "total_duration": payload.get("duration") or 0,
