@@ -29,7 +29,7 @@ export function addVideoLink() {
     updateVideoLinksUI();
     input.value = '';
     addMessage('user', `📎 أضفت رابط فيديو من ${siteName}: ${url}`);
-    addMessage('assistant', '✅ تم استلام الرابط! جاري معالجة الفيديو...');
+    addMessage('assistant', '✅ تم استلام الرابط! جاري جلب معلومات الفيديو...');
     processVideoLink(url);
 }
 
@@ -89,108 +89,162 @@ export function uploadVideoFile(event) {
     reader.readAsDataURL(file);
 }
 
-// ---------- معالجة الفيديو ----------
+// ---------- معالجة الفيديو (flow جديد: info → quality → fetch) ----------
 export async function processVideoLink(url) {
-    showProgress('جاري تحليل رابط الفيديو...', 5);
+    showProgress('جاري جلب معلومات الفيديو...', 20);
     hideProgressWarning();
     hideProgressError();
 
     try {
-        const response = await fetch('/api/v1/projects/video/process', {
+        const infoRes = await fetch('/api/video/info', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ url, session_id: state.sessionId, use_auth: state.isYoutubeAuth }),
+            body: JSON.stringify({ url }),
             signal: getAbortController()?.signal
         });
 
-        if (!response.ok) {
-            let msg = 'فشل معالجة الفيديو';
-            try { msg = (await response.json()).detail || msg; }
-            catch (e) { msg = `خطأ ${response.status}: ${response.statusText}`; }
-            throw new Error(msg);
+        if (!infoRes.ok) {
+            const err = await infoRes.json().catch(() => ({}));
+            throw new Error(err.detail || err.message || 'فشل جلب معلومات الفيديو.');
         }
 
-        const data = await response.json();
-        state.processingSessionId = data.session_id;
-        state.videoData = data;
+        const info = await infoRes.json();
+        state.pendingVideoUrl    = url;
+        state.pendingVideoSource = info.source || 'generic';
+        state.pendingFormats     = info.formats || [];
 
-        if (data.analysis) {
-            updateLoadingVideoInfo(
-                data.analysis.format || '—', data.analysis.size || '—',
-                data.analysis.duration ? formatDuration(data.analysis.duration) : '—',
-                data.analysis.dimensions || '—'
-            );
-            if (data.analysis.uploader || data.analysis.view_count) {
-                document.getElementById('loading-extra-info').classList.remove('hidden');
-                document.getElementById('loading-uploader').textContent = data.analysis.uploader || '—';
-                document.getElementById('loading-views').textContent = data.analysis.view_count ? formatNumber(data.analysis.view_count) : '—';
-            }
-            if (data.analysis.title) document.getElementById('progress-title').textContent = '🎬 ' + data.analysis.title;
-            if (data.analysis.warning) showProgressWarning(data.analysis.warning);
-        }
+        hideProgress();
+        renderQualityPicker(info);
 
-        await pollProcessingStatus(state.processingSessionId);
     } catch (error) {
         if (error.name === 'AbortError') return;
         hideProgress();
-        showToast('❌ فشل معالجة الفيديو: ' + error.message, 'error');
-        addMessage('assistant', `❌ عذراً، فشلت معالجة الفيديو: ${error.message}`);
+        showToast('❌ ' + error.message, 'error');
+        addMessage('assistant', `❌ فشل جلب معلومات الفيديو: ${error.message}`);
     }
 }
 
-export async function pollProcessingStatus(sessionId) {
-    let attempts = 0;
-    while (attempts < 60 && !state.cancelProcessing) {
-        try {
-            const response = await fetch(`/api/v1/projects/video/process/${sessionId}/status`,
-                { signal: getAbortController()?.signal });
-            if (!response.ok) {
-                await new Promise(r => setTimeout(r, 2000));
-                attempts++;
-                continue;
-            }
-            const status = await response.json();
-            if (status.progress !== undefined) updateProgressUI(status);
+// ---------- عرض قائمة الجودات ----------
+export function renderQualityPicker(info) {
+    const card       = document.getElementById('quality-card');
+    const list       = document.getElementById('quality-list');
+    const titleEl    = document.getElementById('info-title');
+    const sourceEl   = document.getElementById('info-source');
+    const durationEl = document.getElementById('info-duration');
 
-            if (status.completed) {
-                if (status.error) { showProgressError('❌ ' + status.error); throw new Error(status.error); }
-                const platform = (status.platform || '').toLowerCase();
-                const isExternal = EXTERNAL_PLATFORMS.includes(platform);
-                let videoUrl = status.video_url || status.download?.path || null;
-                const originalUrl = status.original_url || status.video_url || null;
-                if (!videoUrl && originalUrl) videoUrl = originalUrl;
+    if (!card || !list) return downloadSelectedQuality(null);
 
-                showPreviewWithInfo(videoUrl, {
-                    url: videoUrl, title: status.title || 'فيديو معالج',
-                    duration: status.duration || 0, format: status.format || 'mp4',
-                    size: status.size || '—', dimensions: status.dimensions || '—',
-                    uploader: status.uploader, view_count: status.view_count,
-                    like_count: status.like_count, description: status.description,
-                    thumbnail: status.thumbnail, warning: status.warning,
-                    processed: true, session_id: sessionId, platform, isExternal,
-                    original_url: originalUrl, download: status.download || null,
-                    video_id: status.video_id, published_at: status.published_at,
-                    use_auth: status.use_auth
-                });
-                hideProgress();
-                showToast('✅ تم معالجة الفيديو بنجاح!', 'success');
-                addMessage('assistant', '🎬 تم معالجة الفيديو بنجاح! يمكنك معاينته أدناه.');
-                return;
-            }
-            if (status.status === 'failed') {
-                showProgressError('❌ ' + (status.detail || 'فشلت المعالجة'));
-                throw new Error(status.detail || 'فشلت المعالجة');
-            }
-        } catch (error) {
-            if (error.name === 'AbortError') return;
-            if (error.message && error.message.includes('فشل')) throw error;
-        }
-        await new Promise(r => setTimeout(r, 1500));
-        attempts++;
+    titleEl.textContent    = info.title || '—';
+    sourceEl.textContent   = 'المصدر: ' + (info.source === 'youtube' ? 'YouTube' : 'عام');
+    durationEl.textContent = 'المدة: ' + (info.duration ? formatDuration(info.duration) : '—');
+
+    list.innerHTML = `
+        <label class="flex items-center gap-3 p-3 bg-slate-800/50 border border-slate-700 rounded-lg cursor-pointer hover:border-indigo-500 transition">
+            <input type="radio" name="quality" value="__auto__" class="accent-indigo-500" checked>
+            <div class="flex-1">
+                <p class="text-sm text-white font-medium">تلقائي (أفضل جودة)</p>
+                <p class="text-xs text-slate-500">سيتم اختيار الأفضل تلقائياً</p>
+            </div>
+        </label>
+    `;
+
+    (info.formats || []).forEach(f => {
+        const size  = f.filesize ? formatFileSize(f.filesize) : '';
+        const audio = f.has_audio ? '🎵 صوت مدموج' : '🎬 فيديو فقط';
+        list.innerHTML += `
+            <label class="flex items-center gap-3 p-3 bg-slate-800/50 border border-slate-700 rounded-lg cursor-pointer hover:border-indigo-500 transition">
+                <input type="radio" name="quality" value="${f.format_id}" class="accent-indigo-500">
+                <div class="flex-1">
+                    <p class="text-sm text-white font-medium">${escapeHtml(f.label)} • ${(f.ext || 'mp4').toUpperCase()}</p>
+                    <p class="text-xs text-slate-500">${audio}${size ? ' • ' + size : ''}</p>
+                </div>
+            </label>
+        `;
+    });
+
+    card.classList.remove('hidden');
+    card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+// ---------- تنزيل الجودة المختارة + عرض المعاينة ----------
+export async function downloadSelectedQuality(formatId) {
+    const qualityCard = document.getElementById('quality-card');
+    const url         = state.pendingVideoUrl;
+    const source      = state.pendingVideoSource;
+
+    if (!url) return showToast('⚠️ لا يوجد رابط معلّق', 'warning');
+
+    if (formatId === undefined) {
+        const checked = document.querySelector('input[name="quality"]:checked');
+        formatId = (checked && checked.value !== '__auto__') ? checked.value : null;
     }
-    if (state.cancelProcessing) return;
-    showProgressError('⏰ انتهى وقت المعالجة.');
-    throw new Error('انتهى وقت المعالجة.');
+
+    showProgress('جاري تنزيل الفيديو...', 25);
+    if (qualityCard) qualityCard.classList.add('hidden');
+
+    try {
+        const res = await fetch('/api/video/fetch', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url, format_id: formatId, source }),
+            signal: getAbortController()?.signal
+        });
+
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.detail || err.message || 'فشل تنزيل الفيديو.');
+        }
+
+        const data = await res.json();
+        hideProgress();
+
+        state.currentDownloadData = data;
+
+        const previewUrl = data.preview_url || data.url || data.download_url;
+
+        showPreviewWithInfo(previewUrl, {
+            url: data.url || previewUrl,
+            original_url: data.url || previewUrl,
+            title: data.title || 'فيديو',
+            description: data.description || '',
+            duration: data.duration || 0,
+            format: data.format || (data.filename || '').split('.').pop() || 'mp4',
+            size: data.size ? formatFileSize(data.size) : '—',
+            dimensions: data.dimensions || '—',
+            uploader: data.uploader || null,
+            view_count: data.view_count || null,
+            like_count: data.like_count || null,
+            thumbnail: data.thumbnail || null,
+            published_at: data.published_at || null,
+            video_id: data.video_id || null,
+            processed: true,
+            platform: source,
+            isExternal: source === 'youtube' || source === 'generic',
+            download: {
+                path: data.download_url || data.url || previewUrl,
+                filename: data.filename || (data.title || 'video') + '.mp4'
+            },
+            session_id: state.sessionId
+        });
+
+        addMessage('assistant', '🎬 تم تنزيل الفيديو بنجاح! يمكنك معاينته وتنزيله أدناه.');
+        showToast('✅ تم التنزيل بنجاح!', 'success');
+
+    } catch (error) {
+        if (error.name === 'AbortError') return;
+        hideProgress();
+        showToast('❌ ' + error.message, 'error');
+        addMessage('assistant', `❌ فشل التنزيل: ${error.message}`);
+    }
+}
+
+// ---------- إلغاء قائمة الجودات ----------
+export function cancelQualityPicker() {
+    const card = document.getElementById('quality-card');
+    if (card) card.classList.add('hidden');
+    state.pendingVideoUrl = null;
+    state.pendingVideoSource = null;
+    state.pendingFormats = [];
 }
 
 // ---------- توليد الفيديو ----------
@@ -425,21 +479,24 @@ export function setupDownloadSection(videoData, previewUrl) {
 
     const downloadPath = videoData.download?.path;
     const originalUrl = videoData.original_url;
+    const filename = videoData.download?.filename
+        || (videoData.title || 'video') + '.mp4';
 
+    // 1) رابط تنزيل مباشر من السيرفر
     if (downloadPath) {
-        link.href = downloadPath;
-        link.setAttribute('download', (videoData.title || 'video') + '.mp4');
-        link.onclick = null;
+        bindDownloadButton(link, downloadPath, filename);
         size.textContent = videoData.size || 'حجم غير معروف';
         return;
     }
+
+    // 2) فيديو مرفوع من المستخدم
     if (videoData.uploaded && previewUrl) {
-        link.href = previewUrl;
-        link.setAttribute('download', videoData.title || 'video.mp4');
-        link.onclick = null;
+        bindDownloadButton(link, previewUrl, filename);
         size.textContent = videoData.size || '—';
         return;
     }
+
+    // 3) منصة خارجية بدون تنزيل مباشر
     if (originalUrl && videoData.isExternal) {
         link.classList.add('hidden');
         size.textContent = 'يتطلب فتح الرابط الأصلي';
@@ -449,14 +506,25 @@ export function setupDownloadSection(videoData, previewUrl) {
         }
         return;
     }
+
+    // 4) رابط معاينة عادي
     if (previewUrl && !previewUrl.startsWith('data:')) {
-        link.href = previewUrl;
-        link.setAttribute('download', (videoData.title || 'video') + '.mp4');
-        link.onclick = null;
+        bindDownloadButton(link, previewUrl, filename);
         size.textContent = videoData.size || '—';
         return;
     }
+
     section.classList.add('hidden');
+}
+
+// ربط زر التنزيل بالدالة الصحيحة
+function bindDownloadButton(link, url, filename) {
+    link.href = url;
+    link.setAttribute('download', filename);
+    link.onclick = (e) => {
+        e.preventDefault();
+        downloadVideoFile(url, filename);
+    };
 }
 
 export function openOriginalUrl() {
@@ -465,27 +533,31 @@ export function openOriginalUrl() {
     else showToast('⚠️ لا يوجد رابط أصلي', 'warning');
 }
 
+// ---------- تنزيل الفيديو (مع دعم CORS/fallback) ----------
 export async function downloadVideoFile(url, filename) {
     const progressDiv = document.getElementById('download-progress');
     const progressBar = document.getElementById('download-progress-bar');
     const progressText = document.getElementById('download-progress-text');
 
     if (!progressDiv) {
-        const a = document.createElement('a');
-        a.href = url; a.download = filename; a.click();
+        triggerNativeDownload(url, filename);
         return;
     }
+
     try {
         progressDiv.classList.remove('hidden');
         progressBar.style.width = '0%';
         progressText.textContent = 'بدء التنزيل...';
-        const response = await fetch(url);
-        if (!response.ok) throw new Error('فشل التنزيل');
+
+        const response = await fetch(url, { mode: 'cors' });
+        if (!response.ok) throw new Error('فشل التنزيل: ' + response.status);
+
         const contentLength = response.headers.get('content-length');
         const total = contentLength ? parseInt(contentLength, 10) : 0;
         const reader = response.body.getReader();
         const chunks = [];
         let received = 0;
+
         while (true) {
             const { done, value } = await reader.read();
             if (done) break;
@@ -495,20 +567,36 @@ export async function downloadVideoFile(url, filename) {
                 const percent = Math.round((received / total) * 100);
                 progressBar.style.width = percent + '%';
                 progressText.textContent = `${percent}% (${formatFileSize(received)} / ${formatFileSize(total)})`;
-            } else progressText.textContent = formatFileSize(received);
+            } else {
+                progressText.textContent = formatFileSize(received);
+            }
         }
+
         const blob = new Blob(chunks);
         const blobUrl = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = blobUrl; a.download = filename || 'video.mp4';
-        document.body.appendChild(a); a.click(); document.body.removeChild(a);
-        setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+        triggerNativeDownload(blobUrl, filename || 'video.mp4');
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 1500);
+
         progressText.textContent = '✅ اكتمل التنزيل!';
         showToast('✅ تم تنزيل الفيديو بنجاح!', 'success');
         setTimeout(() => progressDiv.classList.add('hidden'), 2000);
+
     } catch (error) {
-        showToast('❌ فشل التنزيل: ' + error.message, 'error');
-        progressText.textContent = '❌ فشل التنزيل';
-        setTimeout(() => progressDiv.classList.add('hidden'), 3000);
+        console.warn('fetch download failed, falling back:', error);
+        progressText.textContent = '⚠️ جارٍ التنزيل بطريقة بديلة...';
+        triggerNativeDownload(url, filename || 'video.mp4');
+        setTimeout(() => progressDiv.classList.add('hidden'), 2000);
+        showToast('ℹ️ تم بدء التنزيل عبر المتصفح', 'info');
     }
+}
+
+// تنزيل أصلي عبر المتصفح
+function triggerNativeDownload(url, filename) {
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename || 'video.mp4';
+    a.rel = 'noopener';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
 }
