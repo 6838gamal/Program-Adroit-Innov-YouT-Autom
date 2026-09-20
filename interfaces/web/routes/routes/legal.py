@@ -1,4 +1,4 @@
-"""Legal pages: privacy policy + terms of service + test code + video API."""
+"""Legal pages + video download API (all in one router)."""
 from __future__ import annotations
 
 import os
@@ -71,8 +71,6 @@ async def test_code_page(request: Request):
 #                            VIDEO API
 # =====================================================================
 
-video_router = APIRouter(prefix="/api/video", tags=["video"])
-
 MEDIA_ROOT = Path("media")
 PREVIEW_DIR = MEDIA_ROOT / "preview"
 DOWNLOAD_DIR = MEDIA_ROOT / "downloads"
@@ -81,8 +79,13 @@ DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 
 # ---------- Schemas ----------
+class InfoRequest(BaseModel):
+    url: HttpUrl
+
+
 class FetchRequest(BaseModel):
     url: HttpUrl
+    format_id: Optional[str] = None
 
 
 class SaveRequest(BaseModel):
@@ -108,20 +111,75 @@ def _extract_info(url: str) -> dict:
         "no_warnings": True,
         "skip_download": True,
         "noplaylist": True,
-        "format": "best[ext=mp4]/best",
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        return ydl.extract_info(url, download=False)
+        info = ydl.extract_info(url, download=False)
+        # لو كان playlist، خذ أول فيديو
+        if info.get("_type") == "playlist" and info.get("entries"):
+            info = info["entries"][0]
+        return info
 
 
-def _download_video(url: str, out_path: Path) -> dict:
-    """ينزّل الفيديو إلى المسار المحدد ويعيد المعلومات النهائية."""
+def _list_formats(info: dict) -> list[dict]:
+    """يبني قائمة الجودات المتاحة (فيديو فقط أو فيديو+صوت)."""
+    formats = info.get("formats") or []
+    results = []
+    seen = set()
+
+    for f in formats:
+        # تجاهل الصوت فقط
+        if f.get("vcodec") in (None, "none"):
+            continue
+
+        height = f.get("height")
+        ext = f.get("ext") or "mp4"
+        format_id = f.get("format_id")
+        if not format_id or not height:
+            continue
+
+        # مفتاح فريد لكل جودة
+        key = (height, ext, f.get("fps"))
+        if key in seen:
+            continue
+        seen.add(key)
+
+        has_audio = f.get("acodec") not in (None, "none")
+        note = f.get("format_note") or ""
+        filesize = f.get("filesize") or f.get("filesize_approx") or 0
+
+        results.append({
+            "format_id": format_id,
+            "label": f"{height}p" + (f" {f.get('fps')}fps" if f.get("fps") else ""),
+            "height": height,
+            "ext": ext,
+            "fps": f.get("fps"),
+            "has_audio": has_audio,
+            "filesize": filesize,
+            "note": note,
+        })
+
+    # ترتيب من الأعلى للأدنى
+    results.sort(key=lambda x: (x["height"], x["fps"] or 0), reverse=True)
+    return results
+
+
+def _download_video(url: str, out_path: Path, format_id: Optional[str] = None) -> dict:
+    """
+    ينزّل الفيديو:
+    - إذا format_id محدد → استخدمه مع أفضل صوت
+    - خلاف ذلك → أفضل جودة mp4 مع صوت مدموج
+    """
+    if format_id:
+        fmt = f"{format_id}+bestaudio/best[format_id={format_id}]/best"
+    else:
+        fmt = "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"
+
     ydl_opts = {
         "quiet": True,
         "no_warnings": True,
         "noplaylist": True,
         "outtmpl": str(out_path.with_suffix("")) + ".%(ext)s",
-        "format": "best[ext=mp4]/best",
+        "format": fmt,
         "merge_output_format": "mp4",
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -138,12 +196,37 @@ def _download_video(url: str, out_path: Path) -> dict:
 
 
 # ---------- Endpoints ----------
-@video_router.post("/fetch")
-async def fetch_video(payload: FetchRequest):
-    """يجلب معلومات الفيديو وينزّله مؤقتاً للمعاينة."""
-    url = str(payload.url)
 
-    # 1) استخراج الميتاداتا
+@router.post("/api/video/info", tags=["video"])
+async def video_info(payload: InfoRequest):
+    """يجلب معلومات الفيديو + قائمة الجودات بدون تنزيل."""
+    url = str(payload.url)
+    try:
+        info = await asyncio.to_thread(_extract_info, url)
+    except yt_dlp.utils.DownloadError as e:
+        raise HTTPException(status_code=400, detail=f"تعذر جلب الفيديو: {e}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"خطأ غير متوقع: {e}")
+
+    formats = _list_formats(info)
+
+    return {
+        "success": True,
+        "title": info.get("title") or "video",
+        "duration": info.get("duration") or 0,
+        "thumbnail": info.get("thumbnail"),
+        "uploader": info.get("uploader"),
+        "formats": formats,
+    }
+
+
+@router.post("/api/video/fetch", tags=["video"])
+async def fetch_video(payload: FetchRequest):
+    """ينزّل الفيديو مؤقتاً بالجودة المختارة (أو الأفضل افتراضياً)."""
+    url = str(payload.url)
+    format_id = payload.format_id
+
+    # 1) الميتاداتا
     try:
         info = await asyncio.to_thread(_extract_info, url)
     except yt_dlp.utils.DownloadError as e:
@@ -154,14 +237,21 @@ async def fetch_video(payload: FetchRequest):
     video_id = info.get("id") or uuid.uuid4().hex[:10]
     title = info.get("title") or "video"
     duration = info.get("duration") or 0
-    quality = f"{info.get('height', '?')}p" if info.get("height") else "—"
 
-    # 2) تنزيل الفيديو مؤقتاً
+    # 2) تحديد اسم الجودة
+    quality_label = "—"
+    if format_id:
+        for f in _list_formats(info):
+            if f["format_id"] == format_id:
+                quality_label = f["label"]
+                break
+
+    # 3) التنزيل
     temp_name = f"{_safe_filename(title, 'video')}_{video_id}"
     out_path = PREVIEW_DIR / temp_name
 
     try:
-        final_info = await asyncio.to_thread(_download_video, url, out_path)
+        final_info = await asyncio.to_thread(_download_video, url, out_path, format_id)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"فشل التنزيل: {e}")
 
@@ -169,11 +259,19 @@ async def fetch_video(payload: FetchRequest):
     size = final_path.stat().st_size if final_path.exists() else 0
     filename = final_path.name
 
+    if quality_label == "—":
+        quality_label = (
+            final_info.get("format_note")
+            or (f"{final_info.get('height')}p" if final_info.get("height") else None)
+            or final_info.get("resolution")
+            or "—"
+        )
+
     return {
         "success": True,
         "title": title,
         "duration": duration,
-        "quality": quality,
+        "quality": quality_label,
         "size": size,
         "filename": filename,
         "url": url,
@@ -182,7 +280,7 @@ async def fetch_video(payload: FetchRequest):
     }
 
 
-@video_router.post("/save")
+@router.post("/api/video/save", tags=["video"])
 async def save_video(payload: SaveRequest):
     """ينقل الفيديو من مجلد المعاينة إلى مجلد المكتبة الدائم."""
     filename = payload.filename
