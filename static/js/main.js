@@ -11,7 +11,8 @@ import {
     addVideoLink, uploadVideoFile, removeVideoLink,
     showPreviewWithInfo, hidePreview, cancelPreview,
     openOriginalUrl, downloadVideoFile,
-    downloadSelectedQuality, cancelQualityPicker
+    downloadSelectedQuality, cancelQualityPicker,
+    saveDownloadedVideo
 } from './video.js';
 
 import {
@@ -37,6 +38,7 @@ window.loadMySubscriptions = loadMySubscriptions;
 window.searchYouTube = searchYouTube;
 window.downloadSelectedQuality = downloadSelectedQuality;
 window.cancelQualityPicker = cancelQualityPicker;
+window.saveDownloadedVideo = saveDownloadedVideo;
 
 // ⚠️ للتصحيح
 window.__state = state;
@@ -69,9 +71,12 @@ function bindDataActions() {
             'load-subscriptions': loadMySubscriptions,
             'search-youtube': searchYouTube,
 
-            // ⭐ الجودة والتنزيل (جديد)
+            // الجودة والتنزيل
             'download-selected': () => downloadSelectedQuality(),
-            'cancel-quality': cancelQualityPicker
+            'cancel-quality': cancelQualityPicker,
+
+            // ⭐ الحفظ في المكتبة (جديد)
+            'save-video': saveDownloadedVideo
         };
 
         if (actions[action]) {
