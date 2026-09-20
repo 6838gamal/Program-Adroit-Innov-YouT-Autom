@@ -1,4 +1,4 @@
-"""Legal pages + video download API (all in one router)."""
+"""Legal pages + video download API (hybrid: pytubefix for YouTube, yt-dlp for others)."""
 from __future__ import annotations
 
 import os
@@ -17,6 +17,17 @@ from config.settings import settings
 
 from ..core.config_helpers import get_supabase_config
 from ..core.templates import templates
+
+# استيراد pytubefix بشكل آمن (لو لم يكن مثبتاً، نتجاهل اليوتيوب عبره)
+try:
+    from pytubefix import YouTube as PyTubeYouTube
+    from pytubefix.exceptions import PytubeFixException
+    PYTUBEFIX_AVAILABLE = True
+except ImportError:
+    PYTUBEFIX_AVAILABLE = False
+    PyTubeYouTube = None
+    PytubeFixException = Exception
+
 
 router = APIRouter()
 
@@ -86,6 +97,7 @@ class InfoRequest(BaseModel):
 class FetchRequest(BaseModel):
     url: HttpUrl
     format_id: Optional[str] = None
+    source: Optional[str] = None   # "youtube" أو "generic" (يُرسل من الـ info)
 
 
 class SaveRequest(BaseModel):
@@ -95,6 +107,13 @@ class SaveRequest(BaseModel):
 
 
 # ---------- Helpers ----------
+def is_youtube(url: str) -> bool:
+    """يتحقق إن كان الرابط من يوتيوب."""
+    return any(d in url.lower() for d in (
+        "youtube.com", "youtu.be", "youtube-nocookie.com", "m.youtube.com"
+    ))
+
+
 def _safe_filename(name: str, fallback: str = "video") -> str:
     """ينظف اسم الملف من الرموز غير المسموحة."""
     if not name:
@@ -104,8 +123,12 @@ def _safe_filename(name: str, fallback: str = "video") -> str:
     return name[:120] or fallback
 
 
-def _extract_info(url: str) -> dict:
-    """يستخرج معلومات الفيديو بدون تحميله (metadata only)."""
+# =====================================================================
+#                          YT-DLP (Generic)
+# =====================================================================
+
+def _ytdlp_extract_info(url: str) -> dict:
+    """يستخرج معلومات الفيديو عبر yt-dlp بدون تحميل."""
     ydl_opts = {
         "quiet": True,
         "no_warnings": True,
@@ -114,20 +137,18 @@ def _extract_info(url: str) -> dict:
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=False)
-        # لو كان playlist، خذ أول فيديو
         if info.get("_type") == "playlist" and info.get("entries"):
             info = info["entries"][0]
         return info
 
 
-def _list_formats(info: dict) -> list[dict]:
-    """يبني قائمة الجودات المتاحة (فيديو فقط أو فيديو+صوت)."""
+def _ytdlp_list_formats(info: dict) -> list[dict]:
+    """يبني قائمة الجودات من yt-dlp."""
     formats = info.get("formats") or []
     results = []
     seen = set()
 
     for f in formats:
-        # تجاهل الصوت فقط
         if f.get("vcodec") in (None, "none"):
             continue
 
@@ -137,7 +158,6 @@ def _list_formats(info: dict) -> list[dict]:
         if not format_id or not height:
             continue
 
-        # مفتاح فريد لكل جودة
         key = (height, ext, f.get("fps"))
         if key in seen:
             continue
@@ -158,17 +178,12 @@ def _list_formats(info: dict) -> list[dict]:
             "note": note,
         })
 
-    # ترتيب من الأعلى للأدنى
     results.sort(key=lambda x: (x["height"], x["fps"] or 0), reverse=True)
     return results
 
 
-def _download_video(url: str, out_path: Path, format_id: Optional[str] = None) -> dict:
-    """
-    ينزّل الفيديو:
-    - إذا format_id محدد → استخدمه مع أفضل صوت
-    - خلاف ذلك → أفضل جودة mp4 مع صوت مدموج
-    """
+def _ytdlp_download(url: str, out_path: Path, format_id: Optional[str] = None) -> dict:
+    """ينزّل الفيديو عبر yt-dlp."""
     if format_id:
         fmt = f"{format_id}+bestaudio/best[format_id={format_id}]/best"
     else:
@@ -195,77 +210,226 @@ def _download_video(url: str, out_path: Path, format_id: Optional[str] = None) -
         return info
 
 
-# ---------- Endpoints ----------
+# =====================================================================
+#                          PYTUBEFIX (YouTube)
+# =====================================================================
+
+def _pytubefix_info(url: str) -> dict:
+    """يجلب معلومات فيديو يوتيوب + قائمة الجودات عبر pytubefix."""
+    if not PYTUBEFIX_AVAILABLE:
+        raise RuntimeError("pytubefix غير مثبت.")
+
+    try:
+        yt = PyTubeYouTube(url)
+        title = yt.title
+    except PytubeFixException as e:
+        raise ValueError(f"تعذر جلب الفيديو: {e}")
+
+    duration = yt.length or 0
+    thumbnail = yt.thumbnail_url
+    uploader = yt.author
+
+    formats: list[dict] = []
+    seen: set = set()
+
+    # progressive streams (فيديو + صوت)
+    for s in yt.streams.filter(progressive=True, file_extension="mp4"):
+        height_str = s.resolution or ""
+        h = int(height_str.replace("p", "")) if height_str.endswith("p") else 0
+        if h in seen:
+            continue
+        seen.add(h)
+        formats.append({
+            "format_id": str(s.itag),
+            "label": height_str or "—",
+            "height": h,
+            "ext": s.subtype or "mp4",
+            "fps": s.fps,
+            "has_audio": True,
+            "filesize": s.filesize or 0,
+            "note": "progressive",
+        })
+
+    # adaptive streams (فيديو فقط) - نعرض فقط ≥ 720p
+    for s in yt.streams.filter(adaptive=True, file_extension="mp4", only_video=True):
+        height_str = s.resolution or ""
+        h = int(height_str.replace("p", "")) if height_str.endswith("p") else 0
+        if h in seen or h < 720:
+            continue
+        seen.add(h)
+        formats.append({
+            "format_id": str(s.itag),
+            "label": f"{height_str} (فيديو فقط)",
+            "height": h,
+            "ext": s.subtype or "mp4",
+            "fps": s.fps,
+            "has_audio": False,
+            "filesize": s.filesize or 0,
+            "note": "adaptive",
+        })
+
+    formats.sort(key=lambda x: (x["height"], x["fps"] or 0), reverse=True)
+
+    return {
+        "title": title,
+        "duration": duration,
+        "thumbnail": thumbnail,
+        "uploader": uploader,
+        "formats": formats,
+    }
+
+
+def _pytubefix_download(url: str, out_path: Path, format_id: Optional[str] = None) -> Path:
+    """ينزّل الفيديو عبر pytubefix."""
+    if not PYTUBEFIX_AVAILABLE:
+        raise RuntimeError("pytubefix غير مثبت.")
+
+    yt = PyTubeYouTube(url)
+
+    if format_id:
+        stream = yt.streams.get_by_itag(int(format_id))
+        if not stream:
+            raise ValueError(f"الجودة {format_id} غير متاحة.")
+    else:
+        stream = (
+            yt.streams
+              .filter(progressive=True, file_extension="mp4")
+              .order_by("resolution")
+              .desc()
+              .first()
+        )
+        if not stream:
+            stream = yt.streams.get_highest_resolution()
+
+    out_dir = out_path.parent
+    out_dir.mkdir(parents=True, exist_ok=True)
+    filename = stream.download(output_path=str(out_dir), filename=out_path.name)
+    return Path(filename)
+
+
+# =====================================================================
+#                          UNIFIED HELPERS
+# =====================================================================
+
+async def _get_info(url: str) -> dict:
+    """
+    يجلب المعلومات من المكتبة المناسبة:
+    - YouTube → pytubefix (مع fallback إلى yt-dlp)
+    - غيره → yt-dlp
+    """
+    if is_youtube(url) and PYTUBEFIX_AVAILABLE:
+        try:
+            data = await asyncio.to_thread(_pytubefix_info, url)
+            data["source"] = "youtube"
+            return data
+        except Exception as e:
+            # fallback إلى yt-dlp
+            print(f"⚠️ pytubefix فشل، سيتم استخدام yt-dlp: {e}")
+
+    # yt-dlp
+    info = await asyncio.to_thread(_ytdlp_extract_info, url)
+    return {
+        "title": info.get("title") or "video",
+        "duration": info.get("duration") or 0,
+        "thumbnail": info.get("thumbnail"),
+        "uploader": info.get("uploader"),
+        "formats": _ytdlp_list_formats(info),
+        "source": "generic",
+    }
+
+
+async def _download_video(
+    url: str,
+    out_path: Path,
+    format_id: Optional[str],
+    source: str,
+) -> Path:
+    """
+    ينزّل الفيديو من المكتبة المناسبة حسب source.
+    source: "youtube" أو "generic"
+    """
+    if source == "youtube" and PYTUBEFIX_AVAILABLE:
+        try:
+            return await asyncio.to_thread(
+                _pytubefix_download, url, out_path, format_id
+            )
+        except Exception as e:
+            print(f"⚠️ pytubefix فشل في التنزيل، سيتم استخدام yt-dlp: {e}")
+
+    # yt-dlp
+    info = await asyncio.to_thread(_ytdlp_download, url, out_path, format_id)
+    return Path(info["_final_path"])
+
+
+# =====================================================================
+#                          ENDPOINTS
+# =====================================================================
 
 @router.post("/api/video/info", tags=["video"])
 async def video_info(payload: InfoRequest):
     """يجلب معلومات الفيديو + قائمة الجودات بدون تنزيل."""
     url = str(payload.url)
     try:
-        info = await asyncio.to_thread(_extract_info, url)
+        data = await _get_info(url)
     except yt_dlp.utils.DownloadError as e:
         raise HTTPException(status_code=400, detail=f"تعذر جلب الفيديو: {e}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"خطأ غير متوقع: {e}")
 
-    formats = _list_formats(info)
-
     return {
         "success": True,
-        "title": info.get("title") or "video",
-        "duration": info.get("duration") or 0,
-        "thumbnail": info.get("thumbnail"),
-        "uploader": info.get("uploader"),
-        "formats": formats,
+        "title": data.get("title") or "video",
+        "duration": data.get("duration") or 0,
+        "thumbnail": data.get("thumbnail"),
+        "uploader": data.get("uploader"),
+        "formats": data.get("formats") or [],
+        "source": data.get("source") or "generic",
     }
 
 
 @router.post("/api/video/fetch", tags=["video"])
 async def fetch_video(payload: FetchRequest):
-    """ينزّل الفيديو مؤقتاً بالجودة المختارة (أو الأفضل افتراضياً)."""
+    """ينزّل الفيديو مؤقتاً بالجودة المختارة."""
     url = str(payload.url)
     format_id = payload.format_id
+    source = payload.source
 
-    # 1) الميتاداتا
+    # إذا لم يُرسل source، اكتشف تلقائياً
+    if not source:
+        source = "youtube" if is_youtube(url) and PYTUBEFIX_AVAILABLE else "generic"
+
+    # 1) جلب الميتاداتا
     try:
-        info = await asyncio.to_thread(_extract_info, url)
-    except yt_dlp.utils.DownloadError as e:
-        raise HTTPException(status_code=400, detail=f"تعذر جلب الفيديو: {e}")
+        data = await _get_info(url)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"خطأ غير متوقع: {e}")
+        raise HTTPException(status_code=400, detail=f"تعذر جلب الفيديو: {e}")
 
-    video_id = info.get("id") or uuid.uuid4().hex[:10]
-    title = info.get("title") or "video"
-    duration = info.get("duration") or 0
+    title = data.get("title") or "video"
+    duration = data.get("duration") or 0
 
     # 2) تحديد اسم الجودة
     quality_label = "—"
     if format_id:
-        for f in _list_formats(info):
-            if f["format_id"] == format_id:
+        for f in data.get("formats") or []:
+            if str(f["format_id"]) == str(format_id):
                 quality_label = f["label"]
                 break
 
     # 3) التنزيل
-    temp_name = f"{_safe_filename(title, 'video')}_{video_id}"
-    out_path = PREVIEW_DIR / temp_name
+    video_id = uuid.uuid4().hex[:10]
+    safe_title = _safe_filename(title, "video")
+    out_path = PREVIEW_DIR / f"{safe_title}_{video_id}"
 
     try:
-        final_info = await asyncio.to_thread(_download_video, url, out_path, format_id)
+        final_path = await _download_video(url, out_path, format_id, source)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"فشل التنزيل: {e}")
 
-    final_path = Path(final_info["_final_path"])
     size = final_path.stat().st_size if final_path.exists() else 0
     filename = final_path.name
 
     if quality_label == "—":
-        quality_label = (
-            final_info.get("format_note")
-            or (f"{final_info.get('height')}p" if final_info.get("height") else None)
-            or final_info.get("resolution")
-            or "—"
-        )
+        quality_label = "تلقائي"
 
     return {
         "success": True,
@@ -275,6 +439,7 @@ async def fetch_video(payload: FetchRequest):
         "size": size,
         "filename": filename,
         "url": url,
+        "source": source,
         "preview_url": f"/media/preview/{filename}",
         "download_url": f"/media/preview/{filename}",
     }
@@ -287,10 +452,8 @@ async def save_video(payload: SaveRequest):
     if not filename:
         raise HTTPException(status_code=400, detail="اسم الملف مفقود.")
 
-    # منع Path Traversal
     filename = os.path.basename(filename)
     src = PREVIEW_DIR / filename
-
     if not src.exists():
         raise HTTPException(status_code=404, detail="الملف غير موجود في المعاينة.")
 
