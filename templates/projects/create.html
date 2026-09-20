@@ -19,12 +19,12 @@
             </div>
             <div class="flex items-center gap-3">
                 <span id="auth-status" class="text-xs text-slate-500">🔑 غير مسجل</span>
-                <button onclick="clearChat()" class="text-xs text-slate-500 hover:text-slate-300 transition">
+                <button data-action="clear-chat" class="text-xs text-slate-500 hover:text-slate-300 transition">
                     مسح المحادثة
                 </button>
             </div>
         </div>
-        
+
         <!-- رسائل الدردشة -->
         <div id="chat-messages" class="h-72 overflow-y-auto p-4 space-y-4 bg-slate-900/50">
             <div class="flex items-start gap-3">
@@ -48,16 +48,16 @@
                 <div class="flex items-center justify-between mb-3">
                     <h4 class="text-sm font-medium text-slate-300">🎬 معاينة الفيديو</h4>
                     <div class="flex gap-2">
-                        <button onclick="confirmProject()" id="confirm-btn" class="btn-success btn-sm">
+                        <button data-action="confirm-project" id="confirm-btn" class="btn-success btn-sm">
                             <svg class="w-4 h-4 inline ml-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
                             </svg>
                             تأكيد وإنشاء المشروع
                         </button>
-                        <button onclick="cancelPreview()" class="btn-secondary btn-sm">إلغاء</button>
+                        <button data-action="cancel-preview" class="btn-secondary btn-sm">إلغاء</button>
                     </div>
                 </div>
-                
+
                 <div class="relative bg-black rounded-lg overflow-hidden aspect-video" id="video-preview-container">
                     <video id="video-preview" class="w-full h-full" controls controlsList="nodownload">
                         <source id="video-source" src="" type="video/mp4">
@@ -71,7 +71,7 @@
                         </div>
                     </div>
                 </div>
-                
+
                 <!-- معلومات الفيديو التفصيلية -->
                 <div id="video-info" class="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
                     <div class="bg-slate-800/50 rounded-lg p-2 text-center">
@@ -91,7 +91,7 @@
                         <span id="video-dimensions" class="text-slate-300">—</span>
                     </div>
                 </div>
-                
+
                 <!-- معلومات إضافية -->
                 <div id="video-extra-info" class="mt-2 grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs hidden">
                     <div class="bg-slate-800/30 rounded-lg p-2 text-center">
@@ -107,14 +107,14 @@
                         <span id="video-likes" class="text-slate-300">—</span>
                     </div>
                 </div>
-                
+
                 <!-- رسالة تحذيرية -->
                 <div id="video-warning" class="mt-2 hidden">
                     <div class="bg-yellow-900/30 border border-yellow-700/50 rounded-lg p-2">
                         <p id="video-warning-text" class="text-xs text-yellow-300"></p>
                     </div>
                 </div>
-                
+
                 <!-- وصف الفيديو -->
                 <div id="video-description" class="mt-2 hidden">
                     <div class="bg-slate-800/30 rounded-lg p-2">
@@ -122,7 +122,7 @@
                         <p id="video-description-text" class="text-xs text-slate-300 line-clamp-3"></p>
                     </div>
                 </div>
-                
+
                 <!-- معلومات إضافية للفيديو -->
                 <div id="video-youtube-info" class="mt-2 hidden">
                     <div class="bg-slate-800/30 rounded-lg p-2 grid grid-cols-2 gap-2 text-xs">
@@ -137,7 +137,7 @@
                     </div>
                 </div>
 
-                <!-- ✅ قسم التنزيل الجديد -->
+                <!-- قسم التنزيل -->
                 <div id="video-download" class="mt-3 hidden">
                     <div class="flex items-center justify-between bg-slate-800/50 rounded-lg p-3 border border-slate-700">
                         <div class="flex items-center gap-2">
@@ -150,8 +150,8 @@
                             </div>
                         </div>
                         <div class="flex gap-2">
-                            <a id="video-download-link" 
-                               href="#" 
+                            <a id="video-download-link"
+                               href="#"
                                download
                                class="btn-success btn-sm inline-flex items-center gap-1">
                                 <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -159,7 +159,7 @@
                                 </svg>
                                 تنزيل مباشر
                             </a>
-                            <button onclick="openOriginalUrl()" 
+                            <button data-action="open-original"
                                     id="open-original-btn"
                                     class="btn-secondary btn-sm inline-flex items-center gap-1 hidden">
                                 <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -190,25 +190,25 @@
         <!-- منطقة إدخال الرسالة -->
         <div class="p-4 border-t border-slate-700 bg-slate-800/30">
             <div class="flex flex-wrap gap-2 mb-3">
-                <button onclick="addSuggestion('فيديو تعليمي عن الذكاء الاصطناعي')" class="text-xs bg-slate-700 hover:bg-slate-600 text-slate-300 px-3 py-1 rounded-full transition">🎓 تعليمي</button>
-                <button onclick="addSuggestion('مراجعة منتج تقني')" class="text-xs bg-slate-700 hover:bg-slate-600 text-slate-300 px-3 py-1 rounded-full transition">📱 مراجعة</button>
-                <button onclick="addSuggestion('قصة تحفيزية قصيرة')" class="text-xs bg-slate-700 hover:bg-slate-600 text-slate-300 px-3 py-1 rounded-full transition">📖 قصة</button>
-                <button onclick="addSuggestion('تحديثات أخبار التكنولوجيا')" class="text-xs bg-slate-700 hover:bg-slate-600 text-slate-300 px-3 py-1 rounded-full transition">📰 أخبار</button>
-                <button onclick="document.getElementById('url-input').focus()" class="text-xs bg-indigo-900/50 hover:bg-indigo-800/50 text-indigo-300 px-3 py-1 rounded-full transition border border-indigo-700/30">🔗 إضافة رابط</button>
+                <button data-suggestion="فيديو تعليمي عن الذكاء الاصطناعي" class="text-xs bg-slate-700 hover:bg-slate-600 text-slate-300 px-3 py-1 rounded-full transition">🎓 تعليمي</button>
+                <button data-suggestion="مراجعة منتج تقني" class="text-xs bg-slate-700 hover:bg-slate-600 text-slate-300 px-3 py-1 rounded-full transition">📱 مراجعة</button>
+                <button data-suggestion="قصة تحفيزية قصيرة" class="text-xs bg-slate-700 hover:bg-slate-600 text-slate-300 px-3 py-1 rounded-full transition">📖 قصة</button>
+                <button data-suggestion="تحديثات أخبار التكنولوجيا" class="text-xs bg-slate-700 hover:bg-slate-600 text-slate-300 px-3 py-1 rounded-full transition">📰 أخبار</button>
+                <button data-action="focus-url" class="text-xs bg-indigo-900/50 hover:bg-indigo-800/50 text-indigo-300 px-3 py-1 rounded-full transition border border-indigo-700/30">🔗 إضافة رابط</button>
             </div>
 
             <!-- أزرار يوتيوب -->
             <div class="flex flex-wrap gap-2 mb-3">
-                <button onclick="handleYouTubeAuth()" class="text-xs bg-red-600/20 hover:bg-red-600/30 text-red-400 px-3 py-1 rounded-full transition border border-red-700/30">
+                <button data-action="youtube-auth" class="text-xs bg-red-600/20 hover:bg-red-600/30 text-red-400 px-3 py-1 rounded-full transition border border-red-700/30">
                     🔑 تسجيل الدخول يوتيوب
                 </button>
-                <button onclick="loadMyVideos()" class="text-xs bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 px-3 py-1 rounded-full transition border border-blue-700/30">
+                <button data-action="load-my-videos" class="text-xs bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 px-3 py-1 rounded-full transition border border-blue-700/30">
                     📂 فيديوهاتي
                 </button>
-                <button onclick="loadMySubscriptions()" class="text-xs bg-purple-600/20 hover:bg-purple-600/30 text-purple-400 px-3 py-1 rounded-full transition border border-purple-700/30">
+                <button data-action="load-subscriptions" class="text-xs bg-purple-600/20 hover:bg-purple-600/30 text-purple-400 px-3 py-1 rounded-full transition border border-purple-700/30">
                     📺 المشترك بها
                 </button>
-                <button onclick="searchYouTube()" class="text-xs bg-green-600/20 hover:bg-green-600/30 text-green-400 px-3 py-1 rounded-full transition border border-green-700/30">
+                <button data-action="search-youtube" class="text-xs bg-green-600/20 hover:bg-green-600/30 text-green-400 px-3 py-1 rounded-full transition border border-green-700/30">
                     🔍 بحث يوتيوب
                 </button>
             </div>
@@ -216,7 +216,7 @@
             <form id="chat-form" class="flex flex-col gap-2">
                 <div class="flex gap-2">
                     <input type="text" id="url-input" class="input flex-1 text-sm bg-slate-800/50 border-slate-600 focus:border-indigo-500" placeholder="أضف رابط فيديو من YouTube أو TikTok أو أي منصة...">
-                    <button type="button" onclick="addVideoLink()" class="btn-secondary whitespace-nowrap text-sm px-4 py-2">
+                    <button type="button" data-action="add-link" class="btn-secondary whitespace-nowrap text-sm px-4 py-2">
                         <svg class="w-4 h-4 inline ml-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/>
                         </svg>
@@ -233,13 +233,13 @@
                     </button>
                 </div>
             </form>
-            
+
             <!-- زر تحميل فيديو من جهاز المستخدم -->
             <div class="mt-3 pt-3 border-t border-slate-700">
                 <p class="text-xs text-slate-400 mb-2">أو قم بتحميل فيديو من جهازك:</p>
                 <div class="flex items-center gap-2">
-                    <input type="file" id="video-file" accept="video/*" class="hidden" onchange="uploadVideoFile(event)">
-                    <button onclick="document.getElementById('video-file').click()" class="btn-secondary btn-sm">
+                    <input type="file" id="video-file" accept="video/*" class="hidden">
+                    <button data-action="pick-file" class="btn-secondary btn-sm">
                         <svg class="w-4 h-4 inline ml-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
                         </svg>
@@ -262,11 +262,11 @@
                     </div>
                     <span id="progress-percent" class="text-lg font-bold text-indigo-400">0%</span>
                 </div>
-                
+
                 <div class="w-full bg-slate-700 rounded-full h-3 overflow-hidden mb-3">
                     <div id="progress-bar" class="bg-gradient-to-r from-indigo-500 to-purple-500 h-full rounded-full transition-all duration-500 ease-out" style="width: 0%"></div>
                 </div>
-                
+
                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
                     <div class="flex items-center gap-2">
                         <span class="text-slate-500">📋 الحالة:</span>
@@ -281,20 +281,20 @@
                         <span id="progress-detail" class="text-slate-400">في انتظار بدء المعالجة...</span>
                     </div>
                 </div>
-                
+
                 <!-- رسائل التحذير والخطأ -->
                 <div id="progress-warning" class="mt-2 hidden">
                     <div class="bg-yellow-900/20 border border-yellow-700/30 rounded-lg p-2">
                         <p id="progress-warning-text" class="text-xs text-yellow-400"></p>
                     </div>
                 </div>
-                
+
                 <div id="progress-error" class="mt-2 hidden">
                     <div class="bg-red-900/20 border border-red-700/30 rounded-lg p-2">
                         <p id="progress-error-text" class="text-xs text-red-400"></p>
                     </div>
                 </div>
-                
+
                 <div id="video-info-loading" class="mt-3 pt-3 border-t border-slate-700/50">
                     <div class="text-xs text-slate-400 mb-2">🎬 معلومات الفيديو:</div>
                     <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
@@ -326,9 +326,9 @@
                         </div>
                     </div>
                 </div>
-                
+
                 <div class="mt-3 flex justify-end">
-                    <button onclick="cancelProcessing()" class="btn-secondary btn-sm">
+                    <button data-action="cancel-processing" class="btn-secondary btn-sm">
                         <svg class="w-3 h-3 inline ml-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
                         </svg>
@@ -342,5 +342,6 @@
 {% endblock %}
 
 {% block scripts %}
-    <script src="/static/js/create.js"></script>
+    <!-- ✅ تحميل الملفات الثلاثة بترتيب صحيح -->
+    <script type="module" src="/static/js/main.js"></script>
 {% endblock %}
