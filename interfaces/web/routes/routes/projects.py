@@ -483,11 +483,11 @@ async def create_project_from_video(
 ):
     """
     إنشاء Project من فيديو تم تنزيله.
-    
+
     التدفق:
     1) نقل الفيديو من media/preview/ → media/downloads/
     2) رفع الفيديو إلى Supabase Storage (إذا مُهيأ)
-    3) إنشاء Project مع data = {video_url, video_path, ...}
+    3) إنشاء Project مع data = {video_url, video_path, local_path, ...}
     4) إرجاع project_id
     """
     filename = payload.get("filename")
@@ -511,24 +511,24 @@ async def create_project_from_video(
 
     # 2) رفع إلى Supabase Storage
     video_url = None
-    video_path = str(dst)
+    video_path = None       # ← Supabase key فقط عند النجاح
+    local_path = str(dst)   # ← المسار المحلي دائماً
 
     if settings.supabase_configured:
         try:
             storage = SupabaseStorageAdapter()
             storage_key = f"videos/{filename}"
 
-            # ✅ SupabaseStorageAdapter.save() يرجع الـ key
             saved_key = await storage.save(dst, storage_key)
 
             if saved_key:
                 video_path = saved_key
-                # ✅ نبني public URL
                 video_url = await storage.get_url(saved_key)
                 print(f"✅ تم رفع الفيديو إلى Supabase: {video_url}", flush=True)
         except Exception as e:
             logger.warning(f"⚠️ فشل الرفع إلى Supabase: {e}")
             video_url = None
+            video_path = None
 
     # fallback: static URL
     if not video_url:
@@ -544,9 +544,11 @@ async def create_project_from_video(
         settings={},
     )
 
+    # ⭐ حفظ بيانات الفيديو في data blob
     project.update_data({
         "video_url": video_url,
-        "video_path": video_path,
+        "video_path": video_path,        # ← None إذا فشل الرفع
+        "local_path": local_path,        # ← المسار المحلي دائماً
         "original_filename": filename,
         "source": payload.get("source") or "generic",
         "platform": payload.get("platform"),
