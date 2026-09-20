@@ -27,7 +27,13 @@ export const state = {
     cancelProcessing: false,
     uploadedFile: null,
     videoData: null,
-    isYoutubeAuth: false
+    isYoutubeAuth: false,
+
+    // ⭐ جديد: للتنزيل عبر رابط
+    pendingVideoUrl: null,
+    pendingVideoSource: null,
+    pendingFormats: [],
+    currentDownloadData: null,
 };
 
 export let currentAbortController = null;
