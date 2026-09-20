@@ -38,3 +38,6 @@ pytube
 
 
 gradio_client
+
+
+yt-dlp
