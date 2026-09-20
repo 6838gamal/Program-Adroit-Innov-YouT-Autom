@@ -1,11 +1,10 @@
 // ============================================
-// main.js — نقطة الدخول الرئيسية
+// main.js — نقطة الدخول الرئيسية (نسخة محسّنة)
 // ============================================
 
 import {
     state, initSession, checkConnection, addMessage,
-    clearChat, addSuggestion, showToast,
-    cancelProcessing
+    clearChat, addSuggestion, showToast, cancelProcessing
 } from './app.js';
 
 import {
@@ -20,7 +19,27 @@ import {
 } from './integrations.js';
 
 // ============================================
-// ربط الأزرار بـ data-action (بديل onclick)
+// ⚠️ إتاحة الدوال للنطاق العام (لأن onclick في HTML)
+// ============================================
+window.clearChat = clearChat;
+window.addSuggestion = addSuggestion;
+window.cancelProcessing = cancelProcessing;
+window.addVideoLink = addVideoLink;
+window.uploadVideoFile = uploadVideoFile;
+window.removeVideoLink = removeVideoLink;
+window.cancelPreview = cancelPreview;
+window.confirmProject = confirmProject;
+window.openOriginalUrl = openOriginalUrl;
+window.handleYouTubeAuth = handleYouTubeAuth;
+window.loadMyVideos = loadMyVideos;
+window.loadMySubscriptions = loadMySubscriptions;
+window.searchYouTube = searchYouTube;
+
+// ⚠️ للتصحيح
+window.__state = state;
+
+// ============================================
+// ربط data-action (بديل onclick)
 // ============================================
 function bindDataActions() {
     document.addEventListener('click', (e) => {
@@ -28,7 +47,6 @@ function bindDataActions() {
         if (!target) return;
 
         const action = target.dataset.action;
-
         const actions = {
             'clear-chat': clearChat,
             'confirm-project': confirmProject,
@@ -40,24 +58,28 @@ function bindDataActions() {
             'load-my-videos': loadMyVideos,
             'load-subscriptions': loadMySubscriptions,
             'search-youtube': searchYouTube,
-            'focus-url': () => document.getElementById('url-input').focus(),
-            'pick-file': () => document.getElementById('video-file').click()
+            'focus-url': () => document.getElementById('url-input')?.focus(),
+            'pick-file': () => document.getElementById('video-file')?.click()
         };
 
         if (actions[action]) {
             e.preventDefault();
-            actions[action]();
+            try {
+                actions[action]();
+            } catch (err) {
+                console.error(`❌ خطأ في action "${action}":`, err);
+            }
         }
     });
 
-    // ربط أزرار الاقتراحات (data-suggestion)
+    // اقتراحات
     document.addEventListener('click', (e) => {
         const target = e.target.closest('[data-suggestion]');
         if (!target) return;
         addSuggestion(target.dataset.suggestion);
     });
 
-    // ربط حقل رفع الملف
+    // ملف الرفع
     const fileInput = document.getElementById('video-file');
     if (fileInput) {
         fileInput.addEventListener('change', uploadVideoFile);
@@ -67,22 +89,44 @@ function bindDataActions() {
 // ============================================
 // التهيئة
 // ============================================
+function init() {
+    console.log('🚀 بدء تهيئة التطبيق...');
+
+    try {
+        initSession();
+        console.log('✅ initSession');
+
+        bindDataActions();
+        console.log('✅ bindDataActions');
+
+        setupEventListeners();
+        console.log('✅ setupEventListeners');
+
+        checkConnection();
+        setInterval(checkConnection, 30000);
+        console.log('✅ checkConnection');
+
+        console.log('🎬 AI Video Creator — جاهز');
+    } catch (err) {
+        console.error('❌ فشل التهيئة:', err);
+        showToast('❌ فشل تهيئة التطبيق: ' + err.message, 'error');
+    }
+}
+
+// ✅ ضمان التشغيل حتى لو تأخر التحميل
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+} else {
+    init();
+}
+
+// ============================================
+// معالجات الأخطاء العامة
+// ============================================
 window.addEventListener('error', (event) => {
     console.error('Global error:', event.error);
 });
 
 window.addEventListener('unhandledrejection', (event) => {
     console.error('Unhandled rejection:', event.reason);
-});
-
-document.addEventListener('DOMContentLoaded', () => {
-    initSession();
-    bindDataActions();
-    setupEventListeners();
-    checkConnection();
-    setInterval(checkConnection, 30000);
-
-    console.log('🎬 AI Video Creator - Create Page initialized');
-    console.log('📡 YouTube API + OAuth 2.0 enabled');
-    console.log('✅ Modular architecture: app.js + video.js + integrations.js');
 });
