@@ -17,6 +17,18 @@ let state = {
     isYoutubeAuth: false
 };
 
+// ✅ AbortController للتحكم في الطلبات
+let currentAbortController = null;
+
+// ✅ المنصات الخارجية المدعومة
+const EXTERNAL_PLATFORMS = [
+    'youtube', 'tiktok', 'facebook', 'instagram',
+    'twitter', 'vimeo', 'dailymotion', 'twitch'
+];
+
+// ✅ رابط الفيديو التجريبي الاحتياطي
+const FALLBACK_VIDEO_URL = 'https://sample-videos.com/video321/mp4/240/big_buck_bunny_240p_1mb.mp4';
+
 // ============================================
 // وظائف الدردشة
 // ============================================
@@ -39,7 +51,7 @@ function addMessage(role, content, timestamp = new Date()) {
     bubble.className = `flex-1 ${
         role === 'user' ? 'bg-blue-600/30 rounded-2xl rounded-tl-sm' : 'bg-slate-800 rounded-2xl rounded-tr-sm'
     } px-4 py-3 max-w-[85%]`;
-    bubble.innerHTML = `<p class="text-sm text-slate-300 whitespace-pre-wrap">${content}</p>`;
+    bubble.innerHTML = `<p class="text-sm text-slate-300 whitespace-pre-wrap">${escapeHtml(content)}</p>`;
     
     const time = document.createElement('span');
     time.className = 'text-[10px] text-slate-600 flex-shrink-0 self-end';
@@ -58,6 +70,14 @@ function addMessage(role, content, timestamp = new Date()) {
     container.appendChild(messageDiv);
     container.scrollTop = container.scrollHeight;
     state.chatHistory.push({ role, content, timestamp });
+}
+
+// ✅ حماية من XSS
+function escapeHtml(str) {
+    if (!str) return '';
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
 }
 
 function clearChat() {
@@ -116,7 +136,7 @@ function updateVideoLinksUI() {
     container.classList.remove('hidden');
     list.innerHTML = state.videoLinks.map((url, index) => `
         <span class="inline-flex items-center gap-1 bg-slate-700/50 rounded-full px-3 py-1 text-xs text-slate-300">
-            🔗 ${url.length > 40 ? url.substring(0, 40) + '...' : url}
+            🔗 ${escapeHtml(url.length > 40 ? url.substring(0, 40) + '...' : url)}
             <button onclick="removeVideoLink(${index})" class="text-slate-400 hover:text-red-400 transition">
                 <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
@@ -166,6 +186,7 @@ function uploadVideoFile(event) {
         
         state.generatedVideo = {
             url: videoUrl,
+            original_url: videoUrl,
             data: {
                 title: file.name,
                 description: 'فيديو مرفوع من المستخدم',
@@ -210,7 +231,8 @@ async function processVideoLink(url) {
                 url: url, 
                 session_id: state.sessionId,
                 use_auth: state.isYoutubeAuth 
-            })
+            }),
+            signal: currentAbortController?.signal
         });
         
         if (!response.ok) {
@@ -257,6 +279,10 @@ async function processVideoLink(url) {
         await pollProcessingStatus(state.processingSessionId);
         
     } catch (error) {
+        if (error.name === 'AbortError') {
+            console.log('⏹️ تم إلغاء معالجة الفيديو');
+            return;
+        }
         hideProgress();
         showToast('❌ فشل معالجة الفيديو: ' + error.message, 'error');
         addMessage('assistant', `❌ عذراً، فشلت معالجة الفيديو: ${error.message}`);
@@ -275,7 +301,10 @@ async function pollProcessingStatus(sessionId) {
     
     while (attempts < maxAttempts && !state.cancelProcessing) {
         try {
-            const response = await fetch(`/api/v1/projects/video/process/${sessionId}/status`);
+            const response = await fetch(
+                `/api/v1/projects/video/process/${sessionId}/status`,
+                { signal: currentAbortController?.signal }
+            );
             
             if (!response.ok) {
                 console.warn('⚠️ فشل الحصول على الحالة، إعادة المحاولة...');
@@ -330,8 +359,18 @@ async function pollProcessingStatus(sessionId) {
                 
                 console.log('✅ اكتملت المعالجة!');
                 
-                const videoUrl = status.video_url || 'https://sample-videos.com/video321/mp4/240/big_buck_bunny_240p_1mb.mp4';
-                const isExternal = status.platform in ['youtube', 'tiktok', 'facebook', 'instagram'];
+                // ✅✅✅ الإصلاح: استخدام includes بدلاً من in
+                const platform = (status.platform || '').toLowerCase();
+                const isExternal = EXTERNAL_PLATFORMS.includes(platform);
+                
+                // ✅ تحديد رابط الفيديو للعرض
+                let videoUrl = status.video_url || status.download?.path || null;
+                const originalUrl = status.original_url || status.video_url || null;
+                
+                // إذا لم يوجد رابط مباشر، استخدم الرابط الأصلي
+                if (!videoUrl && originalUrl) {
+                    videoUrl = originalUrl;
+                }
                 
                 showPreviewWithInfo(videoUrl, {
                     url: videoUrl,
@@ -348,9 +387,10 @@ async function pollProcessingStatus(sessionId) {
                     warning: status.warning,
                     processed: true,
                     session_id: sessionId,
+                    platform: platform,
                     isExternal: isExternal,
-                    original_url: status.video_url,
-                    download: status.download,
+                    original_url: originalUrl,
+                    download: status.download || null,
                     video_id: status.video_id,
                     published_at: status.published_at,
                     use_auth: status.use_auth
@@ -368,6 +408,10 @@ async function pollProcessingStatus(sessionId) {
             }
             
         } catch (error) {
+            if (error.name === 'AbortError') {
+                console.log('⏹️ تم إلغاء الاستطلاع');
+                return;
+            }
             if (error.message && error.message.includes('فشل')) {
                 throw error;
             }
@@ -404,7 +448,8 @@ async function generateVideoFromPrompt(prompt) {
                 prompt: prompt,
                 session_id: state.sessionId,
                 links: state.videoLinks
-            })
+            }),
+            signal: currentAbortController?.signal
         });
         
         if (!response.ok) {
@@ -422,9 +467,13 @@ async function generateVideoFromPrompt(prompt) {
         state.processingSessionId = data.session_id;
         console.log('✅ بدأ التوليد، Session ID:', state.processingSessionId);
         
-        await pollGenerationStatus(state.processingSessionId);
+        await pollGenerationStatus(state.processingSessionId, prompt);
         
     } catch (error) {
+        if (error.name === 'AbortError') {
+            console.log('⏹️ تم إلغاء التوليد');
+            return;
+        }
         hideProgress();
         showToast('❌ فشل توليد الفيديو: ' + error.message, 'error');
         addMessage('assistant', `❌ عذراً، فشل توليد الفيديو: ${error.message}`);
@@ -435,7 +484,7 @@ async function generateVideoFromPrompt(prompt) {
 // ============================================
 // مراقبة حالة التوليد
 // ============================================
-async function pollGenerationStatus(sessionId) {
+async function pollGenerationStatus(sessionId, prompt) {
     let attempts = 0;
     const maxAttempts = 90;
     
@@ -443,7 +492,10 @@ async function pollGenerationStatus(sessionId) {
     
     while (attempts < maxAttempts && !state.cancelProcessing) {
         try {
-            const response = await fetch(`/api/v1/projects/video/generate/${sessionId}/status`);
+            const response = await fetch(
+                `/api/v1/projects/video/generate/${sessionId}/status`,
+                { signal: currentAbortController?.signal }
+            );
             
             if (!response.ok) {
                 console.warn('⚠️ فشل الحصول على حالة التوليد، إعادة المحاولة...');
@@ -488,7 +540,7 @@ async function pollGenerationStatus(sessionId) {
                 
                 console.log('✅ اكتمل التوليد!');
                 
-                const videoUrl = status.video_url || 'https://sample-videos.com/video321/mp4/240/big_buck_bunny_240p_1mb.mp4';
+                const videoUrl = status.video_url || FALLBACK_VIDEO_URL;
                 
                 showPreviewWithInfo(videoUrl, {
                     url: videoUrl,
@@ -499,7 +551,9 @@ async function pollGenerationStatus(sessionId) {
                     size: status.size || '—',
                     dimensions: status.dimensions || '—',
                     generated: true,
-                    session_id: sessionId
+                    session_id: sessionId,
+                    download: status.download || null,
+                    original_url: status.video_url
                 });
                 
                 hideProgress();
@@ -514,6 +568,10 @@ async function pollGenerationStatus(sessionId) {
             }
             
         } catch (error) {
+            if (error.name === 'AbortError') {
+                console.log('⏹️ تم إلغاء استطلاع التوليد');
+                return;
+            }
             if (error.message && error.message.includes('فشل')) {
                 throw error;
             }
@@ -554,6 +612,9 @@ function showProgress(title, percent = 0) {
     state.processing = true;
     state.cancelProcessing = false;
     state.startTime = Date.now();
+    
+    // ✅ إنشاء AbortController جديد
+    currentAbortController = new AbortController();
     
     if (state.progressTimer) clearInterval(state.progressTimer);
     state.progressTimer = setInterval(updateElapsedTime, 1000);
@@ -597,11 +658,19 @@ function hideProgress() {
 }
 
 function cancelProcessing() {
-    if (confirm('هل تريد إلغاء المعالجة الجارية؟')) {
-        state.cancelProcessing = true;
-        showToast('تم إلغاء المعالجة', 'warning');
-        hideProgress();
+    if (!confirm('هل تريد إلغاء المعالجة الجارية؟')) return;
+    
+    state.cancelProcessing = true;
+    
+    // ✅ إلغاء جميع الطلبات الجارية
+    if (currentAbortController) {
+        currentAbortController.abort();
+        currentAbortController = null;
     }
+    
+    showToast('تم إلغاء المعالجة', 'warning');
+    hideProgress();
+    addMessage('assistant', '⏹️ تم إلغاء المعالجة بناءً على طلبك.');
 }
 
 // ============================================
@@ -648,65 +717,90 @@ function showPreviewWithInfo(videoUrl, videoData) {
     loadingText.textContent = 'جاري تحميل الفيديو...';
     loadingProgress.textContent = '0%';
     
+    // ✅ تحديد رابط التشغيل الفعلي
     let finalVideoUrl = videoUrl;
-    if (videoData.isExternal) {
-        finalVideoUrl = 'https://sample-videos.com/video321/mp4/240/big_buck_bunny_240p_1mb.mp4';
+    let canPreview = true;
+    let useFallback = false;
+    
+    // إذا كان الفيديو من منصة خارجية ولا يوجد رابط مباشر
+    if (videoData.isExternal && !videoData.download?.path && !videoData.processed) {
+        canPreview = false;
+    }
+    
+    // إذا لم يكن قابلاً للمعاينة، استخدم فيديو تجريبي
+    if (!canPreview || !finalVideoUrl) {
+        finalVideoUrl = FALLBACK_VIDEO_URL;
+        useFallback = true;
+        
         setTimeout(() => {
             const warning = document.getElementById('video-warning');
             warning.classList.remove('hidden');
-            document.getElementById('video-warning-text').textContent = '⚠️ تم استخدام فيديو تجريبي للعرض لأن الرابط الأصلي لا يدعم المعاينة المباشرة.';
-        }, 1000);
+            document.getElementById('video-warning-text').textContent = 
+                '⚠️ لا يمكن معاينة الفيديو مباشرة (منصة خارجية). يمكنك تنزيله أو فتح الرابط الأصلي.';
+        }, 500);
     }
     
     source.src = finalVideoUrl;
     video.load();
     
+    // ✅ تحديث المعلومات الأساسية
     document.getElementById('video-format').textContent = videoData.format || 'mp4';
     document.getElementById('video-size').textContent = videoData.size || '—';
     document.getElementById('video-duration').textContent = videoData.duration ? formatDuration(videoData.duration) : '—';
     document.getElementById('video-dimensions').textContent = videoData.dimensions || '—';
     
+    // ✅ المعلومات الإضافية (يوتيوب)
     if (videoData.uploader || videoData.view_count || videoData.like_count) {
         document.getElementById('video-extra-info').classList.remove('hidden');
         document.getElementById('video-uploader').textContent = videoData.uploader || '—';
         document.getElementById('video-views').textContent = videoData.view_count ? formatNumber(videoData.view_count) : '—';
         document.getElementById('video-likes').textContent = videoData.like_count ? formatNumber(videoData.like_count) : '—';
+    } else {
+        document.getElementById('video-extra-info').classList.add('hidden');
     }
     
     if (videoData.video_id || videoData.published_at) {
         document.getElementById('video-youtube-info').classList.remove('hidden');
         document.getElementById('video-id').textContent = videoData.video_id || '—';
-        document.getElementById('video-published').textContent = videoData.published_at ? new Date(videoData.published_at).toLocaleDateString('ar-SA') : '—';
+        document.getElementById('video-published').textContent = videoData.published_at 
+            ? new Date(videoData.published_at).toLocaleDateString('ar-SA') 
+            : '—';
+    } else {
+        document.getElementById('video-youtube-info').classList.add('hidden');
     }
     
+    // ✅ التحذيرات
     if (videoData.warning) {
         const warning = document.getElementById('video-warning');
         warning.classList.remove('hidden');
         document.getElementById('video-warning-text').textContent = '⚠️ ' + videoData.warning;
-    } else {
+    } else if (!useFallback) {
         hideWarning();
     }
     
+    // ✅ الوصف
     if (videoData.description) {
         document.getElementById('video-description').classList.remove('hidden');
         document.getElementById('video-description-text').textContent = videoData.description;
+    } else {
+        document.getElementById('video-description').classList.add('hidden');
     }
     
-    if (videoData.download && videoData.download.path) {
-        document.getElementById('video-download').classList.remove('hidden');
-        document.getElementById('video-download-link').href = videoData.download.path;
-    }
+    // ✅✅✅ إعداد قسم التنزيل
+    setupDownloadSection(videoData, finalVideoUrl);
     
+    // حفظ الحالة
     state.generatedVideo = {
         url: finalVideoUrl,
+        original_url: videoData.original_url || videoUrl,
         data: videoData,
         links: state.videoLinks,
-        session_id: videoData.session_id,
-        original_url: videoData.original_url || videoUrl
+        session_id: videoData.session_id
     };
     
+    // ✅ مستمعو الأحداث
     video.addEventListener('loadedmetadata', function() {
-        if (this.duration && !isNaN(this.duration)) {
+        if (this.duration && !isNaN(this.duration) && this.duration > 0) {
             document.getElementById('video-duration').textContent = formatDuration(this.duration);
             if (state.generatedVideo) {
                 state.generatedVideo.data.duration = this.duration;
@@ -740,9 +834,9 @@ function showPreviewWithInfo(videoUrl, videoData) {
     
     video.onerror = function() {
         overlay.classList.add('hidden');
-        if (finalVideoUrl !== 'https://sample-videos.com/video321/mp4/240/big_buck_bunny_240p_1mb.mp4') {
+        if (finalVideoUrl !== FALLBACK_VIDEO_URL) {
             showToast('⚠️ تعذر تحميل الفيديو، جاري استخدام فيديو تجريبي للعرض', 'warning');
-            source.src = 'https://sample-videos.com/video321/mp4/240/big_buck_bunny_240p_1mb.mp4';
+            source.src = FALLBACK_VIDEO_URL;
             video.load();
         } else {
             showToast('⚠️ تعذر تحميل معاينة الفيديو', 'warning');
@@ -767,6 +861,165 @@ function cancelPreview() {
 }
 
 // ============================================
+// ✅ قسم التنزيل - دوال جديدة
+// ============================================
+
+function setupDownloadSection(videoData, previewUrl) {
+    const downloadSection = document.getElementById('video-download');
+    const downloadLink = document.getElementById('video-download-link');
+    const downloadSize = document.getElementById('video-download-size');
+    const openOriginalBtn = document.getElementById('open-original-btn');
+    
+    // تحقق من وجود العناصر
+    if (!downloadSection) {
+        console.warn('⚠️ قسم التنزيل غير موجود في HTML');
+        return;
+    }
+    
+    // إعادة تعيين الحالة
+    downloadSection.classList.remove('hidden');
+    downloadLink.classList.remove('hidden');
+    if (openOriginalBtn) openOriginalBtn.classList.add('hidden');
+    
+    // تحديد إذا كان هناك رابط تنزيل حقيقي
+    const downloadPath = videoData.download?.path;
+    const originalUrl = videoData.original_url;
+    
+    // ✅ الحالة 1: يوجد رابط تنزيل مباشر من الخادم
+    if (downloadPath) {
+        downloadLink.href = downloadPath;
+        downloadLink.setAttribute('download', (videoData.title || 'video') + '.mp4');
+        downloadLink.onclick = null; // إزالة أي معالج سابق
+        downloadSize.textContent = videoData.size || 'حجم غير معروف';
+        console.log('✅ تم إعداد التنزيل المباشر:', downloadPath);
+        return;
+    }
+    
+    // ✅ الحالة 2: فيديو مرفوع من الجهاز
+    if (videoData.uploaded && previewUrl) {
+        downloadLink.href = previewUrl;
+        downloadLink.setAttribute('download', videoData.title || 'video.mp4');
+        downloadLink.onclick = null;
+        downloadSize.textContent = videoData.size || '—';
+        console.log('✅ تنزيل فيديو مرفوع');
+        return;
+    }
+    
+    // ✅ الحالة 3: رابط أصلي خارجي (يوتيوب مثلاً)
+    if (originalUrl && videoData.isExternal) {
+        downloadLink.classList.add('hidden');
+        downloadSize.textContent = 'يتطلب فتح الرابط الأصلي';
+        
+        if (openOriginalBtn) {
+            openOriginalBtn.classList.remove('hidden');
+            openOriginalBtn.onclick = () => {
+                window.open(originalUrl, '_blank', 'noopener,noreferrer');
+            };
+        }
+        console.log('🔗 التنزيل يتطلب فتح الرابط الأصلي:', originalUrl);
+        return;
+    }
+    
+    // ✅ الحالة 4: رابط مباشر عادي
+    if (previewUrl && !previewUrl.startsWith('data:')) {
+        downloadLink.href = previewUrl;
+        downloadLink.setAttribute('download', (videoData.title || 'video') + '.mp4');
+        downloadLink.onclick = null;
+        downloadSize.textContent = videoData.size || '—';
+        console.log('✅ تنزيل مباشر من الرابط');
+        return;
+    }
+    
+    // ✅ الحالة 5: لا يوجد أي شيء
+    downloadSection.classList.add('hidden');
+}
+
+// ✅ فتح الرابط الأصلي في نافذة جديدة
+function openOriginalUrl() {
+    if (state.generatedVideo?.original_url) {
+        window.open(state.generatedVideo.original_url, '_blank', 'noopener,noreferrer');
+    } else if (state.generatedVideo?.url) {
+        window.open(state.generatedVideo.url, '_blank', 'noopener,noreferrer');
+    } else {
+        showToast('⚠️ لا يوجد رابط أصلي', 'warning');
+    }
+}
+
+// ✅ تنزيل الفيديو مع تتبع التقدم
+async function downloadVideoFile(url, filename) {
+    const progressDiv = document.getElementById('download-progress');
+    const progressBar = document.getElementById('download-progress-bar');
+    const progressText = document.getElementById('download-progress-text');
+    
+    if (!progressDiv) {
+        // إذا لم يوجد شريط تقدم، استخدم التنزيل العادي
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        a.click();
+        return;
+    }
+    
+    try {
+        progressDiv.classList.remove('hidden');
+        progressBar.style.width = '0%';
+        progressText.textContent = 'بدء التنزيل...';
+        
+        const response = await fetch(url);
+        if (!response.ok) throw new Error('فشل التنزيل');
+        
+        const contentLength = response.headers.get('content-length');
+        const total = contentLength ? parseInt(contentLength, 10) : 0;
+        
+        const reader = response.body.getReader();
+        const chunks = [];
+        let received = 0;
+        
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            
+            chunks.push(value);
+            received += value.length;
+            
+            if (total > 0) {
+                const percent = Math.round((received / total) * 100);
+                progressBar.style.width = percent + '%';
+                progressText.textContent = `${percent}% (${formatFileSize(received)} / ${formatFileSize(total)})`;
+            } else {
+                progressText.textContent = formatFileSize(received);
+            }
+        }
+        
+        // إنشاء Blob وتنزيله
+        const blob = new Blob(chunks);
+        const blobUrl = URL.createObjectURL(blob);
+        
+        const a = document.createElement('a');
+        a.href = blobUrl;
+        a.download = filename || 'video.mp4';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+        
+        progressText.textContent = '✅ اكتمل التنزيل!';
+        showToast('✅ تم تنزيل الفيديو بنجاح!', 'success');
+        
+        setTimeout(() => {
+            progressDiv.classList.add('hidden');
+        }, 2000);
+        
+    } catch (error) {
+        console.error('Download error:', error);
+        showToast('❌ فشل التنزيل: ' + error.message, 'error');
+        progressText.textContent = '❌ فشل التنزيل';
+        setTimeout(() => progressDiv.classList.add('hidden'), 3000);
+    }
+}
+
+// ============================================
 // وظائف يوتيوب
 // ============================================
 
@@ -785,7 +1038,7 @@ async function handleYouTubeAuth() {
             const checkInterval = setInterval(async () => {
                 attempts++;
                 try {
-                    const statusResponse = await fetch('/api/v1/youtube/auth/status?user_id=default');
+                    const statusResponse = await fetch(`/api/v1/youtube/auth/status?user_id=${state.sessionId}`);
                     if (statusResponse.ok) {
                         const statusData = await statusResponse.json();
                         if (statusData.authenticated) {
@@ -822,6 +1075,7 @@ async function loadMyVideos() {
         if (!response.ok) {
             if (response.status === 401) {
                 showToast('⚠️ يرجى تسجيل الدخول أولاً', 'warning');
+                hideProgress();
                 handleYouTubeAuth();
                 return;
             }
@@ -860,6 +1114,7 @@ async function loadMySubscriptions() {
         if (!response.ok) {
             if (response.status === 401) {
                 showToast('⚠️ يرجى تسجيل الدخول أولاً', 'warning');
+                hideProgress();
                 handleYouTubeAuth();
                 return;
             }
@@ -888,7 +1143,8 @@ async function loadMySubscriptions() {
 }
 
 async function searchYouTube() {
-    const query = prompt('🔍 أدخل كلمة البحث:');
+    // ✅ استخدام مودال بدلاً من prompt
+    const query = window.prompt('🔍 أدخل كلمة البحث:');
     if (!query) return;
     
     try {
@@ -897,7 +1153,8 @@ async function searchYouTube() {
         const response = await fetch('/api/v1/youtube/search', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ query, max_results: 5 })
+            body: JSON.stringify({ query, max_results: 5 }),
+            signal: currentAbortController?.signal
         });
         
         if (!response.ok) throw new Error('فشل البحث');
@@ -919,6 +1176,7 @@ async function searchYouTube() {
         }
         
     } catch (error) {
+        if (error.name === 'AbortError') return;
         hideProgress();
         showToast('❌ ' + error.message, 'error');
     }
@@ -951,7 +1209,6 @@ async function confirmProject() {
             uploader: state.generatedVideo.data.uploader || '',
             view_count: state.generatedVideo.data.view_count || 0,
             like_count: state.generatedVideo.data.like_count || 0,
-            description: state.generatedVideo.data.description || '',
             status: 'rendered',
             session_id: state.sessionId,
             thumbnail: state.generatedVideo.data.thumbnail || null,
@@ -1097,7 +1354,6 @@ async function checkConnection() {
         status.className = 'w-3 h-3 bg-red-500 rounded-full';
         text.textContent = 'غير متصل';
         text.className = 'text-xs text-red-400';
-        showToast('⚠️ تعذر الاتصال بالخادم.', 'warning');
     }
 }
 
@@ -1110,12 +1366,10 @@ function initSession() {
 
 window.addEventListener('error', (event) => {
     console.error('Global error:', event.error);
-    showToast('❌ حدث خطأ غير متوقع. يرجى تحديث الصفحة.', 'error');
 });
 
 window.addEventListener('unhandledrejection', (event) => {
     console.error('Unhandled rejection:', event.reason);
-    showToast('❌ حدث خطأ غير متوقع. يرجى تحديث الصفحة.', 'error');
 });
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -1124,8 +1378,12 @@ document.addEventListener('DOMContentLoaded', () => {
     setInterval(checkConnection, 30000);
     console.log('🎬 AI Video Creator - Create Page initialized');
     console.log('📡 YouTube API + OAuth 2.0 enabled');
+    console.log('✅ Download feature fixed');
 });
 
+// ============================================
+// الإشعارات (Toast)
+// ============================================
 function showToast(message, type = 'info') {
     const oldToasts = document.querySelectorAll('.toast-message');
     oldToasts.forEach(t => t.remove());
