@@ -28,6 +28,7 @@
                 </p>
                 <div class="flex flex-wrap gap-3 mt-4 text-xs">
                     <span class="badge status-published">دعم روابط متعددة</span>
+                    <span class="badge status-rendered">اختيار الجودة</span>
                     <span class="badge status-rendered">معاينة فورية</span>
                 </div>
             </div>
@@ -82,6 +83,37 @@
         </div>
         <div class="mt-3 h-1.5 bg-slate-800 rounded-full overflow-hidden">
             <div id="progress-bar" class="h-full bg-blue-500 transition-all duration-300" style="width: 0%"></div>
+        </div>
+    </div>
+
+    <!-- Quality Picker -->
+    <div id="quality-card" class="card hidden">
+        <h3 class="text-sm font-semibold text-white mb-3 flex items-center gap-2">
+            <svg class="w-4 h-4 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"/>
+            </svg>
+            اختر الجودة
+        </h3>
+
+        <div id="video-info-box" class="mb-4 p-3 bg-slate-800/50 border border-slate-700 rounded-lg">
+            <p class="text-xs text-slate-500 mb-1">العنوان</p>
+            <p id="info-title" class="text-sm text-slate-200 font-medium truncate">—</p>
+        </div>
+
+        <div id="quality-list" class="space-y-2 max-h-72 overflow-y-auto pr-1"></div>
+
+        <div class="flex flex-wrap gap-3 mt-4">
+            <button id="download-selected-btn"
+                    class="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium rounded-lg px-5 py-2.5 flex items-center gap-2 transition-colors">
+                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+                </svg>
+                تنزيل الجودة المختارة
+            </button>
+            <button id="cancel-quality-btn"
+                    class="bg-transparent hover:bg-slate-800 border border-slate-700 text-slate-300 text-sm font-medium rounded-lg px-5 py-2.5 transition-colors">
+                إلغاء
+            </button>
         </div>
     </div>
 
@@ -159,24 +191,34 @@
 
 <script>
 (function () {
-    const form         = document.getElementById('download-form');
-    const urlInput     = document.getElementById('video-url');
-    const pasteBtn     = document.getElementById('paste-btn');
-    const fetchBtn     = document.getElementById('fetch-btn');
-    const alertBox     = document.getElementById('alert-box');
-    const loadingCard  = document.getElementById('loading-card');
-    const progressBar  = document.getElementById('progress-bar');
-    const previewCard  = document.getElementById('preview-card');
-    const videoEl      = document.getElementById('preview-video');
-    const metaTitle    = document.getElementById('meta-title');
-    const metaDuration = document.getElementById('meta-duration');
-    const metaQuality  = document.getElementById('meta-quality');
-    const metaSize     = document.getElementById('meta-size');
-    const directLink   = document.getElementById('direct-download');
-    const saveBtn      = document.getElementById('save-btn');
-    const resetBtn     = document.getElementById('reset-btn');
+    const form          = document.getElementById('download-form');
+    const urlInput      = document.getElementById('video-url');
+    const pasteBtn      = document.getElementById('paste-btn');
+    const fetchBtn      = document.getElementById('fetch-btn');
+    const alertBox      = document.getElementById('alert-box');
+    const loadingCard   = document.getElementById('loading-card');
+    const progressBar   = document.getElementById('progress-bar');
+    const previewCard   = document.getElementById('preview-card');
+    const videoEl       = document.getElementById('preview-video');
+    const metaTitle     = document.getElementById('meta-title');
+    const metaDuration  = document.getElementById('meta-duration');
+    const metaQuality   = document.getElementById('meta-quality');
+    const metaSize      = document.getElementById('meta-size');
+    const directLink    = document.getElementById('direct-download');
+    const saveBtn       = document.getElementById('save-btn');
+    const resetBtn      = document.getElementById('reset-btn');
+
+    // Quality picker
+    const qualityCard     = document.getElementById('quality-card');
+    const qualityList     = document.getElementById('quality-list');
+    const infoTitle       = document.getElementById('info-title');
+    const downloadSelBtn  = document.getElementById('download-selected-btn');
+    const cancelQualityBtn = document.getElementById('cancel-quality-btn');
 
     let currentData = null;
+    let currentFormats = [];
+    let selectedFormatId = null;
+    let pendingUrl = null;
 
     // ===== Helpers =====
     function showAlert(msg, type = 'error') {
@@ -190,9 +232,7 @@
         alertBox.classList.remove('hidden');
     }
 
-    function hideAlert() {
-        alertBox.classList.add('hidden');
-    }
+    function hideAlert() { alertBox.classList.add('hidden'); }
 
     function formatDuration(sec) {
         if (!sec && sec !== 0) return '—';
@@ -206,8 +246,7 @@
     function formatSize(bytes) {
         if (!bytes) return '—';
         const units = ['B', 'KB', 'MB', 'GB'];
-        let i = 0;
-        let n = bytes;
+        let i = 0, n = bytes;
         while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
         return n.toFixed(1) + ' ' + units[i];
     }
@@ -218,6 +257,7 @@
         videoEl.load();
         previewCard.classList.add('hidden');
         loadingCard.classList.add('hidden');
+        qualityCard.classList.add('hidden');
         progressBar.style.width = '0%';
         currentData = null;
     }
@@ -226,71 +266,47 @@
     pasteBtn.addEventListener('click', async () => {
         try {
             const text = await navigator.clipboard.readText();
-            if (text) {
-                urlInput.value = text.trim();
-                urlInput.focus();
-            }
-        } catch (e) {
+            if (text) { urlInput.value = text.trim(); urlInput.focus(); }
+        } catch {
             showAlert('تعذر الوصول إلى الحافظة. الصق الرابط يدوياً.', 'info');
         }
     });
 
-    // ===== Fetch =====
+    // ===== Step 1: info (بدون تنزيل) =====
     form.addEventListener('submit', async () => {
         const url = urlInput.value.trim();
         hideAlert();
         resetPreview();
 
-        if (!url) {
-            showAlert('الرجاء إدخال رابط الفيديو.');
-            return;
-        }
-        try {
-            new URL(url);
-        } catch {
-            showAlert('الرابط غير صالح. تأكد من كتابته بشكل صحيح.');
-            return;
-        }
+        if (!url) { showAlert('الرجاء إدخال رابط الفيديو.'); return; }
+        try { new URL(url); }
+        catch { showAlert('الرابط غير صالح.'); return; }
 
+        pendingUrl = url;
         fetchBtn.disabled = true;
         loadingCard.classList.remove('hidden');
-        progressBar.style.width = '15%';
+        progressBar.style.width = '30%';
 
         try {
-            const res = await fetch('/fetch', {
+            const res = await fetch('/api/video/info', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ url })
             });
-
-            progressBar.style.width = '60%';
+            progressBar.style.width = '100%';
 
             if (!res.ok) {
                 const err = await res.json().catch(() => ({}));
-                throw new Error(err.message || 'فشل جلب الفيديو.');
+                throw new Error(err.detail || err.message || 'فشل جلب معلومات الفيديو.');
             }
 
             const data = await res.json();
-            progressBar.style.width = '100%';
-            currentData = data;
+            currentFormats = data.formats || [];
+            infoTitle.textContent = data.title || '—';
 
-            // Meta
-            metaTitle.textContent    = data.title    || '—';
-            metaDuration.textContent = formatDuration(data.duration);
-            metaQuality.textContent  = data.quality  || '—';
-            metaSize.textContent     = formatSize(data.size);
-
-            // Video src (يدعم streaming أو ملف مباشر)
-            videoEl.src = data.preview_url || data.url || '';
-            videoEl.load();
-
-            directLink.href = data.download_url || data.url || '#';
-            if (data.filename) {
-                directLink.setAttribute('download', data.filename);
-            }
-
-            previewCard.classList.remove('hidden');
-            showAlert('تم جلب الفيديو بنجاح. يمكنك المعاينة الآن.', 'success');
+            renderQualityList();
+            qualityCard.classList.remove('hidden');
+            hideAlert();
 
         } catch (err) {
             showAlert(err.message || 'حدث خطأ غير متوقع.');
@@ -300,12 +316,115 @@
         }
     });
 
+    // ===== Render quality options =====
+    function renderQualityList() {
+        qualityList.innerHTML = '';
+        if (!currentFormats.length) {
+            qualityList.innerHTML = '<p class="text-xs text-slate-500 text-center py-3">لا توجد جودات متاحة.</p>';
+            downloadSelBtn.disabled = true;
+            return;
+        }
+
+        // خيار "تلقائي"
+        const autoOption = document.createElement('label');
+        autoOption.className = 'quality-option flex items-center gap-3 p-3 bg-slate-800/50 border border-slate-700 rounded-lg cursor-pointer hover:border-blue-500 transition-colors';
+        autoOption.innerHTML = `
+            <input type="radio" name="quality" value="__auto__" class="accent-blue-500">
+            <div class="flex-1">
+                <p class="text-sm text-white font-medium">تلقائي (أفضل جودة)</p>
+                <p class="text-xs text-slate-500">سيتم اختيار الأفضل تلقائياً</p>
+            </div>
+        `;
+        qualityList.appendChild(autoOption);
+
+        currentFormats.forEach(f => {
+            const el = document.createElement('label');
+            el.className = 'quality-option flex items-center gap-3 p-3 bg-slate-800/50 border border-slate-700 rounded-lg cursor-pointer hover:border-blue-500 transition-colors';
+            const size = f.filesize ? formatSize(f.filesize) : '';
+            const audio = f.has_audio ? '🎵 صوت مدموج' : '🎬 فيديو فقط';
+            el.innerHTML = `
+                <input type="radio" name="quality" value="${f.format_id}" class="accent-blue-500">
+                <div class="flex-1">
+                    <p class="text-sm text-white font-medium">${f.label} • ${f.ext.toUpperCase()}</p>
+                    <p class="text-xs text-slate-500">${audio}${size ? ' • ' + size : ''}</p>
+                </div>
+            `;
+            qualityList.appendChild(el);
+        });
+
+        const autoInput = qualityList.querySelector('input[value="__auto__"]');
+        autoInput.checked = true;
+        selectedFormatId = null;
+
+        qualityList.querySelectorAll('input[name="quality"]').forEach(inp => {
+            inp.addEventListener('change', e => {
+                selectedFormatId = e.target.value === '__auto__' ? null : e.target.value;
+            });
+        });
+
+        downloadSelBtn.disabled = false;
+    }
+
+    // ===== Step 2: fetch (تنزيل فعلي) =====
+    downloadSelBtn.addEventListener('click', async () => {
+        if (!pendingUrl) return;
+        hideAlert();
+        downloadSelBtn.disabled = true;
+        loadingCard.classList.remove('hidden');
+        progressBar.style.width = '25%';
+
+        try {
+            const res = await fetch('/api/video/fetch', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ url: pendingUrl, format_id: selectedFormatId })
+            });
+            progressBar.style.width = '100%';
+
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                throw new Error(err.detail || err.message || 'فشل تنزيل الفيديو.');
+            }
+
+            const data = await res.json();
+            currentData = data;
+
+            metaTitle.textContent    = data.title    || '—';
+            metaDuration.textContent = formatDuration(data.duration);
+            metaQuality.textContent  = data.quality  || '—';
+            metaSize.textContent     = formatSize(data.size);
+
+            videoEl.src = data.preview_url || data.url || '';
+            videoEl.load();
+
+            directLink.href = data.download_url || data.url || '#';
+            if (data.filename) directLink.setAttribute('download', data.filename);
+
+            qualityCard.classList.add('hidden');
+            previewCard.classList.remove('hidden');
+            showAlert('تم التنزيل بنجاح. يمكنك المعاينة الآن.', 'success');
+
+        } catch (err) {
+            showAlert(err.message || 'حدث خطأ غير متوقع.');
+        } finally {
+            downloadSelBtn.disabled = false;
+            loadingCard.classList.add('hidden');
+        }
+    });
+
+    // ===== Cancel quality =====
+    cancelQualityBtn.addEventListener('click', () => {
+        qualityCard.classList.add('hidden');
+        pendingUrl = null;
+        currentFormats = [];
+    });
+
     // ===== Save =====
     saveBtn.addEventListener('click', async () => {
         if (!currentData) return;
         saveBtn.disabled = true;
         try {
-            const res = await fetch('/save', {
+            const res = await fetch('/api/video/save', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -326,6 +445,9 @@
     // ===== Reset =====
     resetBtn.addEventListener('click', () => {
         urlInput.value = '';
+        pendingUrl = null;
+        selectedFormatId = null;
+        currentFormats = [];
         hideAlert();
         resetPreview();
     });
