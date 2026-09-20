@@ -10,7 +10,8 @@ import {
 import {
     addVideoLink, uploadVideoFile, removeVideoLink,
     showPreviewWithInfo, hidePreview, cancelPreview,
-    openOriginalUrl, downloadVideoFile
+    openOriginalUrl, downloadVideoFile,
+    downloadSelectedQuality, cancelQualityPicker
 } from './video.js';
 
 import {
@@ -34,6 +35,8 @@ window.handleYouTubeAuth = handleYouTubeAuth;
 window.loadMyVideos = loadMyVideos;
 window.loadMySubscriptions = loadMySubscriptions;
 window.searchYouTube = searchYouTube;
+window.downloadSelectedQuality = downloadSelectedQuality;
+window.cancelQualityPicker = cancelQualityPicker;
 
 // ⚠️ للتصحيح
 window.__state = state;
@@ -48,18 +51,27 @@ function bindDataActions() {
 
         const action = target.dataset.action;
         const actions = {
+            // الدردشة والتحكم
             'clear-chat': clearChat,
             'confirm-project': confirmProject,
             'cancel-preview': cancelPreview,
             'open-original': openOriginalUrl,
             'cancel-processing': cancelProcessing,
+            'focus-url': () => document.getElementById('url-input')?.focus(),
+            'pick-file': () => document.getElementById('video-file')?.click(),
+
+            // الروابط
             'add-link': addVideoLink,
+
+            // يوتيوب
             'youtube-auth': handleYouTubeAuth,
             'load-my-videos': loadMyVideos,
             'load-subscriptions': loadMySubscriptions,
             'search-youtube': searchYouTube,
-            'focus-url': () => document.getElementById('url-input')?.focus(),
-            'pick-file': () => document.getElementById('video-file')?.click()
+
+            // ⭐ الجودة والتنزيل (جديد)
+            'download-selected': () => downloadSelectedQuality(),
+            'cancel-quality': cancelQualityPicker
         };
 
         if (actions[action]) {
