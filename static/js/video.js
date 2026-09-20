@@ -247,6 +247,47 @@ export function cancelQualityPicker() {
     state.pendingFormats = [];
 }
 
+// ---------- حفظ الفيديو في المكتبة ----------
+export async function saveDownloadedVideo() {
+    const data = state.currentDownloadData;
+    if (!data || !data.filename) {
+        return showToast('⚠️ لا يوجد فيديو للحفظ', 'warning');
+    }
+
+    const btn = document.getElementById('save-video-btn');
+    if (btn) btn.disabled = true;
+
+    try {
+        const res = await fetch('/api/video/save', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                url: data.url,
+                title: data.title,
+                filename: data.filename
+            })
+        });
+
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.detail || 'فشل الحفظ.');
+        }
+
+        const result = await res.json();
+        showToast('✅ تم حفظ الفيديو في المكتبة!', 'success');
+        addMessage('assistant', '💾 تم حفظ الفيديو في المكتبة الدائمة.');
+
+        // اختياري: الانتقال لصفحة المشاريع
+        // window.location.href = '/projects';
+
+    } catch (error) {
+        showToast('❌ ' + error.message, 'error');
+        addMessage('assistant', `❌ فشل الحفظ: ${error.message}`);
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+}
+
 // ---------- توليد الفيديو ----------
 export async function generateVideoFromPrompt(prompt) {
     showProgress('جاري توليد الفيديو...', 5);
