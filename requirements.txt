@@ -41,3 +41,6 @@ gradio_client
 
 
 yt-dlp
+
+
+pytubefix
