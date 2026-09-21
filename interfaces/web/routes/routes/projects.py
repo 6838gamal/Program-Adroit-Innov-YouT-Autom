@@ -120,13 +120,13 @@ def _safe_filename(name: str, fallback: str = "video") -> str:
 def _safe_supabase_key(name: str, fallback: str = "video") -> str:
     """
     يحوّل أي اسم إلى ASCII آمن لـ Supabase Storage.
-    
+
     Supabase يرفض:
     - الأحرف العربية
     - الإيموجي
     - المسافات والرموز الخاصة (: ? = # ...)
     - الأسماء الطويلة جداً
-    
+
     مثال:
         "13_comments_بص_بقا_..._0986757c39.mp4" → "13_comments_0986757c39.mp4"
         "🎬 فيديو.mp4" → "video_a1b2c3d4.mp4"
@@ -157,6 +157,70 @@ def _safe_supabase_key(name: str, fallback: str = "video") -> str:
     ascii_name = ascii_name[:80]
 
     return f"{ascii_name}{ext}"
+
+
+# =====================================================================
+#                    ⭐ SCRIPT / SCENE CLEANERS (جديد)
+# =====================================================================
+def _clean_script_for_display(script: str) -> str:
+    """
+    ينظّف السكريبت من:
+    - روابط URL (https://...)
+    - الإيموجي في البداية
+    - رموز خاصة
+
+    يُستخدم لـ detail.html و timeline.html
+    """
+    if not script:
+        return ""
+
+    # احذف URLs
+    script = re.sub(r'https?://\S+', '', script)
+
+    # احذف الإيموجي الشائعة
+    script = re.sub(
+        r'[🎬📎📝🔗📊🎙️🎵🎭🏠✨🖼️💰📍📐📞🔊🎤📁🏡🏢🏗️🏛️🛏️🛋️]',
+        '',
+        script
+    )
+
+    # احذف "طلب:" و "مصادر إلهام"
+    script = re.sub(r'طلب\s*:', '', script)
+    script = re.sub(r'---\s*مصادر\s*إلهام\s*---', '', script)
+
+    # نظّف المسافات المتعددة
+    script = re.sub(r'\n{3,}', '\n\n', script)
+
+    return script.strip()
+
+
+def _clean_scene_content(content: str, max_len: int = 120) -> str:
+    """
+    ينظّف محتوى المشهد من الروابط والإيموجي.
+    يُستخدم لـ scene.content في timeline.
+
+    ⚠️ مهم: هذا يمنع ظهور النص كصورة → 404
+    """
+    if not content:
+        return ""
+
+    # احذف URLs
+    content = re.sub(r'https?://\S+', '', content)
+
+    # احذف الإيموجي
+    content = re.sub(
+        r'[🎬📎📝🔗📊🎙️🎵🎭🏠✨🖼️💰📍📐📞🔊🎤📁]',
+        '',
+        content
+    )
+
+    # احذف الرموز الخاصة التي قد تسبب مشاكل في JS
+    content = re.sub(r'[<>"\'`]', '', content)
+
+    # نظّف المسافات
+    content = re.sub(r'\s+', ' ', content).strip()
+
+    return content[:max_len]
 
 
 # =====================================================================
@@ -584,11 +648,15 @@ async def create_project_from_video(
     if not video_url:
         video_url = f"/media/downloads/{filename}"
 
-    # 3) إنشاء Project
+    # 3) ⭐ نظّف السكريبت قبل الحفظ
+    raw_script = payload.get("script") or ""
+    clean_script = _clean_script_for_display(raw_script)
+
+    # 4) إنشاء Project
     project = Project(
         title=title,
         description=payload.get("description") or "",
-        script=payload.get("script") or "",
+        script=clean_script,                       # ⭐ نظّف
         tags=payload.get("tags") or ["video-download"],
         brand_colors=BrandColors(),
         settings={},
@@ -695,11 +763,15 @@ async def project_detail(
         print(f"⚠️ فشل _resolve_thumbnail_url: {e}", flush=True)
         thumbnail_url = None
 
+    # ⭐ نظّف السكريبت للعرض
+    cleaned_script = _clean_script_for_display(project.script or "")
+
     return templates.TemplateResponse(request, "projects/detail.html", {
         "project": project,
         "video_url": video_url,
         "thumbnail_url": thumbnail_url,
         "render_jobs": render_jobs,
+        "cleaned_script": cleaned_script,           # ⭐ جديد
         "active_page": "projects",
         "supabase": get_supabase_config(),
     })
@@ -737,14 +809,19 @@ async def project_timeline(
                     "start_time": float(getattr(scene, "start_time", 0)),
                     "end_time": float(getattr(scene, "end_time", 0)),
                     "duration": float(getattr(scene, "duration", 0)),
-                    "content": getattr(scene, "content", ""),
+                    # ⭐ نظّف content
+                    "content": _clean_scene_content(
+                        getattr(scene, "content", ""), 120
+                    ),
                 })
     except Exception as e:
         print(f"⚠️ فشل استخراج timeline: {e}", flush=True)
 
     # fallback: تقسيم السكريبت
     if not scenes and project.script:
-        paragraphs = [p.strip() for p in project.script.split("\n\n") if p.strip()]
+        # ⭐ نظّف السكريبت أولاً
+        clean_script = _clean_script_for_display(project.script)
+        paragraphs = [p.strip() for p in clean_script.split("\n\n") if p.strip()]
         t = 0.0
         for i, para in enumerate(paragraphs):
             words = len(para.split())
@@ -755,7 +832,8 @@ async def project_timeline(
                 "start_time": round(t, 2),
                 "end_time": round(t + duration, 2),
                 "duration": round(duration, 2),
-                "content": para[:120],
+                # ⭐ نظّف content
+                "content": _clean_scene_content(para, 120),
             })
             t += duration
 
