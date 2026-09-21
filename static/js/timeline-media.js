@@ -145,15 +145,100 @@ function removeMediaFile(index) {
 }
 
 // ============================================================
-//  ADD MEDIA FILE (رفع إلى Supabase)
+//  UPLOAD VIA BACKEND — موحّد (file + url) مع طباعة كاملة
+// ============================================================
+
+/**
+ * ترفع ملفاً أو رابطاً إلى backend (/api/property/upload-image)
+ * الذي يتولى رفعه إلى Supabase (أو التخزين المحلي).
+ *
+ * @param {File|string} source - ملف File أو رابط string
+ * @param {string} projectId
+ * @returns {Promise<string|null>} الرابط الدائم أو null
+ */
+async function uploadViaBackend(source, projectId) {
+    console.log('%c🚀 [uploadViaBackend] START', 'color:#3882F6;font-weight:bold');
+    console.log('   projectId:', projectId);
+    console.log('   source type:', source instanceof File ? 'File' : typeof source);
+
+    if (!projectId) {
+        console.error('❌ [uploadViaBackend] projectId مطلوب');
+        return null;
+    }
+
+    const formData = new FormData();
+
+    if (source instanceof File) {
+        formData.append('file', source);
+        console.log('   file:', source.name, `(${source.size} bytes)`, source.type);
+    } else if (typeof source === 'string' && source.trim()) {
+        formData.append('image_url', source.trim());
+        console.log('   url:', source);
+    } else {
+        console.error('❌ [uploadViaBackend] source must be File or non-empty string');
+        return null;
+    }
+
+    formData.append('project_id', projectId);
+
+    const endpoint = '/api/property/upload-image';
+    console.log(`📡 [uploadViaBackend] POST ${endpoint}`);
+
+    try {
+        const res = await fetch(endpoint, {
+            method: 'POST',
+            body: formData,
+        });
+
+        console.log(`📡 [uploadViaBackend] status: ${res.status} ${res.statusText}`);
+
+        let data;
+        try {
+            data = await res.json();
+        } catch (jsonErr) {
+            const text = await res.text().catch(() => '');
+            console.error('❌ [uploadViaBackend] JSON parse failed:', jsonErr);
+            console.error('   raw response:', text.slice(0, 500));
+            return null;
+        }
+
+        console.log('📦 [uploadViaBackend] response:', data);
+
+        if (data && data.success && data.url) {
+            console.log('%c✅ [uploadViaBackend] SUCCESS', 'color:#11C76F;font-weight:bold');
+            console.log('   url:', data.url);
+            console.log('   source:', data.source);
+            if (data.attempts) {
+                console.log('   attempts:', data.attempts);
+            }
+            return data.url;
+        }
+
+        console.error('❌ [uploadViaBackend] FAILED:', data?.error || 'unknown');
+        if (data?.attempts) {
+            console.error('   attempts:');
+            data.attempts.forEach(a => {
+                console.error(`     - ${a.engine}: success=${a.success}, error=${a.error}, count=${a.count}`);
+            });
+        }
+        return null;
+
+    } catch (e) {
+        console.error('❌ [uploadViaBackend] network error:', e);
+        return null;
+    }
+}
+
+// ============================================================
+//  ADD MEDIA FILE (رفع إلى Supabase عبر backend)
 // ============================================================
 async function addMediaFile(file) {
     const fileSizeMB = (file.size / 1024 / 1024).toFixed(2);
     showToast(`⏳ جاري رفع ${file.name} (${fileSizeMB} MB)...`, 'info');
 
-    const supabaseUrl = await uploadFileToSupabase(file, projectId);
+    const url = await uploadViaBackend(file, projectId);
 
-    if (!supabaseUrl) {
+    if (!url) {
         showToast(`❌ فشل رفع ${file.name}`, 'error');
         return null;
     }
@@ -162,7 +247,7 @@ async function addMediaFile(file) {
         name: file.name,
         size: file.size,
         type: file.type,
-        url: supabaseUrl,
+        url: url,
     };
 
     projectData.mediaFiles.push(mediaFile);
@@ -251,6 +336,67 @@ function setupDragDrop() {
             document.getElementById('trashZone').classList.remove('active');
         }
     });
+}
+
+// ============================================================
+//  IMPORT MEDIA FROM URL — فيسبوك/إنستغرام/تويتر...
+// ============================================================
+
+/**
+ * يُرسل رابطاً خارجياً إلى الـ backend الذي يحمّله عبر gallery-dl
+ * ثم يرفعه إلى Supabase ويضيفه للمعرض.
+ *
+ * @param {string} url
+ * @returns {Promise<Object|null>} mediaFile أو null
+ */
+async function importMediaFromUrl(url) {
+    if (!url || typeof url !== 'string' || !url.trim()) {
+        showToast('⚠️ أدخل رابطاً صحيحاً', 'warning');
+        return null;
+    }
+
+    url = url.trim();
+
+    console.log('%c🌐 [importMediaFromUrl] START', 'color:#3882F6;font-weight:bold');
+    console.log('   url:', url);
+    console.log('   projectId:', projectId);
+
+    showToast('⏳ جاري تحميل الوسائط من الرابط...', 'info');
+
+    const permanentUrl = await uploadViaBackend(url, projectId);
+
+    if (!permanentUrl) {
+        showToast('❌ فشل تحميل الوسائط من الرابط', 'error');
+        return null;
+    }
+
+    // استخراج اسم الملف والامتداد
+    const urlPath = permanentUrl.split('?')[0];
+    const fileName = decodeURIComponent(urlPath.split('/').pop() || 'media');
+    const ext = (fileName.split('.').pop() || '').toLowerCase();
+
+    const extToMime = {
+        mp4: 'video/mp4', mov: 'video/quicktime', webm: 'video/webm', mkv: 'video/x-matroska',
+        mp3: 'audio/mpeg', wav: 'audio/wav', ogg: 'audio/ogg', m4a: 'audio/mp4',
+        jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png',
+        gif: 'image/gif', webp: 'image/webp', bmp: 'image/bmp',
+    };
+
+    const mediaFile = {
+        name: fileName,
+        size: 0,
+        type: extToMime[ext] || 'image/jpeg',
+        url: permanentUrl,
+    };
+
+    projectData.mediaFiles.push(mediaFile);
+    renderMediaGallery();
+    updateStatus();
+    saveProjectData();
+
+    console.log('%c✅ [importMediaFromUrl] DONE', 'color:#11C76F;font-weight:bold');
+    showToast(`✅ تم استيراد ${fileName}`, 'success');
+    return mediaFile;
 }
 
 // ============================================================
@@ -526,8 +672,40 @@ function addImageFromUrl(url, options = {}) {
 
 
 // ============================================================
+//  IMPORT MODAL — واجهة إدخال رابط
+// ============================================================
+
+/**
+ * يفتح نافذة إدخال رابط ويستورد الوسائط منه.
+ * (تستخدم prompt للتبسيط — يمكن استبدالها بـ modal مخصص)
+ */
+async function promptImportFromUrl() {
+    const url = prompt(
+        'أدخل رابط الصورة أو الفيديو:\n' +
+        '(فيسبوك، إنستغرام، تويتر، أو رابط مباشر)'
+    );
+
+    if (!url) return null;
+
+    return await importMediaFromUrl(url);
+}
+
+
+// ============================================================
 //  EXPORT — اجعلها متاحة عالمياً
 // ============================================================
 window.addClipFromUrl = addClipFromUrl;
 window.addGeneratedClip = addGeneratedClip;
 window.addImageFromUrl = addImageFromUrl;
+window.uploadViaBackend = uploadViaBackend;
+window.importMediaFromUrl = importMediaFromUrl;
+window.promptImportFromUrl = promptImportFromUrl;
+
+console.log('%c✅ timeline-media.js loaded', 'color:#11C76F;font-weight:bold');
+console.log('   Available functions:');
+console.log('   - uploadViaBackend(source, projectId)');
+console.log('   - importMediaFromUrl(url)');
+console.log('   - promptImportFromUrl()');
+console.log('   - addClipFromUrl(url, options)');
+console.log('   - addGeneratedClip(url, meta)');
+console.log('   - addImageFromUrl(url, options)');
