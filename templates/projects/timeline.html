@@ -54,6 +54,7 @@
     "userId": {{ ((current_user.id | string) if current_user else '') | tojson }},
     "userEmail": {{ (current_user.email if current_user else '') | tojson }},
     "scenes": {{ scenes_json | safe }},
+    "projectData": {{ project_data_json | safe }},
     "voiceoverClips": {{ (voiceover_clips or []) | tojson | safe }},
     "savedVoices": {{ (saved_voices or []) | tojson | safe }},
     "elevenlabsConfigured": {{ (elevenlabs_configured | default(false)) | tojson }},
@@ -1194,6 +1195,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 'ElevenLabs': config.elevenlabsConfigured ? '✅' : '⚠️ (سيستخدم HuggingFace/Edge)',
                 'D-ID (Talking Head)': config.didConfigured ? '✅' : '❌',
             });
+            console.log('📦 projectData from HTML:', {
+                hasClips: !!(config.projectData && config.projectData.clips),
+                clipsCount: config.projectData?.clips?.length || 0,
+            });
         }
     } catch (e) {
         console.warn('Failed to parse timeline-config:', e);
@@ -1207,7 +1212,6 @@ document.addEventListener('DOMContentLoaded', () => {
 <script src="{{ url_for('static', path='js/timeline-media.js') }}"></script>
 <script src="{{ url_for('static', path='js/timeline-timeline.js') }}"></script>
 <script src="{{ url_for('static', path='js/timeline-playback.js') }}"></script>
-<!-- ❌ حُذف timeline-video.js — تم دمجه في timeline-playback.js -->
 <script src="{{ url_for('static', path='js/voiceover.js') }}"></script>
 <script src="{{ url_for('static', path='js/property-video.js') }}"></script>
 <script src="{{ url_for('static', path='js/timeline-init.js') }}"></script>
