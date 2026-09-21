@@ -505,7 +505,6 @@ async def save_video(payload: SaveRequest):
     src = PREVIEW_DIR / filename
     dst = DOWNLOAD_DIR / filename
 
-    # إذا كان منقولاً مسبقاً، لا تفعل شيئاً
     if dst.exists():
         return {
             "success": True,
@@ -537,19 +536,7 @@ async def create_project_from_video(
     payload: dict,
     session: AsyncSession = Depends(get_db),
 ):
-    """
-    إنشاء Project من فيديو تم تنزيله.
-
-    التدفق:
-    1) نقل الفيديو من media/preview/ → media/downloads/
-    2) رفع الفيديو إلى Supabase Storage
-    3) إنشاء Project مع:
-       - data.video_url
-       - data.clips = [clip الفيديو]  ⭐ (يظهر في timeline)
-       - data.layers = [طبقة 1]
-       - data.media_files
-    4) إرجاع project_id
-    """
+    """إنشاء Project من فيديو تم تنزيله."""
     filename = payload.get("filename")
     title = payload.get("title") or "مشروع جديد"
 
@@ -604,7 +591,7 @@ async def create_project_from_video(
     # 4) احسب المدة
     video_duration = payload.get("duration") or 0
     if not video_duration or video_duration <= 0:
-        video_duration = 10  # fallback
+        video_duration = 10
 
     # 5) إنشاء Project
     project = Project(
@@ -616,7 +603,6 @@ async def create_project_from_video(
         settings={},
     )
 
-    # ⭐ data مع clips جاهزة + layers + media_files
     project.update_data({
         "video_url": video_url,
         "video_path": video_path,
@@ -628,7 +614,6 @@ async def create_project_from_video(
         "total_duration": video_duration,
         "created_from": "video_download",
 
-        # ⭐ clip الفيديو (يظهر في timeline)
         "clips": [
             {
                 "id": 0,
@@ -658,12 +643,10 @@ async def create_project_from_video(
             }
         ],
 
-        # ⭐ طبقة افتراضية
         "layers": [
             {"name": "طبقة 1", "visible": True, "locked": False}
         ],
 
-        # ⭐ media_files
         "media_files": [
             {
                 "name": filename,
@@ -796,8 +779,7 @@ async def project_timeline(
     if not project:
         return HTMLResponse("المشروع غير موجود", status_code=404)
 
-    # ⭐ FIXED: لا نبني scenes إذا كان data.clips موجوداً بالفعل
-    # (حتى لا نكرر الفيديو)
+    # ⭐ لا نبني scenes إذا كان data.clips موجوداً
     scenes = []
     has_saved_clips = (
         hasattr(project, "data") and
@@ -806,7 +788,6 @@ async def project_timeline(
     )
 
     if not has_saved_clips:
-        # بناء scenes من timeline أو script
         try:
             if hasattr(project, "timeline") and project.timeline:
                 tl = project.timeline
@@ -824,7 +805,6 @@ async def project_timeline(
         except Exception as e:
             print(f"⚠️ فشل استخراج timeline: {e}", flush=True)
 
-        # fallback: تقسيم السكريبت
         if not scenes and project.script:
             clean_script = _clean_script_for_display(project.script)
             paragraphs = [p.strip() for p in clean_script.split("\n\n") if p.strip()]
@@ -859,6 +839,7 @@ async def project_timeline(
         "project": project,
         "scenes": scenes,
         "scenes_json": json.dumps(scenes, ensure_ascii=False),
+        "project_data_json": json.dumps(project.data or {}, ensure_ascii=False),  # ⭐ جديد
         "voiceover_clips": voiceover_clips,
         "saved_voices": saved_voices,
         "elevenlabs_configured": settings.elevenlabs_configured,
