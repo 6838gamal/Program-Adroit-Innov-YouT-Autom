@@ -133,13 +133,13 @@
             <p class="text-slate-300 text-sm sm:text-base mb-4">{{ project.description }}</p>
             {% endif %}
 
-            {% if project.script %}
+            {% if cleaned_script %}
             <div>
                 <h3 class="text-slate-400 text-xs sm:text-sm mb-2 flex items-center gap-1.5">
                     <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
                     النص / السكريبت
                 </h3>
-                <div class="bg-slate-900 rounded-lg p-3 sm:p-4 text-xs sm:text-sm text-slate-300 font-mono max-h-40 sm:max-h-52 overflow-y-auto whitespace-pre-wrap leading-relaxed">{{ project.script }}</div>
+                <div class="bg-slate-900 rounded-lg p-3 sm:p-4 text-xs sm:text-sm text-slate-300 font-mono max-h-40 sm:max-h-52 overflow-y-auto whitespace-pre-wrap leading-relaxed">{{ cleaned_script }}</div>
             </div>
             {% endif %}
 
@@ -296,7 +296,6 @@ async function startRender(projectId) {
             setTimeout(() => location.reload(), 1500);
         } else {
             showToast('✅ بدأ الرندر', 'success');
-            // أعد التحميل بعد لحظات
             setTimeout(() => location.reload(), 2500);
         }
     } catch (e) {
@@ -310,7 +309,6 @@ function pollRenderStatus(jobId) {
     let errors = 0;
     const maxErrors = 5;
 
-    // تأكد من وجود عنصر المهمة (إن لم يكن موجوداً، لا شيء)
     const jobEl = document.getElementById(`job-${jobId}`);
 
     detailPollInterval = setInterval(async () => {
@@ -329,7 +327,6 @@ function pollRenderStatus(jobId) {
             const data = await resp.json();
             console.log('📊 Render status:', data);
 
-            // حدّث شريط التقدم إن وُجد
             const prog = document.getElementById(`progress-${jobId}`);
             const stage = document.getElementById(`stage-${jobId}`);
             if (prog) prog.style.width = (data.progress || 0) + '%';
@@ -359,7 +356,6 @@ function pollRenderStatus(jobId) {
 //  AUTO-RESUME POLLING IF RENDER IS RUNNING
 // ============================================================
 document.addEventListener('DOMContentLoaded', function() {
-    // ابحث عن أول مهمة بحالة processing لاستئناف المتابعة
     const processingJobEl = document.querySelector('[data-status="processing"]');
     if (processingJobEl) {
         const jobId = processingJobEl.id.replace('job-', '');
@@ -367,7 +363,6 @@ document.addEventListener('DOMContentLoaded', function() {
         pollRenderStatus(jobId);
     }
 
-    // تحديث مدة الفيديو من المتصفح
     const video = document.getElementById('project-video');
     if (video) {
         video.addEventListener('loadedmetadata', function() {
@@ -379,7 +374,6 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         });
 
-        // في حال فشل تحميل الفيديو، اعرض رسالة واضحة
         video.addEventListener('error', function(e) {
             const src = video.querySelector('source')?.src || '—';
             console.error('❌ فشل تحميل الفيديو:', src);
