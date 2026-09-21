@@ -44,3 +44,6 @@ yt-dlp
 
 
 pytubefix
+
+
+gallery-dl
