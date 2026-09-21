@@ -5,7 +5,7 @@ import tempfile
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, File, Form, UploadFile
 from fastapi.responses import JSONResponse
@@ -13,6 +13,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from config.settings import settings
 from infrastructure.database.session import get_db
+from infrastructure.downloaders.media_downloader import (
+    MediaDownloader,
+    detect_engines,
+)
 from infrastructure.repositories.sql_project_repository import SQLProjectRepository
 from infrastructure.storage.supabase_storage_adapter import SupabaseStorageAdapter
 
@@ -33,17 +37,124 @@ router = APIRouter()
 
 
 # ─────────────────────────────────────────────────────────
-# رفع صور العقار
+# مساعد: إعدادات cookies
+# ─────────────────────────────────────────────────────────
+
+def _get_cookies_from_browser() -> Optional[str]:
+    """يرجع اسم المتصفح لاستخراج cookies منه (إن وُجد في الإعدادات)."""
+    return getattr(settings, "cookies_from_browser", None)
+
+
+# ─────────────────────────────────────────────────────────
+# تشخيص: محركات التحميل المتاحة
+# ─────────────────────────────────────────────────────────
+
+@router.get("/api/property/download-engines")
+async def list_download_engines():
+    """
+    يرجع المحركات المتاحة للتحميل (gallery-dl / yt-dlp / direct).
+    مفيد للتشخيص والتأكد من التثبيت.
+    """
+    engines = detect_engines()
+    return {
+        "success": True,
+        "engines": engines,
+        "cookies_from_browser": _get_cookies_from_browser(),
+    }
+
+
+# ─────────────────────────────────────────────────────────
+# رفع صور العقار (ملف أو URL)
 # ─────────────────────────────────────────────────────────
 
 @router.post("/api/property/upload-image")
 async def upload_property_image(
-    file: UploadFile = File(...),
+    file: Optional[UploadFile] = File(None),
+    image_url: Optional[str] = Form(None),
     project_id: str = Form(...),
 ):
-    """يرفع صورة عقار ويُرجع رابطها الدائم + المسار."""
+    """
+    يرفع صورة عقار (ملف مرفوع) أو يحمّلها من رابط URL.
+
+    - إذا أُرسل `file` → يُرفع مباشرة.
+    - إذا أُرسل `image_url` → يُحمَّل عبر MediaDownloader
+      (gallery-dl → yt-dlp → direct) مع طباعة كل محاولة على الكونسول.
+
+    يرجع رابطاً دائماً (Supabase) أو محلياً + المسار.
+    """
+    tmp_path: Optional[Path] = None
+    content: bytes = b""
+    suffix = ".jpg"
+    source = "file"
+    attempts_info: Optional[list] = None
+
     try:
-        content = await file.read()
+        # ── الحالة 1: رابط URL ────────────────────────────
+        if image_url and not file:
+            source = "url"
+            print(f"\n🌐 [upload-image] Downloading from URL: {image_url}")
+
+            tmp_dir = Path(tempfile.mkdtemp(prefix="prop_img_"))
+
+            dl = MediaDownloader(
+                cookies_from_browser=_get_cookies_from_browser(),
+                prefer=getattr(
+                    settings, "downloader_prefer",
+                    ["gallery-dl", "yt-dlp", "direct"],
+                ),
+            )
+            bundle = await dl.download(image_url, out_dir=tmp_dir)
+            attempts_info = bundle.to_dict()["attempts"]
+
+            if not bundle.all_files:
+                return JSONResponse(
+                    {
+                        "success": False,
+                        "error": "فشل تحميل الصورة من الرابط",
+                        "attempts": attempts_info,
+                    },
+                    status_code=422,
+                )
+
+            tmp_path = bundle.all_files[0]
+            content = tmp_path.read_bytes()
+            suffix = tmp_path.suffix.lower() or ".jpg"
+
+            print(
+                f"✅ [upload-image] Downloaded via "
+                f"{bundle.chosen.engine if bundle.chosen else '?'} "
+                f"({len(content)} bytes)"
+            )
+
+        # ── الحالة 2: ملف مرفوع ──────────────────────────
+        elif file:
+            source = "file"
+            content = await file.read()
+            suffix = (
+                Path(file.filename or "image.jpg").suffix.lower() or ".jpg"
+            )
+
+            with tempfile.NamedTemporaryFile(
+                delete=False, suffix=suffix
+            ) as tmp:
+                tmp.write(content)
+                tmp_path = Path(tmp.name)
+
+            print(
+                f"📎 [upload-image] Received file: "
+                f"{file.filename} ({len(content)} bytes)"
+            )
+
+        else:
+            return JSONResponse(
+                {
+                    "success": False,
+                    "error": "أرسل `file` أو `image_url`",
+                },
+                status_code=400,
+            )
+
+        # ── التحقق ───────────────────────────────────────
         if not content:
             return JSONResponse(
                 {"success": False, "error": "الملف فارغ"},
@@ -56,64 +167,74 @@ async def upload_property_image(
                 status_code=413,
             )
 
-        suffix = Path(file.filename or "image.jpg").suffix.lower() or ".jpg"
+        # ── التخزين ──────────────────────────────────────
         unique = f"{uuid.uuid4().hex}{suffix}"
         remote_path = f"property_assets/{project_id}/{unique}"
 
-        with tempfile.NamedTemporaryFile(
-            delete=False, suffix=suffix
-        ) as tmp:
-            tmp.write(content)
-            tmp_path = Path(tmp.name)
+        # 1) محاولة Supabase
+        if settings.supabase_configured:
+            try:
+                from application.services.production_service import (
+                    _upload_to_supabase, _build_public_url,
+                )
+                storage = SupabaseStorageAdapter()
 
-        try:
-            if settings.supabase_configured:
-                try:
-                    from application.services.production_service import (
-                        _upload_to_supabase, _build_public_url,
-                    )
-                    storage = SupabaseStorageAdapter()
+                content_type = (
+                    file.content_type if file
+                    else "image/jpeg"
+                )
 
-                    await _upload_to_supabase(
-                        storage=storage,
-                        local_path=tmp_path,
-                        remote_path=remote_path,
-                        content_type=file.content_type or "image/jpeg",
-                    )
-                    url = await _build_public_url(storage, remote_path)
+                await _upload_to_supabase(
+                    storage=storage,
+                    local_path=tmp_path,
+                    remote_path=remote_path,
+                    content_type=content_type,
+                )
+                url = await _build_public_url(storage, remote_path)
 
-                    if url:
-                        return {
-                            "success": True,
-                            "url": url,
-                            "path": remote_path,
-                            "size": len(content),
-                        }
-                except Exception as e:
-                    logger.warning(
-                        f"Supabase image upload failed: {e}"
-                    )
+                if url:
+                    print(f"☁️  [upload-image] Uploaded to Supabase: {url}")
+                    return {
+                        "success": True,
+                        "url": url,
+                        "path": remote_path,
+                        "size": len(content),
+                        "source": source,
+                        "attempts": attempts_info,
+                    }
+            except Exception as e:
+                logger.warning(f"Supabase image upload failed: {e}")
+                print(f"⚠️  [upload-image] Supabase failed: {e}")
 
-            local_dest = PROPERTY_ASSETS_DIR / f"{project_id}_{unique}"
-            local_dest.write_bytes(content)
+        # 2) Fallback محلي
+        local_dest = PROPERTY_ASSETS_DIR / f"{project_id}_{unique}"
+        local_dest.write_bytes(content)
+        print(f"💾 [upload-image] Saved locally: {local_dest}")
 
-            return {
-                "success": True,
-                "url": f"/static/media/property_assets/{local_dest.name}",
-                "path": str(local_dest),
-                "size": len(content),
-                "local": True,
-            }
-
-        finally:
-            tmp_path.unlink(missing_ok=True)
+        return {
+            "success": True,
+            "url": f"/static/media/property_assets/{local_dest.name}",
+            "path": str(local_dest),
+            "size": len(content),
+            "local": True,
+            "source": source,
+            "attempts": attempts_info,
+        }
 
     except Exception as e:
         logger.exception("Property image upload failed")
+        print(f"❌ [upload-image] Error: {e}")
         return JSONResponse(
             {"success": False, "error": str(e)},
             status_code=500,
         )
+
+    finally:
+        if tmp_path and tmp_path.exists():
+            try:
+                tmp_path.unlink()
+            except Exception:
+                pass
 
 
 # ─────────────────────────────────────────────────────────
@@ -178,6 +299,8 @@ async def generate_property_video(
     _diag(f"   show_location: {payload.show_location}")
     _diag(f"   show_area: {payload.show_area}")
     _diag(f"   show_contact: {payload.show_contact}")
+
+    print(f"🏠 [generate] Queued job: {job_id}")
 
     return {
         "success": True,
@@ -293,6 +416,8 @@ async def save_property_video_to_project(
     elif hasattr(repo, "save"):
         await repo.save(project)
     await session.commit()
+
+    print(f"💾 [save] Saved clip {clip_id} to project {project_id}")
 
     return {
         "success": True,
