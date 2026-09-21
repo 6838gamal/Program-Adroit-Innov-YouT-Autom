@@ -2,6 +2,7 @@
 //  timeline-core.js — الإعدادات + Supabase + الأدوات المساعدة
 //  ✅ FIXED: حفظ/تحميل كل حقول الفيديو والصوت
 //  ✅ FIXED: منع عرض النص كصورة (contentIsImage check)
+//  ✅ FIXED: دعم كل أشكال الـ API (data / data.data / project.data)
 // ============================================================
 
 // قراءة الإعدادات من HTML
@@ -86,7 +87,7 @@ function formatTime(seconds) {
     return `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
 }
 
-// ⭐ NEW: التحقق إذا كان النص URL لصورة/فيديو فعلي
+// ⭐ التحقق إذا كان النص URL لصورة/فيديو فعلي
 function isMediaUrl(str) {
     if (!str || typeof str !== 'string') return false;
     const s = str.trim();
@@ -96,7 +97,6 @@ function isMediaUrl(str) {
         s.startsWith('/') ||
         s.startsWith('blob:') ||
         s.startsWith('data:') ||
-        // امتدادات ملفات
         /\.(jpg|jpeg|png|gif|webp|svg|mp4|webm|mov|mp3|wav|ogg|m4a)(\?|$)/i.test(s)
     );
 }
@@ -152,7 +152,7 @@ async function uploadFileToSupabase(file, projectId) {
     }
 }
 
-// ✅ FIXED: حفظ كل الحقول (url, src, script, scriptSegments, ...)
+// ✅ حفظ كل الحقول
 async function saveProjectToSupabase(projectId, data) {
     try {
         const response = await fetch(`/api/v1/projects/save`, {
@@ -175,7 +175,6 @@ async function saveProjectToSupabase(projectId, data) {
                         path: c.path || null,
                         mediaId: c.mediaId || null,
 
-                        // ⭐ FIXED: احفظ content فقط إذا كان URL فعلي
                         content: (c.content && isMediaUrl(c.content)) ? c.content : null,
 
                         script: c.script || '',
@@ -220,64 +219,110 @@ async function saveProjectToSupabase(projectId, data) {
     }
 }
 
-// ✅ FIXED: إعادة بناء كل الحقول عند التحميل
+// ⭐ FIXED: دعم كل أشكال الـ API الممكنة
 async function loadProjectFromSupabase(projectId) {
     try {
         const response = await fetch(`/api/v1/projects/${projectId}?user_id=${currentUserId}`);
 
-        if (response.status === 404) return null;
+        if (response.status === 404) {
+            console.log('📭 No saved project (404)');
+            return null;
+        }
         if (!response.ok) {
-            const error = await response.json();
+            const error = await response.json().catch(() => ({}));
             throw new Error(error.detail || 'فشل التحميل');
         }
 
         const result = await response.json();
-        const saved = result.data;
+        console.log('📦 API response:', result);
 
-        if (saved && saved.data) {
-            const clips = (saved.data.clips || []).map(c => {
-                const effectiveUrl = c.url || c.src || c.content || null;
+        // ═══════════════════════════════════════════════════
+        // ⭐ دعم كل الأشكال الممكنة:
+        //   1) { data: { data: { clips } } }    ← data مزدوجة
+        //   2) { data: { clips } }              ← data مباشرة
+        //   3) { clips }                        ← clips مباشرة
+        //   4) { project: { data: { clips } } } ← داخل project
+        // ═══════════════════════════════════════════════════
+        let saved = null;
 
-                return {
-                    id: c.id,
-                    type: c.type,
-                    layer: c.layer || 0,
-                    start: c.start || 0,
-                    duration: c.duration || 3,
-                    title: c.title || '',
-
-                    url: effectiveUrl,
-                    src: effectiveUrl,
-                    // ⭐ FIXED: content فقط إذا URL فعلي
-                    content: isMediaUrl(effectiveUrl) ? effectiveUrl : null,
-                    path: c.path || null,
-                    mediaId: c.mediaId || null,
-
-                    script: c.script || '',
-                    scriptSegments: c.scriptSegments || [],
-                    tts: c.tts || null,
-                    source: c.source || null,
-                    fileName: c.fileName || null,
-                    voice_id: c.voice_id || null,
-                    processed: c.processed || false,
-                    processingOptions: c.processingOptions || null,
-
-                    color: c.color || '#2563eb',
-                    icon: c.icon || '🎬',
-                    metadata: c.metadata || {}
-                };
-            });
-
-            return {
-                clips: clips,
-                layers: saved.data.layers || [{ name: 'طبقة 1', visible: true, locked: false }],
-                totalDuration: saved.data.total_duration || 10,
-                cellWidth: saved.data.cell_width || 80,
-                mediaFiles: saved.data.media_files || []
-            };
+        if (result.project && result.project.data) {
+            saved = result.project.data;
+        }
+        else if (result.data && typeof result.data === 'object') {
+            if (result.data.data && typeof result.data.data === 'object') {
+                saved = result.data.data;
+            } else {
+                saved = result.data;
+            }
+        }
+        else {
+            saved = result;
         }
 
-        return null;
+        // ⭐ تحقق أن saved يحتوي clips
+        const hasClips = saved && (
+            Array.isArray(saved.clips) ||
+            Array.isArray(saved.layers) ||
+            saved.total_duration ||
+            saved.totalDuration
+        );
+
+        if (!hasClips) {
+            console.warn('⚠️ No clips found in API response. Structure:', {
+                hasResult: !!result,
+                hasData: !!result?.data,
+                hasDataData: !!result?.data?.data,
+                hasProject: !!result?.project,
+                savedKeys: saved ? Object.keys(saved) : [],
+            });
+            return null;
+        }
+
+        console.log('✅ Found saved clips:', {
+            clipsCount: (saved.clips || []).length,
+            layersCount: (saved.layers || []).length,
+            totalDuration: saved.total_duration || saved.totalDuration,
+        });
+
+        const clips = (saved.clips || []).map(c => {
+            const effectiveUrl = c.url || c.src || c.content || null;
+
+            return {
+                id: c.id,
+                type: c.type,
+                layer: c.layer || 0,
+                start: c.start || 0,
+                duration: c.duration || 3,
+                title: c.title || '',
+
+                url: effectiveUrl,
+                src: effectiveUrl,
+                content: isMediaUrl(effectiveUrl) ? effectiveUrl : null,
+                path: c.path || null,
+                mediaId: c.mediaId || null,
+
+                script: c.script || '',
+                scriptSegments: c.scriptSegments || [],
+                tts: c.tts || null,
+                source: c.source || null,
+                fileName: c.fileName || null,
+                voice_id: c.voice_id || null,
+                processed: c.processed || false,
+                processingOptions: c.processingOptions || null,
+
+                color: c.color || '#2563eb',
+                icon: c.icon || '🎬',
+                metadata: c.metadata || {}
+            };
+        });
+
+        return {
+            clips: clips,
+            layers: saved.layers || [{ name: 'طبقة 1', visible: true, locked: false }],
+            totalDuration: saved.total_duration || saved.totalDuration || 10,
+            cellWidth: saved.cell_width || saved.cellWidth || 80,
+            mediaFiles: saved.media_files || saved.mediaFiles || []
+        };
 
     } catch(e) {
         console.error('❌ فشل التحميل:', e);
@@ -420,23 +465,20 @@ async function loadProjectData() {
         // ⭐ FIXED: لا تعرض النص كصورة
         if (scenes && scenes.length > 0) {
             scenes.forEach((scene, i) => {
-                // ⭐ تحقق: هل content هو URL فعلي للوسائط؟
                 const contentIsMedia = scene.content && isMediaUrl(scene.content);
 
                 const clip = {
                     id: clipIdCounter++,
-                    type: contentIsMedia ? 'image' : 'text',   // ⭐ نوع ديناميكي
+                    type: contentIsMedia ? 'image' : 'text',
                     layer: 0,
                     start: scene.start_time || i * 3,
                     duration: scene.duration || 3,
                     title: scene.title || `مشهد ${i+1}`,
 
-                    // ⭐ content فقط إذا URL فعلي
                     content: contentIsMedia ? scene.content : null,
                     url: contentIsMedia ? scene.content : null,
                     src: contentIsMedia ? scene.content : null,
 
-                    // ⭐ النص يُحفظ في script
                     script: !contentIsMedia ? (scene.content || '') : '',
 
                     color: contentIsMedia ? COLORS.image : COLORS.text,
@@ -532,7 +574,6 @@ function startRender(projectId) {
     status.textContent = 'جاري التجهيز...';
     progressFill.style.width = '0%';
 
-    // ✅ FIXED: استخدم url || content في الرندر (فقط للوسائط)
     const renderData = {
         project_id: projectId,
         clips: projectData.clips.map(c => {
@@ -542,7 +583,6 @@ function startRender(projectId) {
                 start: c.start,
                 duration: c.duration,
                 layer: c.layer,
-                // ⭐ فقط إذا URL فعلي
                 content: isMediaUrl(effectiveContent) ? effectiveContent : null,
                 title: c.title,
                 script: c.script || '',
