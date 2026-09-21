@@ -3,6 +3,7 @@
 //  ✅ FIXED: حفظ/تحميل كل حقول الفيديو والصوت
 //  ✅ FIXED: منع عرض النص كصورة (contentIsImage check)
 //  ✅ FIXED: دعم كل أشكال الـ API (data / data.data / project.data)
+//  ✅ NEW: قراءة projectData من HTML مباشرة (fast path)
 // ============================================================
 
 // قراءة الإعدادات من HTML
@@ -11,6 +12,7 @@ const scenes = _cfg.scenes;
 const projectId = _cfg.projectId;
 const currentUserId = _cfg.userId;
 const currentUserEmail = _cfg.userEmail;
+const htmlProjectData = _cfg.projectData || null;   // ⭐ جديد
 
 // ====== الحالة العامة (مشتركة بين كل الملفات عبر window) ======
 let projectData = {
@@ -219,7 +221,7 @@ async function saveProjectToSupabase(projectId, data) {
     }
 }
 
-// ⭐ FIXED: دعم كل أشكال الـ API الممكنة
+// ⭐ دعم كل أشكال الـ API الممكنة
 async function loadProjectFromSupabase(projectId) {
     try {
         const response = await fetch(`/api/v1/projects/${projectId}?user_id=${currentUserId}`);
@@ -236,13 +238,6 @@ async function loadProjectFromSupabase(projectId) {
         const result = await response.json();
         console.log('📦 API response:', result);
 
-        // ═══════════════════════════════════════════════════
-        // ⭐ دعم كل الأشكال الممكنة:
-        //   1) { data: { data: { clips } } }    ← data مزدوجة
-        //   2) { data: { clips } }              ← data مباشرة
-        //   3) { clips }                        ← clips مباشرة
-        //   4) { project: { data: { clips } } } ← داخل project
-        // ═══════════════════════════════════════════════════
         let saved = null;
 
         if (result.project && result.project.data) {
@@ -259,7 +254,6 @@ async function loadProjectFromSupabase(projectId) {
             saved = result;
         }
 
-        // ⭐ تحقق أن saved يحتوي clips
         const hasClips = saved && (
             Array.isArray(saved.clips) ||
             Array.isArray(saved.layers) ||
@@ -431,11 +425,76 @@ function saveProjectData() {
     }).catch(() => updateSyncStatus('error'));
 }
 
+// ⭐ FIXED: قراءة البيانات من HTML أولاً (fast path)
 async function loadProjectData() {
     const overlay = document.getElementById('loadingOverlay');
     overlay.classList.remove('hidden');
 
     try {
+        // ═══════════════════════════════════════════════════
+        // ⭐ الطبقة 1: قراءة البيانات من HTML (الأسرع والأضمن)
+        // ═══════════════════════════════════════════════════
+        if (htmlProjectData && (htmlProjectData.clips || htmlProjectData.layers)) {
+            console.log('✅ Using data from HTML template (fast path)', {
+                clips: (htmlProjectData.clips || []).length,
+                layers: (htmlProjectData.layers || []).length,
+                total_duration: htmlProjectData.total_duration,
+            });
+
+            projectData.clips = (htmlProjectData.clips || []).map(c => {
+                const effectiveUrl = c.url || c.src || c.content || null;
+                return {
+                    id: c.id,
+                    type: c.type,
+                    layer: c.layer || 0,
+                    start: c.start || 0,
+                    duration: c.duration || 3,
+                    title: c.title || '',
+                    url: effectiveUrl,
+                    src: effectiveUrl,
+                    content: isMediaUrl(effectiveUrl) ? effectiveUrl : null,
+                    path: c.path || null,
+                    mediaId: c.mediaId || null,
+                    script: c.script || '',
+                    scriptSegments: c.scriptSegments || [],
+                    tts: c.tts || null,
+                    source: c.source || null,
+                    fileName: c.fileName || null,
+                    voice_id: c.voice_id || null,
+                    processed: c.processed || false,
+                    processingOptions: c.processingOptions || null,
+                    color: c.color || '#2563eb',
+                    icon: c.icon || '🎬',
+                    metadata: c.metadata || {}
+                };
+            });
+
+            projectData.layers = htmlProjectData.layers || [{ name: 'طبقة 1', visible: true, locked: false }];
+            projectData.totalDuration = htmlProjectData.total_duration || htmlProjectData.totalDuration || 10;
+            projectData.cellWidth = htmlProjectData.cell_width || htmlProjectData.cellWidth || 80;
+            projectData.mediaFiles = htmlProjectData.media_files || htmlProjectData.mediaFiles || [];
+
+            if (projectData.clips.length > 0) {
+                clipIdCounter = Math.max(...projectData.clips.map(c => c.id)) + 1;
+            }
+
+            renderLayers();
+            renderTimeline();
+            updateStatus();
+            renderMediaGallery();
+            renderPreview(currentTime);
+
+            updateSyncStatus('synced');
+            isDataLoaded = true;
+            overlay.classList.add('hidden');
+            showToast('✅ تم تحميل المشروع', 'success');
+            return;
+        }
+
+        // ═══════════════════════════════════════════════════
+        // ⭐ الطبقة 2: API fallback
+        // ═══════════════════════════════════════════════════
+        console.log('⚠️ No data in HTML, fetching from API...');
         const data = await loadProjectFromSupabase(projectId);
 
         if (data) {
@@ -462,7 +521,9 @@ async function loadProjectData() {
             return;
         }
 
-        // ⭐ FIXED: لا تعرض النص كصورة
+        // ═══════════════════════════════════════════════════
+        // ⭐ الطبقة 3: scenes fallback (للمشاريع القديمة)
+        // ═══════════════════════════════════════════════════
         if (scenes && scenes.length > 0) {
             scenes.forEach((scene, i) => {
                 const contentIsMedia = scene.content && isMediaUrl(scene.content);
@@ -474,13 +535,10 @@ async function loadProjectData() {
                     start: scene.start_time || i * 3,
                     duration: scene.duration || 3,
                     title: scene.title || `مشهد ${i+1}`,
-
                     content: contentIsMedia ? scene.content : null,
                     url: contentIsMedia ? scene.content : null,
                     src: contentIsMedia ? scene.content : null,
-
                     script: !contentIsMedia ? (scene.content || '') : '',
-
                     color: contentIsMedia ? COLORS.image : COLORS.text,
                     icon: contentIsMedia ? '🖼️' : '📝',
                     metadata: { scene_id: scene.id }
@@ -503,6 +561,10 @@ async function loadProjectData() {
             return;
         }
 
+        // ═══════════════════════════════════════════════════
+        // ⭐ الطبقة 4: مشروع فارغ
+        // ═══════════════════════════════════════════════════
+        console.log('📭 Empty project, initializing...');
         projectData.layers = [{ name: 'طبقة 1', visible: true, locked: false }];
         renderLayers();
         renderTimeline();
