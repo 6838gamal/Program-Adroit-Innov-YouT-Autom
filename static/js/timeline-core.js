@@ -1,6 +1,7 @@
 // ============================================================
 //  timeline-core.js — الإعدادات + Supabase + الأدوات المساعدة
 //  ✅ FIXED: حفظ/تحميل كل حقول الفيديو والصوت
+//  ✅ FIXED: منع عرض النص كصورة (contentIsImage check)
 // ============================================================
 
 // قراءة الإعدادات من HTML
@@ -85,6 +86,21 @@ function formatTime(seconds) {
     return `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
 }
 
+// ⭐ NEW: التحقق إذا كان النص URL لصورة/فيديو فعلي
+function isMediaUrl(str) {
+    if (!str || typeof str !== 'string') return false;
+    const s = str.trim();
+    return (
+        s.startsWith('http://') ||
+        s.startsWith('https://') ||
+        s.startsWith('/') ||
+        s.startsWith('blob:') ||
+        s.startsWith('data:') ||
+        // امتدادات ملفات
+        /\.(jpg|jpeg|png|gif|webp|svg|mp4|webm|mov|mp3|wav|ogg|m4a)(\?|$)/i.test(s)
+    );
+}
+
 function showToast(msg, type = 'info') {
     const oldToast = document.querySelector('.toast-message');
     if (oldToast) oldToast.remove();
@@ -147,9 +163,6 @@ async function saveProjectToSupabase(projectId, data) {
                 user_id: currentUserId,
                 data: {
                     clips: data.clips.map(c => ({
-                        // ═══════════════════════════════════════════
-                        // الحقول الأساسية
-                        // ═══════════════════════════════════════════
                         id: c.id,
                         type: c.type,
                         layer: c.layer,
@@ -157,23 +170,14 @@ async function saveProjectToSupabase(projectId, data) {
                         duration: c.duration,
                         title: c.title,
 
-                        // ═══════════════════════════════════════════
-                        // ✅ FIXED: حقول الفيديو/الصوت (كانت مفقودة!)
-                        // ═══════════════════════════════════════════
                         url: c.url || null,
                         src: c.src || null,
                         path: c.path || null,
                         mediaId: c.mediaId || null,
 
-                        // content: احفظه إذا كان http أو / نسبي
-                        content: (c.content && (
-                            c.content.startsWith('http') ||
-                            c.content.startsWith('/')
-                        )) ? c.content : null,
+                        // ⭐ FIXED: احفظ content فقط إذا كان URL فعلي
+                        content: (c.content && isMediaUrl(c.content)) ? c.content : null,
 
-                        // ═══════════════════════════════════════════
-                        // ✅ FIXED: حقول النص والصوت
-                        // ═══════════════════════════════════════════
                         script: c.script || '',
                         scriptSegments: c.scriptSegments || [],
                         tts: c.tts || null,
@@ -183,9 +187,6 @@ async function saveProjectToSupabase(projectId, data) {
                         processed: c.processed || false,
                         processingOptions: c.processingOptions || null,
 
-                        // ═══════════════════════════════════════════
-                        // المظهر
-                        // ═══════════════════════════════════════════
                         color: c.color,
                         icon: c.icon,
                         metadata: c.metadata || {}
@@ -234,11 +235,7 @@ async function loadProjectFromSupabase(projectId) {
         const saved = result.data;
 
         if (saved && saved.data) {
-            // ═══════════════════════════════════════════════════
-            // ✅ FIXED: إعادة بناء كل الحقول مع fallback ذكي
-            // ═══════════════════════════════════════════════════
             const clips = (saved.data.clips || []).map(c => {
-                // fallback: url || src || content (بهذا الترتيب)
                 const effectiveUrl = c.url || c.src || c.content || null;
 
                 return {
@@ -249,14 +246,13 @@ async function loadProjectFromSupabase(projectId) {
                     duration: c.duration || 3,
                     title: c.title || '',
 
-                    // ✅ استعد url و src و content من أي حقل متاح
                     url: effectiveUrl,
                     src: effectiveUrl,
-                    content: effectiveUrl,
+                    // ⭐ FIXED: content فقط إذا URL فعلي
+                    content: isMediaUrl(effectiveUrl) ? effectiveUrl : null,
                     path: c.path || null,
                     mediaId: c.mediaId || null,
 
-                    // ✅ حقول النص والصوت
                     script: c.script || '',
                     scriptSegments: c.scriptSegments || [],
                     tts: c.tts || null,
@@ -266,7 +262,6 @@ async function loadProjectFromSupabase(projectId) {
                     processed: c.processed || false,
                     processingOptions: c.processingOptions || null,
 
-                    // المظهر
                     color: c.color || '#2563eb',
                     icon: c.icon || '🎬',
                     metadata: c.metadata || {}
@@ -422,20 +417,30 @@ async function loadProjectData() {
             return;
         }
 
+        // ⭐ FIXED: لا تعرض النص كصورة
         if (scenes && scenes.length > 0) {
             scenes.forEach((scene, i) => {
+                // ⭐ تحقق: هل content هو URL فعلي للوسائط؟
+                const contentIsMedia = scene.content && isMediaUrl(scene.content);
+
                 const clip = {
                     id: clipIdCounter++,
-                    type: 'image',
+                    type: contentIsMedia ? 'image' : 'text',   // ⭐ نوع ديناميكي
                     layer: 0,
                     start: scene.start_time || i * 3,
                     duration: scene.duration || 3,
                     title: scene.title || `مشهد ${i+1}`,
-                    content: scene.content || '',
-                    url: null,
-                    src: null,
-                    color: COLORS.image,
-                    icon: '🖼️',
+
+                    // ⭐ content فقط إذا URL فعلي
+                    content: contentIsMedia ? scene.content : null,
+                    url: contentIsMedia ? scene.content : null,
+                    src: contentIsMedia ? scene.content : null,
+
+                    // ⭐ النص يُحفظ في script
+                    script: !contentIsMedia ? (scene.content || '') : '',
+
+                    color: contentIsMedia ? COLORS.image : COLORS.text,
+                    icon: contentIsMedia ? '🖼️' : '📝',
                     metadata: { scene_id: scene.id }
                 };
                 projectData.clips.push(clip);
@@ -527,7 +532,7 @@ function startRender(projectId) {
     status.textContent = 'جاري التجهيز...';
     progressFill.style.width = '0%';
 
-    // ✅ FIXED: استخدم url || content في الرندر
+    // ✅ FIXED: استخدم url || content في الرندر (فقط للوسائط)
     const renderData = {
         project_id: projectId,
         clips: projectData.clips.map(c => {
@@ -537,10 +542,10 @@ function startRender(projectId) {
                 start: c.start,
                 duration: c.duration,
                 layer: c.layer,
-                content: (effectiveContent && effectiveContent.startsWith('http'))
-                    ? effectiveContent
-                    : null,
+                // ⭐ فقط إذا URL فعلي
+                content: isMediaUrl(effectiveContent) ? effectiveContent : null,
                 title: c.title,
+                script: c.script || '',
                 metadata: c.metadata
             };
         }),
