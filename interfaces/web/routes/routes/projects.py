@@ -120,16 +120,6 @@ def _safe_filename(name: str, fallback: str = "video") -> str:
 def _safe_supabase_key(name: str, fallback: str = "video") -> str:
     """
     يحوّل أي اسم إلى ASCII آمن لـ Supabase Storage.
-
-    Supabase يرفض:
-    - الأحرف العربية
-    - الإيموجي
-    - المسافات والرموز الخاصة (: ? = # ...)
-    - الأسماء الطويلة جداً
-
-    مثال:
-        "13_comments_بص_بقا_..._0986757c39.mp4" → "13_comments_0986757c39.mp4"
-        "🎬 فيديو.mp4" → "video_a1b2c3d4.mp4"
     """
     if not name:
         return f"{fallback}_{uuid.uuid4().hex[:8]}.mp4"
@@ -137,89 +127,48 @@ def _safe_supabase_key(name: str, fallback: str = "video") -> str:
     stem = Path(name).stem
     ext = Path(name).suffix or ".mp4"
 
-    # 1) احتفظ بـ ASCII فقط (يهمل العربية والإيموجي)
     ascii_name = stem.encode("ascii", "ignore").decode("ascii")
-
-    # 2) استبدل الرموز غير الآمنة بـ _
     ascii_name = re.sub(r"[^\w\-]", "_", ascii_name)
-
-    # 3) دمج _ المتعددة
     ascii_name = re.sub(r"_+", "_", ascii_name)
-
-    # 4) إزالة _ من الأطراف
     ascii_name = ascii_name.strip("_")
 
-    # 5) إذا صار فارغاً أو قصيراً جداً → fallback + uuid
     if not ascii_name or len(ascii_name) < 3:
         ascii_name = f"{fallback}_{uuid.uuid4().hex[:8]}"
 
-    # 6) اقتصر على 80 حرف
     ascii_name = ascii_name[:80]
 
     return f"{ascii_name}{ext}"
 
 
 # =====================================================================
-#                    ⭐ SCRIPT / SCENE CLEANERS (جديد)
+#                    SCRIPT / SCENE CLEANERS
 # =====================================================================
 def _clean_script_for_display(script: str) -> str:
-    """
-    ينظّف السكريبت من:
-    - روابط URL (https://...)
-    - الإيموجي في البداية
-    - رموز خاصة
-
-    يُستخدم لـ detail.html و timeline.html
-    """
+    """ينظّف السكريبت من URLs والإيموجي للعرض."""
     if not script:
         return ""
-
-    # احذف URLs
     script = re.sub(r'https?://\S+', '', script)
-
-    # احذف الإيموجي الشائعة
     script = re.sub(
         r'[🎬📎📝🔗📊🎙️🎵🎭🏠✨🖼️💰📍📐📞🔊🎤📁🏡🏢🏗️🏛️🛏️🛋️]',
-        '',
-        script
+        '', script
     )
-
-    # احذف "طلب:" و "مصادر إلهام"
     script = re.sub(r'طلب\s*:', '', script)
     script = re.sub(r'---\s*مصادر\s*إلهام\s*---', '', script)
-
-    # نظّف المسافات المتعددة
     script = re.sub(r'\n{3,}', '\n\n', script)
-
     return script.strip()
 
 
 def _clean_scene_content(content: str, max_len: int = 120) -> str:
-    """
-    ينظّف محتوى المشهد من الروابط والإيموجي.
-    يُستخدم لـ scene.content في timeline.
-
-    ⚠️ مهم: هذا يمنع ظهور النص كصورة → 404
-    """
+    """ينظّف محتوى المشهد من الروابط والإيموجي."""
     if not content:
         return ""
-
-    # احذف URLs
     content = re.sub(r'https?://\S+', '', content)
-
-    # احذف الإيموجي
     content = re.sub(
         r'[🎬📎📝🔗📊🎙️🎵🎭🏠✨🖼️💰📍📐📞🔊🎤📁]',
-        '',
-        content
+        '', content
     )
-
-    # احذف الرموز الخاصة التي قد تسبب مشاكل في JS
     content = re.sub(r'[<>"\'`]', '', content)
-
-    # نظّف المسافات
     content = re.sub(r'\s+', ' ', content).strip()
-
     return content[:max_len]
 
 
@@ -593,8 +542,12 @@ async def create_project_from_video(
 
     التدفق:
     1) نقل الفيديو من media/preview/ → media/downloads/
-    2) رفع الفيديو إلى Supabase Storage (مع تنظيف الاسم)
-    3) إنشاء Project مع data = {video_url, video_path, local_path, ...}
+    2) رفع الفيديو إلى Supabase Storage
+    3) إنشاء Project مع:
+       - data.video_url
+       - data.clips = [clip الفيديو]  ⭐ (يظهر في timeline)
+       - data.layers = [طبقة 1]
+       - data.media_files
     4) إرجاع project_id
     """
     filename = payload.get("filename")
@@ -607,7 +560,7 @@ async def create_project_from_video(
     src = PREVIEW_DIR / filename
     dst = DOWNLOAD_DIR / filename
 
-    # 1) نقل الملف (إذا لم يكن منقولاً مسبقاً)
+    # 1) نقل الملف
     if not dst.exists():
         if not src.exists():
             raise HTTPException(status_code=404, detail="الملف غير موجود.")
@@ -616,7 +569,7 @@ async def create_project_from_video(
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"فشل نقل الملف: {e}")
 
-    # 2) رفع إلى Supabase Storage
+    # 2) رفع إلى Supabase
     video_url = None
     video_path = None
     local_path = str(dst)
@@ -625,13 +578,10 @@ async def create_project_from_video(
     if settings.supabase_configured:
         try:
             storage = SupabaseStorageAdapter()
-
-            # ⭐ نظّف الاسم قبل الرفع (Supabase يرفض العربية والإيموجي)
             supabase_filename = _safe_supabase_key(filename, "video")
             storage_key = f"videos/{supabase_filename}"
 
             print(f"📤 Uploading to Supabase: {storage_key}", flush=True)
-
             saved_key = await storage.save(dst, storage_key)
 
             if saved_key:
@@ -644,34 +594,84 @@ async def create_project_from_video(
             video_path = None
             supabase_filename = None
 
-    # fallback: static URL
     if not video_url:
         video_url = f"/media/downloads/{filename}"
 
-    # 3) ⭐ نظّف السكريبت قبل الحفظ
+    # 3) نظّف السكريبت
     raw_script = payload.get("script") or ""
     clean_script = _clean_script_for_display(raw_script)
 
-    # 4) إنشاء Project
+    # 4) احسب المدة
+    video_duration = payload.get("duration") or 0
+    if not video_duration or video_duration <= 0:
+        video_duration = 10  # fallback
+
+    # 5) إنشاء Project
     project = Project(
         title=title,
         description=payload.get("description") or "",
-        script=clean_script,                       # ⭐ نظّف
+        script=clean_script,
         tags=payload.get("tags") or ["video-download"],
         brand_colors=BrandColors(),
         settings={},
     )
 
+    # ⭐ data مع clips جاهزة + layers + media_files
     project.update_data({
         "video_url": video_url,
-        "video_path": video_path,                  # Supabase key أو None
-        "local_path": local_path,                  # المسار المحلي دائماً
-        "original_filename": filename,             # الاسم الأصلي (للعرض)
-        "supabase_filename": supabase_filename,    # الاسم بعد التنظيف
+        "video_path": video_path,
+        "local_path": local_path,
+        "original_filename": filename,
+        "supabase_filename": supabase_filename,
         "source": payload.get("source") or "generic",
         "platform": payload.get("platform"),
-        "total_duration": payload.get("duration") or 0,
+        "total_duration": video_duration,
         "created_from": "video_download",
+
+        # ⭐ clip الفيديو (يظهر في timeline)
+        "clips": [
+            {
+                "id": 0,
+                "type": "video",
+                "layer": 0,
+                "start": 0,
+                "duration": video_duration,
+                "title": title,
+                "url": video_url,
+                "src": video_url,
+                "content": video_url,
+                "script": clean_script,
+                "scriptSegments": [],
+                "tts": None,
+                "source": payload.get("source") or "generic",
+                "fileName": filename,
+                "voice_id": None,
+                "processed": False,
+                "processingOptions": None,
+                "color": "#2563eb",
+                "icon": "🎬",
+                "metadata": {
+                    "original_filename": filename,
+                    "supabase_filename": supabase_filename,
+                    "platform": payload.get("platform"),
+                }
+            }
+        ],
+
+        # ⭐ طبقة افتراضية
+        "layers": [
+            {"name": "طبقة 1", "visible": True, "locked": False}
+        ],
+
+        # ⭐ media_files
+        "media_files": [
+            {
+                "name": filename,
+                "size": 0,
+                "type": "video/mp4",
+                "url": video_url,
+            }
+        ],
     })
 
     repo = SQLProjectRepository(session)
@@ -763,7 +763,6 @@ async def project_detail(
         print(f"⚠️ فشل _resolve_thumbnail_url: {e}", flush=True)
         thumbnail_url = None
 
-    # ⭐ نظّف السكريبت للعرض
     cleaned_script = _clean_script_for_display(project.script or "")
 
     return templates.TemplateResponse(request, "projects/detail.html", {
@@ -771,7 +770,7 @@ async def project_detail(
         "video_url": video_url,
         "thumbnail_url": thumbnail_url,
         "render_jobs": render_jobs,
-        "cleaned_script": cleaned_script,           # ⭐ جديد
+        "cleaned_script": cleaned_script,
         "active_page": "projects",
         "supabase": get_supabase_config(),
     })
@@ -797,45 +796,51 @@ async def project_timeline(
     if not project:
         return HTMLResponse("المشروع غير موجود", status_code=404)
 
-    # بناء scenes
+    # ⭐ FIXED: لا نبني scenes إذا كان data.clips موجوداً بالفعل
+    # (حتى لا نكرر الفيديو)
     scenes = []
-    try:
-        if hasattr(project, "timeline") and project.timeline:
-            tl = project.timeline
-            for scene in (tl.scenes if hasattr(tl, "scenes") else []):
-                scenes.append({
-                    "id": str(scene.id),
-                    "title": getattr(scene, "title", None) or f"مشهد {len(scenes)+1}",
-                    "start_time": float(getattr(scene, "start_time", 0)),
-                    "end_time": float(getattr(scene, "end_time", 0)),
-                    "duration": float(getattr(scene, "duration", 0)),
-                    # ⭐ نظّف content
-                    "content": _clean_scene_content(
-                        getattr(scene, "content", ""), 120
-                    ),
-                })
-    except Exception as e:
-        print(f"⚠️ فشل استخراج timeline: {e}", flush=True)
+    has_saved_clips = (
+        hasattr(project, "data") and
+        isinstance(project.data, dict) and
+        project.data.get("clips")
+    )
 
-    # fallback: تقسيم السكريبت
-    if not scenes and project.script:
-        # ⭐ نظّف السكريبت أولاً
-        clean_script = _clean_script_for_display(project.script)
-        paragraphs = [p.strip() for p in clean_script.split("\n\n") if p.strip()]
-        t = 0.0
-        for i, para in enumerate(paragraphs):
-            words = len(para.split())
-            duration = max(words / 2.5, 2.0)
-            scenes.append({
-                "id": str(i),
-                "title": f"مشهد {i+1}",
-                "start_time": round(t, 2),
-                "end_time": round(t + duration, 2),
-                "duration": round(duration, 2),
-                # ⭐ نظّف content
-                "content": _clean_scene_content(para, 120),
-            })
-            t += duration
+    if not has_saved_clips:
+        # بناء scenes من timeline أو script
+        try:
+            if hasattr(project, "timeline") and project.timeline:
+                tl = project.timeline
+                for scene in (tl.scenes if hasattr(tl, "scenes") else []):
+                    scenes.append({
+                        "id": str(scene.id),
+                        "title": getattr(scene, "title", None) or f"مشهد {len(scenes)+1}",
+                        "start_time": float(getattr(scene, "start_time", 0)),
+                        "end_time": float(getattr(scene, "end_time", 0)),
+                        "duration": float(getattr(scene, "duration", 0)),
+                        "content": _clean_scene_content(
+                            getattr(scene, "content", ""), 120
+                        ),
+                    })
+        except Exception as e:
+            print(f"⚠️ فشل استخراج timeline: {e}", flush=True)
+
+        # fallback: تقسيم السكريبت
+        if not scenes and project.script:
+            clean_script = _clean_script_for_display(project.script)
+            paragraphs = [p.strip() for p in clean_script.split("\n\n") if p.strip()]
+            t = 0.0
+            for i, para in enumerate(paragraphs):
+                words = len(para.split())
+                duration = max(words / 2.5, 2.0)
+                scenes.append({
+                    "id": str(i),
+                    "title": f"مشهد {i+1}",
+                    "start_time": round(t, 2),
+                    "end_time": round(t + duration, 2),
+                    "duration": round(duration, 2),
+                    "content": _clean_scene_content(para, 120),
+                })
+                t += duration
 
     # voice data
     voiceover_clips = []
