@@ -47,3 +47,6 @@ pytubefix
 
 
 gallery-dl
+
+
+curl_cffi
