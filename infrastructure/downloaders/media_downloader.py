@@ -1,21 +1,19 @@
 """
 مكتبة تحميل موحّدة للصور والفيديوهات.
 
-تدعم عدة محركات (engines):
-  - facebook   → مستخرج مخصص لروابط فيسبوك (بما فيها روابط المشاركة)
-  - gallery-dl → الصور من إنستغرام/تويتر/بينتريست...
-  - yt-dlp     → الفيديوهات
+المحركات:
+  - facebook   → مستخرج مخصص (curl_cffi + httpx fallback)
+  - gallery-dl → إنستغرام/تويتر/بينتريست...
+  - yt-dlp     → فيديوهات
   - direct     → رابط مباشر (fallback)
 
-تجرب كل محرك على حدة وتطبع النتائج على الكونسول.
-
 النسخة المحدّثة:
+- دعم curl_cffi لمحاكاة بصمة متصفح حقيقي (يتجاوز حظر فيسبوك)
+- سقوط آمن إلى httpx مع ترويسات محسّنة
+- كشف دقيق لحالات فيسبوك (400، 403، 404، login wall)
 - تحقق حقيقي من الصور (magic bytes + Pillow + content-type + أبعاد)
-- رفض صفحات HTML والملفات التالفة
-- مستخرج فيسبوك مخصص يعمل على روابط المشاركة
-- رسائل خطأ عربية واضحة
-- دعم كوكيز (ملف أو متصفح)
-- اكتشاف روابط المشاركة مبكراً
+- رسائل خطأ عربية دقيقة لكل حالة
+- دعم كوكيز من ملف JSON
 - رفض SVG نهائياً
 """
 from __future__ import annotations
@@ -31,14 +29,14 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
-from urllib.parse import urlparse, unquote
+from urllib.parse import urlparse
 
 import httpx
 
 logger = logging.getLogger(__name__)
 
 # ─────────────────────────────────────────────────────────
-# Pillow (اختياري لكن مُوصى به بشدة)
+# Pillow
 # ─────────────────────────────────────────────────────────
 try:
     from PIL import Image, UnidentifiedImageError
@@ -47,6 +45,20 @@ except ImportError:
     PIL_AVAILABLE = False
     UnidentifiedImageError = Exception
     print("⚠️ Pillow غير متوفر — التحقق سيكون محدوداً. ثبّته: pip install Pillow")
+
+
+# ─────────────────────────────────────────────────────────
+# curl_cffi (اختياري لكن مُوصى به بشدة لفيسبوك)
+# ─────────────────────────────────────────────────────────
+try:
+    from curl_cffi.requests import AsyncSession as CurlAsyncSession
+    CURL_CFFI_AVAILABLE = True
+    print("✅ curl_cffi متوفر — محاكاة بصمة المتصفح مُفعّلة")
+except ImportError:
+    CURL_CFFI_AVAILABLE = False
+    CurlAsyncSession = None
+    print("⚠️ curl_cffi غير متوفر — يُنصح بتثبيته لدعم أفضل لفيسبوك")
+    print("   pip install curl_cffi")
 
 
 # ─────────────────────────────────────────────────────────
@@ -68,12 +80,35 @@ SHARE_LINK_PATTERNS = (
     "pin.it/",
 )
 
-FACEBOOK_HOSTS = ("facebook.com", "fb.com", "fb.watch", "m.facebook.com", "web.facebook.com")
+FACEBOOK_HOSTS = (
+    "facebook.com", "fb.com", "fb.watch",
+    "m.facebook.com", "web.facebook.com",
+)
 
-# رموز خروج gallery-dl المهمة
+# رموز خروج gallery-dl
 GDL_EXIT_OK = 0
 GDL_EXIT_UNSUPPORTED = 64
 GDL_EXIT_AUTH = 77
+
+# ترويسات فيسبوك المحسّنة (محاكاة Chrome حقيقي)
+FB_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/122.0.0.0 Safari/537.36"
+    ),
+    "Accept": (
+        "text/html,application/xhtml+xml,application/xml;q=0.9,"
+        "image/avif,image/webp,image/apng,*/*;q=0.8"
+    ),
+    "Accept-Language": "en-US,en;q=0.9",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "none",
+    "Sec-Fetch-User": "?1",
+    "Upgrade-Insecure-Requests": "1",
+    "Cache-Control": "max-age=0",
+}
 
 
 # ─────────────────────────────────────────────────────────
@@ -82,7 +117,6 @@ GDL_EXIT_AUTH = 77
 
 @dataclass
 class DownloadResult:
-    """نتيجة محاولة تحميل واحدة."""
     engine: str
     success: bool
     files: List[Path] = field(default_factory=list)
@@ -93,6 +127,7 @@ class DownloadResult:
     stderr: str = ""
     duration_ms: float = 0.0
     rejected: List[Dict[str, Any]] = field(default_factory=list)
+    used_client: Optional[str] = None  # "curl_cffi" | "httpx"
 
     @property
     def count(self) -> int:
@@ -111,6 +146,8 @@ class DownloadResult:
             d["error_ar"] = self.error_ar
         if self.error_kind:
             d["error_kind"] = self.error_kind
+        if self.used_client:
+            d["used_client"] = self.used_client
         if self.rejected:
             d["rejected"] = self.rejected[:10]
         return d
@@ -118,7 +155,6 @@ class DownloadResult:
 
 @dataclass
 class DownloadBundle:
-    """نتيجة كل المحاولات معاً."""
     url: str
     results: List[DownloadResult] = field(default_factory=list)
     chosen: Optional[DownloadResult] = None
@@ -145,31 +181,30 @@ class DownloadBundle:
         }
 
     def user_message_ar(self) -> Dict[str, Any]:
-        """رسالة عربية واضحة للمستخدم."""
         if self.success:
             return {
                 "success": True,
-                "message": f"تم التحميل بنجاح عبر {self.chosen.engine} "
-                           f"({len(self.all_files)} ملف).",
+                "message": (
+                    f"تم التحميل بنجاح عبر {self.chosen.engine} "
+                    f"({len(self.all_files)} ملف)."
+                ),
+                "engine": self.chosen.engine,
+                "files_count": len(self.all_files),
             }
 
         share = is_share_link(self.url)
         source = detect_source(self.url)
 
-        # اجمع أسباب الفشل
         reasons = []
         for r in self.results:
-            if r.success:
-                continue
-            if r.error_kind == "skipped":
+            if r.success or r.error_kind == "skipped":
                 continue
             reasons.append({
                 "engine": r.engine,
                 "reason": r.error_ar or r.error or "فشل غير معروف",
                 "kind": r.error_kind,
+                "used_client": r.used_client,
             })
-
-        hint = _build_hint_ar(source, share, self.results)
 
         return {
             "success": False,
@@ -178,12 +213,12 @@ class DownloadBundle:
             "source": source,
             "source_label": source_label(source),
             "reasons": reasons,
-            "hint": hint,
+            "hint": _build_hint_ar(source, share, self.results),
         }
 
 
 # ─────────────────────────────────────────────────────────
-# كشف المحركات المتاحة
+# كشف المحركات
 # ─────────────────────────────────────────────────────────
 
 def _which(cmd: str) -> Optional[str]:
@@ -191,13 +226,13 @@ def _which(cmd: str) -> Optional[str]:
 
 
 def detect_engines() -> Dict[str, bool]:
-    """يكشف المحركات المتاحة على النظام."""
     engines = {
         "gallery-dl": _which("gallery-dl") is not None,
         "yt-dlp": _which("yt-dlp") is not None,
         "requests": True,
         "pillow": PIL_AVAILABLE,
-        "facebook": True,  # مستخرج مدمج
+        "curl_cffi": CURL_CFFI_AVAILABLE,
+        "facebook": True,
     }
     logger.info("🔍 Detected download engines: %s", engines)
     print(f"🔍 Detected download engines: {engines}")
@@ -228,7 +263,7 @@ def detect_source(url: str) -> str:
 
 
 def source_label(src: str) -> str:
-    labels = {
+    return {
         "facebook": "فيسبوك",
         "instagram": "إنستغرام",
         "twitter": "تويتر / X",
@@ -237,8 +272,7 @@ def source_label(src: str) -> str:
         "reddit": "Reddit",
         "youtube": "يوتيوب",
         "generic": "رابط عام",
-    }
-    return labels.get(src, src)
+    }.get(src, src)
 
 
 def is_share_link(url: str) -> bool:
@@ -247,7 +281,7 @@ def is_share_link(url: str) -> bool:
 
 
 # ─────────────────────────────────────────────────────────
-# التحقق من المحتوى
+# التحقق من الصور
 # ─────────────────────────────────────────────────────────
 
 def _sniff_image_format(data: bytes) -> Optional[str]:
@@ -282,9 +316,8 @@ def is_valid_image_bytes(
         return False, f"too large ({size} bytes)", None
 
     ct = (content_type or "").lower()
-    if ct:
-        if "html" in ct or "text/" in ct or "xml" in ct or "json" in ct:
-            return False, f"content-type is not an image: {ct}", None
+    if ct and any(x in ct for x in ("html", "text/", "xml", "json")):
+        return False, f"content-type is not an image: {ct}", None
 
     sniffed = _sniff_image_format(data[:32])
     if not sniffed:
@@ -316,25 +349,20 @@ def is_valid_image_bytes(
 def is_valid_image_file(path: Path) -> Tuple[bool, str, Optional[dict]]:
     if not path.is_file():
         return False, "not a file", None
-
     suffix = path.suffix.lower()
     if suffix == ".svg":
         return False, "svg not allowed", None
-
     if suffix not in IMAGE_EXTENSIONS:
         try:
             head = path.read_bytes()[:32]
         except OSError as e:
             return False, f"unreadable: {e}", None
-        sniffed = _sniff_image_format(head)
-        if not sniffed:
+        if not _sniff_image_format(head):
             return False, f"extension not allowed and not a known image: {suffix}", None
-
     try:
         data = path.read_bytes()
     except OSError as e:
         return False, f"unreadable: {e}", None
-
     return is_valid_image_bytes(data)
 
 
@@ -348,7 +376,6 @@ def _filter_valid_files(
     for f in files:
         if not f.is_file():
             continue
-
         suffix = f.suffix.lower()
 
         if expect in ("video", "any") and suffix in VIDEO_EXTENSIONS:
@@ -380,25 +407,10 @@ def _filter_valid_files(
 
 
 # ─────────────────────────────────────────────────────────
-# مستخرج فيسبوك المخصص
+# مستخرج فيسبوك
 # ─────────────────────────────────────────────────────────
 
-FB_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/122.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "en-US,en;q=0.9,ar;q=0.8",
-}
-
-
 def _extract_fb_image_urls(html: str) -> List[str]:
-    """
-    يستخرج روابط الصور من HTML صفحة فيسبوك.
-    يعتمد على og:image و meta tags و JSON المضمّن.
-    """
     urls: List[str] = []
     seen = set()
 
@@ -410,43 +422,38 @@ def _extract_fb_image_urls(html: str) -> List[str]:
             u = "https:" + u
         if not u.startswith("http"):
             return
-        # تجاهل الأيقونات الصغيرة
         if any(x in u for x in ("emoji.php", "rsrc.php", "/images/", "static.xx")):
             return
+        # تجاهل الصور الصغيرة جداً (تُحدد لاحقاً بالتحقق)
         if u in seen:
             return
         seen.add(u)
         urls.append(u)
 
-    # 1) og:image
     for m in re.finditer(
         r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']',
         html, re.IGNORECASE,
     ):
         add(m.group(1))
 
-    # 2) og:image:secure_url
     for m in re.finditer(
         r'<meta[^>]+property=["\']og:image:secure_url["\'][^>]+content=["\']([^"\']+)["\']',
         html, re.IGNORECASE,
     ):
         add(m.group(1))
 
-    # 3) twitter:image
     for m in re.finditer(
         r'<meta[^>]+name=["\']twitter:image["\'][^>]+content=["\']([^"\']+)["\']',
         html, re.IGNORECASE,
     ):
         add(m.group(1))
 
-    # 4) JSON المضمّن: "image":"..." أو "uri":"..."
     for m in re.finditer(
         r'"(?:image|image_url|uri|url|src)"\s*:\s*"(https?:[^"]+\.(?:jpg|jpeg|png|webp)[^"]*)"',
         html, re.IGNORECASE,
     ):
         add(m.group(1))
 
-    # 5) روابط scontent مباشرة في HTML
     for m in re.finditer(
         r'(https?://[^"\'\s<>]+scontent[^"\'\s<>]+\.(?:jpg|jpeg|png|webp)[^"\'\s<>]*)',
         html, re.IGNORECASE,
@@ -456,6 +463,81 @@ def _extract_fb_image_urls(html: str) -> List[str]:
     return urls
 
 
+def _detect_fb_page_kind(html: str, status: int) -> Optional[Tuple[str, str]]:
+    """
+    يكتشف نوع صفحة فيسبوك.
+    يرجع (error_kind, error_ar) أو None إذا كانت الصفحة تبدو عادية.
+    """
+    if status == 400:
+        return (
+            "http_400",
+            "فيسبوك رفض الطلب (400). يحتاج النظام إلى كوكيز أو محاكاة متصفح حقيقي.",
+        )
+    if status == 403:
+        return (
+            "http_403",
+            "فيسبوك منع الوصول (403). المحتوى محمي أو الرابط محظور.",
+        )
+    if status == 404:
+        return "http_404", "الصفحة غير موجودة (404)."
+    if status >= 500:
+        return "http_5xx", f"خطأ في سيرفر فيسبوك (HTTP {status})."
+
+    low = html.lower()
+    if "login" in low and ("password" in low or "email" in low):
+        return (
+            "login_wall",
+            "فيسبوك يعرض صفحة تسجيل دخول. المحتوى خاص أو يتطلب حساباً.",
+        )
+    if "content isn't available" in low or "content not available" in low:
+        return (
+            "content_unavailable",
+            "المحتوى غير متاح. قد يكون محذوفاً أو خاصاً.",
+        )
+    if "group" in low and ("private" in low or "members" in low):
+        return (
+            "private_group",
+            "المنشور في مجموعة خاصة. يتطلب عضوية أو كوكيز.",
+        )
+    return None
+
+
+async def _fetch_html_curl_cffi(
+    url: str,
+    cookies: Optional[Dict[str, str]] = None,
+    timeout: int = 30,
+) -> Tuple[str, str, int]:
+    """
+    يجلب HTML عبر curl_cffi مع محاكاة Chrome.
+    يرجع (html, final_url, status).
+    """
+    session = CurlAsyncSession(impersonate="chrome124", timeout=timeout)
+    try:
+        if cookies:
+            for k, v in cookies.items():
+                session.cookies.set(k, v, domain=".facebook.com")
+        resp = await session.get(url)
+        return resp.text, str(resp.url), resp.status_code
+    finally:
+        await session.close()
+
+
+async def _fetch_html_httpx(
+    url: str,
+    cookies: Optional[Dict[str, str]] = None,
+    timeout: int = 30,
+) -> Tuple[str, str, int]:
+    """يجلب HTML عبر httpx مع ترويسات محسّنة."""
+    async with httpx.AsyncClient(
+        follow_redirects=True, timeout=timeout, headers=FB_HEADERS,
+    ) as client:
+        if cookies:
+            for k, v in cookies.items():
+                client.cookies.set(k, v, domain=".facebook.com")
+        resp = await client.get(url)
+        return resp.text, str(resp.url), resp.status_code
+
+
 async def _run_facebook(
     url: str,
     out_dir: Path,
@@ -463,125 +545,190 @@ async def _run_facebook(
     timeout: int = 30,
 ) -> DownloadResult:
     """
-    مستخرج فيسبوك مخصص:
-    1. يتبع الـ redirect للحصول على رابط المنشور الفعلي.
-    2. يجلب HTML.
+    مستخرج فيسبوك:
+    1. يجلب HTML عبر curl_cffi (أو httpx كبديل).
+    2. يكتشف نوع الصفحة (تسجيل دخول، محتوى غير متاح، مجموعة خاصة).
     3. يستخرج og:image وروابط scontent.
-    4. يحمّل الصور ويتحقق منها.
+    4. يحمّل كل مرشح ويتحقق منه.
     """
     import time
     start = time.perf_counter()
 
     print(f"🎬 [facebook] Extracting from {url}")
 
-    headers = dict(FB_HEADERS)
+    # اقرأ كوكيز
     cookies = None
     if cookies_file and cookies_file.is_file():
         try:
             cookies = json.loads(cookies_file.read_text(encoding="utf-8"))
-            print(f"🎬 [facebook] using cookies file: {cookies_file}")
+            print(f"🎬 [facebook] cookies loaded: {len(cookies)} entries")
         except Exception as e:
             print(f"🎬 [facebook] failed to read cookies: {e}")
 
+    used_client = "curl_cffi" if CURL_CFFI_AVAILABLE else "httpx"
+
     try:
-        async with httpx.AsyncClient(
-            follow_redirects=True, timeout=timeout, headers=headers,
-        ) as client:
-            if cookies:
-                for k, v in cookies.items():
-                    client.cookies.set(k, v, domain=".facebook.com")
+        # 1) اجلب HTML
+        if CURL_CFFI_AVAILABLE:
+            print("🎬 [facebook] using curl_cffi (impersonate=chrome124)")
+            html, final_url, status = await _fetch_html_curl_cffi(url, cookies, timeout)
+        else:
+            print("🎬 [facebook] using httpx (fallback — أقل فعالية)")
+            html, final_url, status = await _fetch_html_httpx(url, cookies, timeout)
 
-            # 1) اجلب الصفحة (مع متابعة redirect)
-            resp = await client.get(url)
-            final_url = str(resp.url)
-            html = resp.text
+        duration = (time.perf_counter() - start) * 1000
 
-            print(
-                f"🎬 [facebook] final_url={final_url[:100]}, "
-                f"status={resp.status_code}, size={len(html)}"
-            )
+        print(
+            f"🎬 [facebook] final_url={final_url[:100]}, "
+            f"status={status}, size={len(html)}, client={used_client}"
+        )
 
-            # 2) استخرج روابط الصور
-            candidate_urls = _extract_fb_image_urls(html)
-            print(f"🎬 [facebook] found {len(candidate_urls)} candidate image urls")
-
-            if not candidate_urls:
-                return DownloadResult(
-                    engine="facebook",
-                    success=False,
-                    error="no image urls found in page",
-                    error_ar="لم يتم العثور على صور في صفحة فيسبوك. "
-                             "قد يكون المنشور خاصاً أو يتطلب تسجيل دخول.",
-                    error_kind="no_images",
-                    duration_ms=(time.perf_counter() - start) * 1000,
-                )
-
-            # 3) حمّل كل مرشح وتحقّق منه
-            downloaded: List[Path] = []
-            rejected: List[Dict[str, Any]] = []
-
-            for i, img_url in enumerate(candidate_urls[:8]):  # حد أقصى 8 صور
-                try:
-                    img_resp = await client.get(img_url)
-                    if img_resp.status_code != 200:
-                        rejected.append({
-                            "url": img_url[:120],
-                            "error": f"HTTP {img_resp.status_code}",
-                        })
-                        continue
-
-                    ct = img_resp.headers.get("content-type", "")
-                    data = img_resp.content
-
-                    ok, reason, info = is_valid_image_bytes(data, ct)
-                    if not ok:
-                        rejected.append({
-                            "url": img_url[:120],
-                            "error": reason,
-                            "content_type": ct,
-                            "size": len(data),
-                        })
-                        continue
-
-                    # امتداد صحيح
-                    fmt = (info or {}).get("format", "JPEG")
-                    ext = {
-                        "JPEG": ".jpg", "PNG": ".png", "GIF": ".gif",
-                        "WEBP": ".webp", "BMP": ".bmp", "TIFF": ".tiff",
-                    }.get(fmt, ".jpg")
-
-                    dest = out_dir / f"facebook_{i:02d}_{uuid.uuid4().hex[:6]}{ext}"
-                    dest.write_bytes(data)
-                    downloaded.append(dest)
-                    print(
-                        f"🎬 [facebook] ✅ saved {dest.name} "
-                        f"({len(data)} bytes, {fmt})"
-                    )
-
-                except Exception as e:
-                    rejected.append({"url": img_url[:120], "error": str(e)})
-
-            duration = (time.perf_counter() - start) * 1000
-
-            if not downloaded:
-                return DownloadResult(
-                    engine="facebook",
-                    success=False,
-                    error="no valid images after validation",
-                    error_ar="تم العثور على روابط لكن لا توجد صورة صالحة. "
-                             "قد تكون الصور محمية أو انتهت صلاحيتها.",
-                    error_kind="no_valid_images",
-                    duration_ms=duration,
-                    rejected=rejected,
-                )
-
+        # 2) اكتشف نوع الصفحة
+        kind = _detect_fb_page_kind(html, status)
+        if kind:
+            error_kind, error_ar = kind
             return DownloadResult(
                 engine="facebook",
-                success=True,
-                files=downloaded,
+                success=False,
+                error=f"facebook page: {error_kind}",
+                error_ar=error_ar,
+                error_kind=error_kind,
+                duration_ms=duration,
+                used_client=used_client,
+            )
+
+        # 3) استخرج روابط الصور
+        candidate_urls = _extract_fb_image_urls(html)
+        print(f"🎬 [facebook] found {len(candidate_urls)} candidate image urls")
+
+        if not candidate_urls:
+            return DownloadResult(
+                engine="facebook",
+                success=False,
+                error="no image urls found in page",
+                error_ar=(
+                    "لم يتم العثور على صور في الصفحة. "
+                    "قد يكون المنشور نصياً أو يحتوي فيديو فقط."
+                ),
+                error_kind="no_images",
+                duration_ms=(time.perf_counter() - start) * 1000,
+                used_client=used_client,
+            )
+
+        # 4) حمّل كل مرشح وتحقّق منه
+        downloaded: List[Path] = []
+        rejected: List[Dict[str, Any]] = []
+
+        # استخدم نفس العميل لتحميل الصور
+        if CURL_CFFI_AVAILABLE:
+            session = CurlAsyncSession(impersonate="chrome124", timeout=timeout)
+            try:
+                if cookies:
+                    for k, v in cookies.items():
+                        session.cookies.set(k, v, domain=".facebook.com")
+                for i, img_url in enumerate(candidate_urls[:8]):
+                    try:
+                        r = await session.get(img_url)
+                        if r.status_code != 200:
+                            rejected.append({
+                                "url": img_url[:120],
+                                "error": f"HTTP {r.status_code}",
+                            })
+                            continue
+                        ct = r.headers.get("content-type", "")
+                        data = r.content
+                        ok, reason, info = is_valid_image_bytes(data, ct)
+                        if not ok:
+                            rejected.append({
+                                "url": img_url[:120],
+                                "error": reason,
+                                "content_type": ct,
+                                "size": len(data),
+                            })
+                            continue
+                        fmt = (info or {}).get("format", "JPEG")
+                        ext = {
+                            "JPEG": ".jpg", "PNG": ".png", "GIF": ".gif",
+                            "WEBP": ".webp", "BMP": ".bmp", "TIFF": ".tiff",
+                        }.get(fmt, ".jpg")
+                        dest = out_dir / f"facebook_{i:02d}_{uuid.uuid4().hex[:6]}{ext}"
+                        dest.write_bytes(data)
+                        downloaded.append(dest)
+                        print(
+                            f"🎬 [facebook] ✅ saved {dest.name} "
+                            f"({len(data)} bytes, {fmt})"
+                        )
+                    except Exception as e:
+                        rejected.append({"url": img_url[:120], "error": str(e)})
+            finally:
+                await session.close()
+        else:
+            async with httpx.AsyncClient(
+                follow_redirects=True, timeout=timeout, headers=FB_HEADERS,
+            ) as client:
+                if cookies:
+                    for k, v in cookies.items():
+                        client.cookies.set(k, v, domain=".facebook.com")
+                for i, img_url in enumerate(candidate_urls[:8]):
+                    try:
+                        r = await client.get(img_url)
+                        if r.status_code != 200:
+                            rejected.append({
+                                "url": img_url[:120],
+                                "error": f"HTTP {r.status_code}",
+                            })
+                            continue
+                        ct = r.headers.get("content-type", "")
+                        data = r.content
+                        ok, reason, info = is_valid_image_bytes(data, ct)
+                        if not ok:
+                            rejected.append({
+                                "url": img_url[:120],
+                                "error": reason,
+                                "content_type": ct,
+                                "size": len(data),
+                            })
+                            continue
+                        fmt = (info or {}).get("format", "JPEG")
+                        ext = {
+                            "JPEG": ".jpg", "PNG": ".png", "GIF": ".gif",
+                            "WEBP": ".webp", "BMP": ".bmp", "TIFF": ".tiff",
+                        }.get(fmt, ".jpg")
+                        dest = out_dir / f"facebook_{i:02d}_{uuid.uuid4().hex[:6]}{ext}"
+                        dest.write_bytes(data)
+                        downloaded.append(dest)
+                        print(
+                            f"🎬 [facebook] ✅ saved {dest.name} "
+                            f"({len(data)} bytes, {fmt})"
+                        )
+                    except Exception as e:
+                        rejected.append({"url": img_url[:120], "error": str(e)})
+
+        duration = (time.perf_counter() - start) * 1000
+
+        if not downloaded:
+            return DownloadResult(
+                engine="facebook",
+                success=False,
+                error="no valid images after validation",
+                error_ar=(
+                    "تم العثور على روابط لكن لا توجد صورة صالحة. "
+                    "قد تكون الصور محمية أو انتهت صلاحيتها."
+                ),
+                error_kind="no_valid_images",
                 duration_ms=duration,
                 rejected=rejected,
+                used_client=used_client,
             )
+
+        return DownloadResult(
+            engine="facebook",
+            success=True,
+            files=downloaded,
+            duration_ms=duration,
+            rejected=rejected,
+            used_client=used_client,
+        )
 
     except httpx.HTTPStatusError as e:
         return DownloadResult(
@@ -591,6 +738,7 @@ async def _run_facebook(
             error_ar=f"فيسبوك أرجع خطأ HTTP {e.response.status_code}.",
             error_kind="http_error",
             duration_ms=(time.perf_counter() - start) * 1000,
+            used_client=used_client,
         )
     except httpx.TimeoutException:
         return DownloadResult(
@@ -600,6 +748,7 @@ async def _run_facebook(
             error_ar="انتهت المهلة أثناء الاتصال بفيسبوك.",
             error_kind="timeout",
             duration_ms=(time.perf_counter() - start) * 1000,
+            used_client=used_client,
         )
     except Exception as e:
         return DownloadResult(
@@ -609,15 +758,15 @@ async def _run_facebook(
             error_ar=f"فشل المستخرج: {e}",
             error_kind="exception",
             duration_ms=(time.perf_counter() - start) * 1000,
+            used_client=used_client,
         )
 
 
 # ─────────────────────────────────────────────────────────
-# محرك: gallery-dl
+# gallery-dl
 # ─────────────────────────────────────────────────────────
 
 def _classify_gallery_dl_error(returncode: int, stderr: str) -> Tuple[str, str]:
-    """يرجع (error_kind, error_ar)."""
     s = (stderr or "").lower()
     if returncode == GDL_EXIT_UNSUPPORTED or "unsupported url" in s:
         return "unsupported_url", "الرابط غير مدعوم من gallery-dl."
@@ -651,12 +800,7 @@ async def _run_gallery_dl(
             error_kind="cli_missing",
         )
 
-    cmd = [
-        "gallery-dl",
-        "--dest", str(out_dir),
-        "--no-part",
-        "-q",
-    ]
+    cmd = ["gallery-dl", "--dest", str(out_dir), "--no-part", "-q"]
     if cookies_from_browser:
         cmd.extend(["--cookies-from-browser", cookies_from_browser])
     elif cookies_file and cookies_file.is_file():
@@ -687,9 +831,7 @@ async def _run_gallery_dl(
         error_msg = None
         if not success:
             if proc.returncode != 0:
-                error_kind, error_ar = _classify_gallery_dl_error(
-                    proc.returncode, stderr
-                )
+                error_kind, error_ar = _classify_gallery_dl_error(proc.returncode, stderr)
                 error_msg = f"exit={proc.returncode}"
             else:
                 error_kind = "no_valid_images"
@@ -740,7 +882,7 @@ async def _run_gallery_dl(
 
 
 # ─────────────────────────────────────────────────────────
-# محرك: yt-dlp
+# yt-dlp
 # ─────────────────────────────────────────────────────────
 
 async def _run_yt_dlp(
@@ -763,10 +905,8 @@ async def _run_yt_dlp(
         )
 
     cmd = [
-        "yt-dlp",
-        "--no-playlist",
-        "--write-thumbnail",
-        "--convert-thumbnails", "jpg",
+        "yt-dlp", "--no-playlist",
+        "--write-thumbnail", "--convert-thumbnails", "jpg",
         "-o", str(out_dir / "%(id)s.%(ext)s"),
     ]
     if cookies_from_browser:
@@ -848,7 +988,7 @@ async def _run_yt_dlp(
 
 
 # ─────────────────────────────────────────────────────────
-# محرك: direct
+# direct
 # ─────────────────────────────────────────────────────────
 
 async def _run_direct(
@@ -972,7 +1112,7 @@ async def _run_direct(
 
 
 # ─────────────────────────────────────────────────────────
-# مساعد: تلميح عربي
+# تلميح عربي
 # ─────────────────────────────────────────────────────────
 
 def _build_hint_ar(
@@ -980,45 +1120,54 @@ def _build_hint_ar(
     share: bool,
     results: List[DownloadResult],
 ) -> str:
-    if share:
-        return (
-            "هذا رابط مشاركة وليس رابط صورة مباشر. "
-            "افتح المنشور في المتصفح، انقر بزر الفأرة الأيمن على الصورة، "
-            "ثم اختر «نسخ عنوان الصورة» والصق الرابط المباشر هنا. "
-            "أو فعّل كوكيز فيسبوك ليعمل المستخرج التلقائي."
-        )
-
     kinds = {r.error_kind for r in results if r.error_kind}
 
-    if "auth_required" in kinds:
-        return (
-            "المحتوى يتطلب تسجيل دخول. "
-            "أضف كوكيز فيسبوك/إنستغرام أو استخدم رابطاً عاماً."
-        )
-    if "unsupported_url" in kinds:
-        return (
-            "الرابط غير مدعوم. تأكد أنه رابط منشور مباشر "
-            "وليس صفحة رئيسية أو رابط مختصر."
-        )
-    if "no_valid_images" in kinds or "no_images" in kinds:
-        return (
-            "لم يتم العثور على صور. قد يكون المنشور نصياً أو فيديو فقط، "
-            "أو الصور محمية."
-        )
+    # أولوية خاصة لفيسبوك
     if source == "facebook":
+        if "login_wall" in kinds or "auth_required" in kinds:
+            return (
+                "فيسبوك يطلب تسجيل دخول لهذا المحتوى. "
+                "الحل: صدّر كوكيز فيسبوك من متصفحك إلى ملف JSON "
+                "وأضفه إلى الإعدادات، أو استخدم رابط صورة مباشر."
+            )
+        if "private_group" in kinds:
+            return (
+                "المنشور في مجموعة خاصة. "
+                "تحتاج عضوية المجموعة وكوكيز للوصول. "
+                "أو احفظ الصورة يدوياً وارفعها مباشرة."
+            )
+        if "http_400" in kinds:
+            return (
+                "فيسبوك رفض الطلب. "
+                "هذا يحدث غالباً مع روابط المشاركة. "
+                "افتح المنشور في المتصفح، انقر بزر الفأرة الأيمن على الصورة، "
+                "اختر «نسخ عنوان الصورة»، ثم الصق الرابط المباشر هنا."
+            )
+        if "content_unavailable" in kinds:
+            return "المحتوى غير متاح. قد يكون محذوفاً أو خاصاً."
+        if share:
+            return (
+                "هذا رابط مشاركة وليس رابط صورة مباشر. "
+                "افتح المنشور في المتصفح، انقر بزر الفأرة الأيمن على الصورة، "
+                "ثم اختر «نسخ عنوان الصورة» والصق الرابط المباشر هنا. "
+                "أو فعّل كوكيز فيسبوك ليعمل المستخرج التلقائي."
+            )
         return (
-            "جرّب نسخ رابط الصورة المباشر من المتصفح "
-            "(زر الفأرة الأيمن → نسخ عنوان الصورة)، "
-            "أو مرّر كوكيز فيسبوك."
+            "جرّب نسخ رابط الصورة المباشر من المتصفح، "
+            "أو أضف كوكيز فيسبوك إلى الإعدادات."
         )
+
+    if "auth_required" in kinds:
+        return "المحتوى يتطلب تسجيل دخول. أضف كوكيز أو استخدم رابطاً عاماً."
+    if "unsupported_url" in kinds:
+        return "الرابط غير مدعوم. تأكد أنه رابط منشور مباشر."
+    if "no_valid_images" in kinds or "no_images" in kinds:
+        return "لم يتم العثور على صور. قد يكون المنشور نصياً أو فيديو فقط."
     if source == "instagram":
         return "إنستغرام يتطلب تسجيل دخول غالباً. مرّر كوكيز."
     if source == "youtube":
         return "تأكد أن الرابط لفيديو وليس قناة أو قائمة تشغيل."
-    return (
-        "تحقق من صحة الرابط، أو جرّب رابطاً مباشراً للصورة "
-        "(ينتهي بـ .jpg أو .png)."
-    )
+    return "تحقق من صحة الرابط، أو جرّب رابطاً مباشراً للصورة."
 
 
 # ─────────────────────────────────────────────────────────
@@ -1026,16 +1175,6 @@ def _build_hint_ar(
 # ─────────────────────────────────────────────────────────
 
 class MediaDownloader:
-    """
-    يحاول تحميل URL عبر عدة محركات بالترتيب.
-
-    المعاملات:
-      cookies_from_browser: اسم المتصفح لاستخراج الكوكيز (chrome|firefox|...)
-      cookies_file: مسار ملف كوكيز بصيغة JSON
-      prefer: ترتيب المحركات
-      allow_direct_for_share_links: هل نجرّب direct على روابط المشاركة؟
-    """
-
     def __init__(
         self,
         cookies_from_browser: Optional[str] = None,
@@ -1059,15 +1198,9 @@ class MediaDownloader:
 
         source = detect_source(url)
         share = is_share_link(url)
-
-        # ترتيب المحركات حسب المصدر
-        if engines:
-            engines_to_try = engines
-        else:
-            engines_to_try = self._order_engines(source, share)
+        engines_to_try = engines or self._order_engines(source, share)
 
         available = detect_engines()
-
         bundle = DownloadBundle(url=url)
 
         print(f"\n{'='*60}")
@@ -1078,7 +1211,6 @@ class MediaDownloader:
         print(f"{'='*60}")
 
         for engine in engines_to_try:
-            # تخطي direct على روابط المشاركة إذا مُنع
             if engine == "direct" and share and not self.allow_direct_for_share_links:
                 print(f"⏭️  Skipping direct (share link, likely HTML)")
                 bundle.results.append(DownloadResult(
@@ -1090,7 +1222,6 @@ class MediaDownloader:
                 ))
                 continue
 
-            # تخطي المحركات غير المثبتة (ما عدا facebook و direct)
             if engine not in ("direct", "facebook") and not available.get(engine, False):
                 print(f"⏭️  Skipping {engine} (not installed)")
                 bundle.results.append(DownloadResult(
@@ -1103,21 +1234,16 @@ class MediaDownloader:
                 continue
 
             if engine == "facebook":
-                res = await _run_facebook(
-                    url, out_dir,
-                    cookies_file=self.cookies_file,
-                )
+                res = await _run_facebook(url, out_dir, self.cookies_file)
             elif engine == "gallery-dl":
                 res = await _run_gallery_dl(
                     url, out_dir,
-                    cookies_from_browser=self.cookies_from_browser,
-                    cookies_file=self.cookies_file,
+                    self.cookies_from_browser, self.cookies_file,
                 )
             elif engine == "yt-dlp":
                 res = await _run_yt_dlp(
                     url, out_dir,
-                    cookies_from_browser=self.cookies_from_browser,
-                    cookies_file=self.cookies_file,
+                    self.cookies_from_browser, self.cookies_file,
                 )
             elif engine == "direct":
                 res = await _run_direct(url, out_dir)
@@ -1140,26 +1266,21 @@ class MediaDownloader:
         return bundle
 
     def _order_engines(self, source: str, share: bool) -> List[str]:
-        """يرتب المحركات حسب المصدر."""
         if source == "facebook":
-            # ابدأ بالمستخرج المخصص ثم gallery-dl
             order = ["facebook", "gallery-dl"]
             if not share:
                 order.append("yt-dlp")
             order.append("direct")
             return order
-
         if source in ("instagram", "twitter", "pinterest"):
             return ["gallery-dl", "yt-dlp", "direct"]
-
         if source in ("youtube", "tiktok"):
             return ["yt-dlp", "gallery-dl", "direct"]
-
         return ["gallery-dl", "yt-dlp", "direct"]
 
 
 # ─────────────────────────────────────────────────────────
-# مساعد: تحميل صورة واحدة
+# مساعد
 # ─────────────────────────────────────────────────────────
 
 async def download_image(
@@ -1168,7 +1289,6 @@ async def download_image(
     cookies_from_browser: Optional[str] = None,
     cookies_file: Optional[Path] = None,
 ) -> Optional[Path]:
-    """يرجع أول ملف تم تحميله أو None."""
     dl = MediaDownloader(
         cookies_from_browser=cookies_from_browser,
         cookies_file=cookies_file,
@@ -1179,7 +1299,7 @@ async def download_image(
 
 
 # ─────────────────────────────────────────────────────────
-# نقطة دخول سريعة (اختبار)
+# نقطة دخول للاختبار
 # ─────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
