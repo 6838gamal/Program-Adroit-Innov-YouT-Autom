@@ -19,6 +19,7 @@ from infrastructure.database.session import (
     is_database_available,
     get_db_status,
     get_database_error,
+    get_db_error,
     get_session_factory
 )
 from infrastructure.database.supabase_client import SupabaseClient
