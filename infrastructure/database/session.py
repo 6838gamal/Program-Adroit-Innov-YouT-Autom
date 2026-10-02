@@ -1,7 +1,9 @@
 import logging
 import os
 import re
+import ssl as ssl_module
 from typing import AsyncGenerator, Optional
+from urllib.parse import quote_plus
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
@@ -110,11 +112,81 @@ def get_database_url() -> Optional[str]:
 
     project_ref = match.group(1)
 
+    # ✅ URL-encode the password to avoid issues with special chars
+    encoded_password = quote_plus(postgres_password)
+
     return (
         f"postgresql+asyncpg://postgres:"
-        f"{postgres_password}"
+        f"{encoded_password}"
         f"@db.{project_ref}.supabase.co:5432/postgres"
     )
+
+
+# ============================================================
+# SSL configuration helpers
+# ============================================================
+
+def build_ssl_connect_args(database_url: str) -> dict:
+    """
+    Build asyncpg-compatible `connect_args` for SSL.
+
+    Controlled by the DB_SSL_MODE environment variable.
+
+    Supported values:
+        - "disable"       → no SSL
+        - "allow"         → try plain first, then SSL
+        - "prefer"        → try SSL first, then plain (default-ish)
+        - "require"       → SSL required, no cert verification (default)
+        - "verify-ca"     → SSL required, verify CA only
+        - "verify-full"   → SSL required, verify CA + hostname
+
+    Notes:
+        - asyncpg does NOT read `sslmode` from the URL itself.
+        - Therefore we must pass SSL config via `connect_args`.
+        - For Supabase / Render / Railway / Heroku, "require" is enough.
+    """
+
+    if not database_url or not database_url.startswith(
+        "postgresql+asyncpg://"
+    ):
+        return {}
+
+    ssl_mode = os.getenv("DB_SSL_MODE", "require").strip().lower()
+
+    connect_args: dict = {}
+
+    if ssl_mode == "disable":
+        connect_args["ssl"] = False
+
+    elif ssl_mode in ("allow", "prefer"):
+        # asyncpg: True means "try SSL, fallback to plain"
+        connect_args["ssl"] = True
+
+    elif ssl_mode == "require":
+        # SSL required, but do NOT verify the certificate chain.
+        # This is what Supabase / Render expect by default.
+        connect_args["ssl"] = True
+
+    elif ssl_mode == "verify-ca":
+        ctx = ssl_module.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl_module.CERT_REQUIRED
+        connect_args["ssl"] = ctx
+
+    elif ssl_mode == "verify-full":
+        ctx = ssl_module.create_default_context()
+        ctx.check_hostname = True
+        ctx.verify_mode = ssl_module.CERT_REQUIRED
+        connect_args["ssl"] = ctx
+
+    else:
+        logger.warning(
+            "Unknown DB_SSL_MODE=%r. Falling back to 'require'.",
+            ssl_mode,
+        )
+        connect_args["ssl"] = True
+
+    return connect_args
 
 
 # ============================================================
@@ -161,6 +233,9 @@ def get_engine() -> Optional[AsyncEngine]:
 
         echo = os.getenv("DB_ECHO", "false").lower() == "true"
 
+        # ✅ SSL connect_args (asyncpg does NOT read sslmode from URL)
+        connect_args = build_ssl_connect_args(database_url)
+
         _engine = create_async_engine(
             database_url,
             echo=echo,
@@ -174,6 +249,9 @@ def get_engine() -> Optional[AsyncEngine]:
 
             # Detect stale connections
             pool_pre_ping=True,
+
+            # ✅ SSL configuration for asyncpg
+            connect_args=connect_args,
         )
 
         # Do NOT mark database available yet.
@@ -184,9 +262,10 @@ def get_engine() -> Optional[AsyncEngine]:
 
         logger.info(
             "PostgreSQL async engine created "
-            "(pool_size=%s, max_overflow=%s)",
+            "(pool_size=%s, max_overflow=%s, ssl_mode=%s)",
             pool_size,
             max_overflow,
+            os.getenv("DB_SSL_MODE", "require"),
         )
 
         return _engine
@@ -495,6 +574,7 @@ def get_db_info() -> dict:
         "available": is_database_available(),
         "host": host,
         "port": port,
+        "ssl_mode": os.getenv("DB_SSL_MODE", "require"),
         "error": _db_error,
     }
 
@@ -686,5 +766,6 @@ async def get_db_status() -> dict:
     return {
         "available": connected,
         "configured": get_database_url() is not None,
+        "ssl_mode": os.getenv("DB_SSL_MODE", "require"),
         "error": _db_error,
     }
