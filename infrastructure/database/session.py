@@ -126,6 +126,22 @@ def get_database_url() -> Optional[str]:
 # SSL configuration helpers
 # ============================================================
 
+def _is_supabase_transaction_pooler(database_url: str) -> bool:
+    """
+    Detect Supabase Transaction Pooler URLs (port 6543).
+
+    asyncpg prepared statements are NOT supported in this mode,
+    so we must disable statement caching.
+    """
+    if not database_url:
+        return False
+
+    return (
+        "pooler.supabase.com:6543" in database_url
+        or ":6543/" in database_url
+    )
+
+
 def build_ssl_connect_args(database_url: str) -> dict:
     """
     Build asyncpg-compatible `connect_args` for SSL.
@@ -135,7 +151,7 @@ def build_ssl_connect_args(database_url: str) -> dict:
     Supported values:
         - "disable"       → no SSL
         - "allow"         → try plain first, then SSL
-        - "prefer"        → try SSL first, then plain (default-ish)
+        - "prefer"        → try SSL first, then plain
         - "require"       → SSL required, no cert verification (default)
         - "verify-ca"     → SSL required, verify CA only
         - "verify-full"   → SSL required, verify CA + hostname
@@ -144,6 +160,8 @@ def build_ssl_connect_args(database_url: str) -> dict:
         - asyncpg does NOT read `sslmode` from the URL itself.
         - Therefore we must pass SSL config via `connect_args`.
         - For Supabase / Render / Railway / Heroku, "require" is enough.
+        - For Supabase Transaction Pooler (port 6543), prepared
+          statements must be disabled.
     """
 
     if not database_url or not database_url.startswith(
@@ -185,6 +203,16 @@ def build_ssl_connect_args(database_url: str) -> dict:
             ssl_mode,
         )
         connect_args["ssl"] = True
+
+    # ✅ Supabase Transaction Pooler (port 6543) does NOT support
+    #    prepared statements. Disable asyncpg statement caching.
+    if _is_supabase_transaction_pooler(database_url):
+        connect_args["statement_cache_size"] = 0
+        connect_args["prepared_statement_cache_size"] = 0
+        logger.info(
+            "Supabase Transaction Pooler detected — "
+            "prepared statement caching disabled."
+        )
 
     return connect_args
 
@@ -344,6 +372,17 @@ def get_database_error() -> Optional[str]:
     """
 
     return _db_error
+
+
+# ============================================================
+# Backwards-compatibility aliases
+# ============================================================
+# Some modules (e.g. main.py) import `get_db_error` instead of
+# `get_database_error`. We provide both names to avoid NameError
+# without touching other files.
+
+get_db_error = get_database_error
+get_db_info = None  # placeholder replaced below after definition
 
 
 # ============================================================
@@ -529,7 +568,7 @@ async def close_database() -> None:
 # Database information
 # ============================================================
 
-def get_db_info() -> dict:
+def _get_db_info_impl() -> dict:
     """
     Return safe database diagnostic information.
 
@@ -542,6 +581,7 @@ def get_db_info() -> dict:
         return {
             "configured": False,
             "available": False,
+            "ssl_mode": os.getenv("DB_SSL_MODE", "require"),
             "error": _db_error,
         }
 
@@ -575,8 +615,13 @@ def get_db_info() -> dict:
         "host": host,
         "port": port,
         "ssl_mode": os.getenv("DB_SSL_MODE", "require"),
+        "pooler": _is_supabase_transaction_pooler(database_url),
         "error": _db_error,
     }
+
+
+# Public alias (used by main.py and other modules)
+get_db_info = _get_db_info_impl
 
 
 # ============================================================
