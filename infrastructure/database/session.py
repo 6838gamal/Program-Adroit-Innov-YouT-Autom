@@ -142,6 +142,16 @@ def _is_supabase_transaction_pooler(database_url: str) -> bool:
     )
 
 
+def _is_supabase_pooler(database_url: str) -> bool:
+    """
+    Detect any Supabase Pooler URL (session or transaction mode).
+    """
+    if not database_url:
+        return False
+
+    return "pooler.supabase.com" in database_url
+
+
 def build_ssl_connect_args(database_url: str) -> dict:
     """
     Build asyncpg-compatible `connect_args` for SSL.
@@ -159,7 +169,8 @@ def build_ssl_connect_args(database_url: str) -> dict:
     Notes:
         - asyncpg does NOT read `sslmode` from the URL itself.
         - Therefore we must pass SSL config via `connect_args`.
-        - For Supabase / Render / Railway / Heroku, "require" is enough.
+        - Using an explicit SSLContext (instead of ssl=True) is more
+          reliable with Supabase / Render.
         - For Supabase Transaction Pooler (port 6543), prepared
           statements must be disabled.
     """
@@ -176,14 +187,14 @@ def build_ssl_connect_args(database_url: str) -> dict:
     if ssl_mode == "disable":
         connect_args["ssl"] = False
 
-    elif ssl_mode in ("allow", "prefer"):
-        # asyncpg: True means "try SSL, fallback to plain"
-        connect_args["ssl"] = True
-
-    elif ssl_mode == "require":
-        # SSL required, but do NOT verify the certificate chain.
+    elif ssl_mode in ("allow", "prefer", "require"):
+        # ✅ Use an explicit SSLContext for reliable SSL negotiation.
+        # CERT_NONE means "encrypt, but do not verify the certificate".
         # This is what Supabase / Render expect by default.
-        connect_args["ssl"] = True
+        ctx = ssl_module.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl_module.CERT_NONE
+        connect_args["ssl"] = ctx
 
     elif ssl_mode == "verify-ca":
         ctx = ssl_module.create_default_context()
@@ -202,7 +213,10 @@ def build_ssl_connect_args(database_url: str) -> dict:
             "Unknown DB_SSL_MODE=%r. Falling back to 'require'.",
             ssl_mode,
         )
-        connect_args["ssl"] = True
+        ctx = ssl_module.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl_module.CERT_NONE
+        connect_args["ssl"] = ctx
 
     # ✅ Supabase Transaction Pooler (port 6543) does NOT support
     #    prepared statements. Disable asyncpg statement caching.
@@ -288,12 +302,21 @@ def get_engine() -> Optional[AsyncEngine]:
         _db_available = False
         _db_error = None
 
+        # Safe diagnostic log (no password)
+        safe_host = "unknown"
+        try:
+            if "@" in database_url:
+                safe_host = database_url.split("@", 1)[1]
+        except Exception:
+            pass
+
         logger.info(
             "PostgreSQL async engine created "
-            "(pool_size=%s, max_overflow=%s, ssl_mode=%s)",
+            "(pool_size=%s, max_overflow=%s, ssl_mode=%s, target=%s)",
             pool_size,
             max_overflow,
             os.getenv("DB_SSL_MODE", "require"),
+            safe_host,
         )
 
         return _engine
@@ -377,12 +400,11 @@ def get_database_error() -> Optional[str]:
 # ============================================================
 # Backwards-compatibility aliases
 # ============================================================
-# Some modules (e.g. main.py) import `get_db_error` instead of
-# `get_database_error`. We provide both names to avoid NameError
-# without touching other files.
+# Some modules (e.g. main.py) may import `get_db_error` or
+# `get_db_info`. We provide both names here so that no other
+# file needs to be modified.
 
 get_db_error = get_database_error
-get_db_info = None  # placeholder replaced below after definition
 
 
 # ============================================================
@@ -615,7 +637,8 @@ def _get_db_info_impl() -> dict:
         "host": host,
         "port": port,
         "ssl_mode": os.getenv("DB_SSL_MODE", "require"),
-        "pooler": _is_supabase_transaction_pooler(database_url),
+        "pooler": _is_supabase_pooler(database_url),
+        "transaction_pooler": _is_supabase_transaction_pooler(database_url),
         "error": _db_error,
     }
 
@@ -814,3 +837,19 @@ async def get_db_status() -> dict:
         "ssl_mode": os.getenv("DB_SSL_MODE", "require"),
         "error": _db_error,
     }
+
+
+# ============================================================
+# Backwards-compatibility: inject into builtins
+# ============================================================
+# main.py calls `get_db_error()` and `get_db_info()` without
+# importing them. We inject them into builtins so the calls
+# resolve at runtime without modifying main.py.
+
+import builtins as _builtins
+
+if not hasattr(_builtins, "get_db_error"):
+    _builtins.get_db_error = get_database_error
+
+if not hasattr(_builtins, "get_db_info"):
+    _builtins.get_db_info = _get_db_info_impl
